@@ -101,4 +101,9 @@ typedef struct
 } Grammar;
 
 
+
+//Codificacion de la gramatica como arrays de Productions
+void init_grammar(Grammar* g);
+
+
 #endif
