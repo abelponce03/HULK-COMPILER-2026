@@ -4,7 +4,7 @@
 #define NT_OFFSET 0
 #define T_OFFSET 128 //debe ser > max NonTerminal
 
-#include "../lexer/lexer.h"
+#include "../generador_analizadores_lexicos/lexer.h"
 
 // Definición de no terminales (basado en la gramática)
 typedef enum 

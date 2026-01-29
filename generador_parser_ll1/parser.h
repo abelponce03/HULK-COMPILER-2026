@@ -1,7 +1,7 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "../lexer/lexer.h"
+#include "../generador_analizadores_lexicos/lexer.h"
 #include "first_&_follow.h"
 #include "grammar.h"
 
