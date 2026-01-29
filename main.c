@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "parser.h"
+#include "generador_parser_ll1/parser.h"
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
