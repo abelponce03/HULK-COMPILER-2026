@@ -61,21 +61,6 @@ typedef struct ASTNode {
 
 PositionSet followpos[MAX_POSITIONS];
 
-//Después de calcular followpos, 
-//cada estado del AFD será un conjunto de posiciones (PositionSet).
-//Representamos el AFD como:
-
-typedef struct {
-    PositionSet state;     // conjunto de posiciones
-    int         is_accept; // 1 si es estado de aceptación
-    int         token_id;  // si es aceptación, qué token reconoce
-} DFAState;
-
-typedef struct {
-    DFAState *states;
-    int       count;
-} DFA;
-
 
 //FUNCION QUE RECORRE EL AST POST-ORDEN, CALCULA Y ALMACENA:
 //NULLABLE, FIRSTPOS, LASTPOS PARA CADA NODO
@@ -88,7 +73,8 @@ void followpos_init_all();
 //FUNCION PARA RECORRER EL AST Y LLENAR FOLLOWPOS
 void ast_compute_followpos(ASTNode *root);
 
-
+//Funcion que recorre el AST y devuelve el nodo hoja con la posicion pos
+ASTNode* find_leaf_by_pos(ASTNode *root, int pos);
 
 
 

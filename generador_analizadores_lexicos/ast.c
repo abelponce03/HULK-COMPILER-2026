@@ -257,3 +257,15 @@ void ast_compute_followpos(ASTNode *node)
         return;
     }
 }
+
+//Funcion que recorre el ast para devolver el nodo hoja con la posicion pos
+ASTNode* find_leaf_by_pos(ASTNode *root, int pos) {
+    if (root == NULL) return NULL;
+
+    if (root->type == NODE_LEAF && root->pos == pos)
+        return root;
+
+    ASTNode *found = find_leaf_by_pos(root->left, pos);
+    if (found) return found;
+    return find_leaf_by_pos(root->right, pos);
+}
