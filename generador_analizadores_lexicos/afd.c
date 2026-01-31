@@ -2,6 +2,11 @@
 #include <string.h>
 #include <stdio.h>
 
+
+// Inicialización del mapa posición→token
+int pos_to_token[MAX_POSITIONS] = {0};
+
+
 // Crear un AFD vacío
 DFA *dfa_create(char *alphabet, int alphabet_size) {
     DFA *dfa = (DFA *)malloc(sizeof(DFA));
@@ -73,14 +78,21 @@ void dfa_build(DFA *dfa, ASTNode *root) {
         int s_id = dfa_find_state(dfa, &current);
         DFAState *s = &dfa->states[s_id];
 
-        // Marcar estado de aceptación si contiene marcadores #
+        // Marcar estado de aceptación si contiene posiciones finales (#)
         for (int p = 0; p < MAX_POSITIONS; p++) {
-            if (set_contains(&current, p)) {
-                // token_id = p si es posición de marcador final
+            if (set_contains(&current, p) && pos_to_token[p] != 0) {
                 s->is_accept = 1;
-                s->token_id = p;
+                // Asignar token según el mapeo pos->token
+                s->token_id = pos_to_token[p];
+                // Si hay múltiples aceptaciones posibles, 
+                //puedes decidir priorizar:
+                // (por ejemplo, menor token_id 
+                //o un orden predefinido)
+                // Aquí simple toma el primero que aparece.
+                break;
             }
         }
+
 
         // Para cada símbolo del alfabeto
         for (int a = 0; a < dfa->alphabet_size; a++) {

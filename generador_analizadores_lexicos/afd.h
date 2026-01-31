@@ -4,6 +4,11 @@
 #include "ast.h"
 #include <stdlib.h>
 
+// Tabla global para mapear posiciones de hoja (#) a token IDs.
+// Debe inicializarse desde donde construyas el AST para cada token.
+extern int pos_to_token[MAX_POSITIONS];
+
+
 // Un estado del AFD
 typedef struct {
     PositionSet positions;  // conjunto de posiciones de este estado
