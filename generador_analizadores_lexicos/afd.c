@@ -4,11 +4,18 @@
 
 
 // Inicialización del mapa posición→token
-int pos_to_token[MAX_POSITIONS] = {0};
+int pos_to_token[MAX_POSITIONS];
 
+void init_pos_to_token() 
+{
+    for (int i = 0; i < MAX_POSITIONS; i++)
+        pos_to_token[i] = -1;
+}
 
 // Crear un AFD vacío
-DFA *dfa_create(char *alphabet, int alphabet_size) {
+DFA *dfa_create(char *alphabet, int alphabet_size) 
+{
+    init_pos_to_token();
     DFA *dfa = (DFA *)malloc(sizeof(DFA));
     dfa->count = 0;
     dfa->capacity = 16;
@@ -78,20 +85,22 @@ void dfa_build(DFA *dfa, ASTNode *root) {
         int s_id = dfa_find_state(dfa, &current);
         DFAState *s = &dfa->states[s_id];
 
-        // Marcar estado de aceptación si contiene posiciones finales (#)
-        for (int p = 0; p < MAX_POSITIONS; p++) {
-            if (set_contains(&current, p) && pos_to_token[p] != 0) {
+        s->is_accept = 0;
+        s->token_id = -1;
+        // Verificar si es estado de aceptación
+        for (int p = 0; p < MAX_POSITIONS; p++) 
+        {   
+            // Si la posición está en el conjunto y mapea a un token
+            if (set_contains(&current, p) && pos_to_token[p] != -1) {
                 s->is_accept = 1;
-                // Asignar token según el mapeo pos->token
-                s->token_id = pos_to_token[p];
-                // Si hay múltiples aceptaciones posibles, 
-                //puedes decidir priorizar:
-                // (por ejemplo, menor token_id 
-                //o un orden predefinido)
-                // Aquí simple toma el primero que aparece.
-                break;
+                // Elegir el token con menor ID (prioridad)
+                if (s->token_id == -1 ||
+                    pos_to_token[p] < s->token_id) {
+                    s->token_id = pos_to_token[p];
+                }
             }
         }
+
 
 
         // Para cada símbolo del alfabeto

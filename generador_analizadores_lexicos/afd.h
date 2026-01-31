@@ -28,6 +28,7 @@ typedef struct {
 } DFA;
 
 // Funciones principales
+void init_pos_to_token();
 DFA *dfa_create(char *alphabet, int alphabet_size);
 void dfa_free(DFA *dfa);
 void dfa_build(DFA *dfa, ASTNode *root);

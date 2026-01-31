@@ -146,10 +146,7 @@ void ast_compute_functions(ASTNode *node)
 
     switch (node->type) {
         case NODE_LEAF:
-            // Ya están inicializados en el constructor
-            // Nullable permanece como está
-            set_add(&node->firstpos, node->pos);
-            set_add(&node->lastpos, node->pos);
+            // Las hojas ya se inicializan al crearse
             break;
 
         case NODE_OR: {

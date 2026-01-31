@@ -27,7 +27,7 @@ Token lexer_next_token() {
 
         if (LEXER_INPUT[pos] == '\0') {
             Token tok;
-            tok.type = 0;      // indicar EOF si así lo defines
+            tok.type = TOKEN_EOF;     
             tok.lexeme = NULL;
             tok.length = 0;
             return tok;
