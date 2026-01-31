@@ -19,6 +19,7 @@ typedef struct {
     int       capacity;
     char     *alphabet;     // conjunto de símbolos
     int       alphabet_size;
+    int     **next_state; // tabla next_state[state][ascii]
 } DFA;
 
 // Funciones principales
@@ -28,5 +29,8 @@ void dfa_build(DFA *dfa, ASTNode *root);
 int  dfa_find_state(DFA *dfa, PositionSet *set);
 int  dfa_add_state(DFA *dfa, PositionSet *set);
 void dfa_print(DFA *dfa);
+
+void dfa_build_table(DFA *dfa);
+void dfa_simulate(DFA *dfa, const char *input);
 
 #endif // AFD_H

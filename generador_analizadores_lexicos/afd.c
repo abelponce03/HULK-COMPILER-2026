@@ -130,3 +130,58 @@ void dfa_print(DFA *dfa) {
         }
     }
 }
+
+// Construye la tabla next_state simple
+static void dfa_build_table(DFA *dfa) {
+    int n = dfa->count;
+    int A = 128; // ASCII 0..127
+
+    dfa->next_state = malloc(n * sizeof(int *));
+    for (int s = 0; s < n; s++) {
+        dfa->next_state[s] = calloc(A, sizeof(int));
+        for (int c = 0; c < A; c++) {
+            dfa->next_state[s][c] = -1;
+        }
+    }
+
+    for (int s = 0; s < n; s++) {
+        for (int a = 0; a < dfa->alphabet_size; a++) {
+            char sym = dfa->alphabet[a];
+            int tid = dfa->states[s].transitions[a];
+            if (tid != -1) {
+                dfa->next_state[s][(int)sym] = tid;
+            }
+        }
+    }
+}
+
+void dfa_simulate(DFA *dfa, const char *input) {
+    if (dfa->next_state == NULL) {
+        dfa_build_table(dfa);
+    }
+
+    int estado = 0;     // estado inicial
+    int pos = 0;
+    
+    while (input[pos]) {
+        unsigned char c = input[pos];
+        int sig = dfa->next_state[estado][c];
+
+        if (sig == -1) {
+            // transicion inválida
+            printf("Error lexico en '%c' (pos %d)\n", c, pos);
+            return;
+        }
+
+        estado = sig;
+        pos++;
+    }
+
+    if (dfa->states[estado].is_accept) {
+        printf("Cadena aceptada como token %d\n",
+               dfa->states[estado].token_id);
+    } else {
+        printf("Cadena NO aceptada\n");
+    }
+}
+
