@@ -1,2 +1,0 @@
-falta la construccion del dfa a partir del followpos
-y luego probarlo con el conjunto de tokens correspondientes
