@@ -1,0 +1,11 @@
+No-Terminal,CHAR,OR,STAR,PLUS,QUESTION,LPAREN,RPAREN,LBRACKET,RBRACKET,DOT,CARET,DASH,ESCAPE,$
+Regex,"Regex -> Concat ConcatTail","Regex -> Concat ConcatTail",,,,"Regex -> Concat ConcatTail","Regex -> Concat ConcatTail","Regex -> Concat ConcatTail",,"Regex -> Concat ConcatTail",,,"Regex -> Concat ConcatTail","Regex -> Concat ConcatTail"
+Concat,"Concat -> Repeat Concat","Concat -> ε",,,,"Concat -> Repeat Concat","Concat -> ε","Concat -> Repeat Concat",,"Concat -> Repeat Concat",,,"Concat -> Repeat Concat","Concat -> ε"
+ConcatTail,,"ConcatTail -> OR Concat ConcatTail",,,,,"ConcatTail -> ε",,,,,,,"ConcatTail -> ε"
+Repeat,"Repeat -> Atom Postfix",,,,,"Repeat -> Atom Postfix",,"Repeat -> Atom Postfix",,"Repeat -> Atom Postfix",,,"Repeat -> Atom Postfix",
+Postfix,"Postfix -> ε","Postfix -> ε","Postfix -> STAR","Postfix -> PLUS","Postfix -> QUESTION","Postfix -> ε","Postfix -> ε","Postfix -> ε",,"Postfix -> ε",,,"Postfix -> ε","Postfix -> ε"
+Atom,"Atom -> CHAR",,,,,"Atom -> LPAREN Regex RPAREN",,"Atom -> LBRACKET CharClass RBRACKET",,"Atom -> DOT",,,"Atom -> ESCAPE",
+CharClass,"CharClass -> CCItems",,,,,,,,"CharClass -> CCItems",,"CharClass -> CARET CCItems",,"CharClass -> CCItems",
+CCItems,"CCItems -> CCItem CCItems",,,,,,,,"CCItems -> ε",,,,"CCItems -> CCItem CCItems",
+CCItem,"CCItem -> CHAR RangeOpt",,,,,,,,,,,,"CCItem -> ESCAPE",
+RangeOpt,"RangeOpt -> ε",,,,,,,,"RangeOpt -> ε",,,"RangeOpt -> DASH CHAR","RangeOpt -> ε",

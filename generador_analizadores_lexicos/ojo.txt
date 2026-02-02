@@ -1,2 +1,0 @@
-la definicion de los tokens es a partir de expresiones regulares,
-como esta ahora es para pruebas, hay que corregir eso 

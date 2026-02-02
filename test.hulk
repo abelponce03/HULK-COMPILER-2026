@@ -1,1 +1,13 @@
-let x = 5;
+function factorial(n: Number): Number => 
+    if (n == 0) 1 
+    else n * factorial(n - 1);
+
+type Point(x: Number, y: Number) {
+    sum(): Number => self.x + self.y;
+    distance(): Number => (self.x ** 2 + self.y ** 2) ** 0.5;
+}
+
+let p = new Point(3, 4), 
+    fact5 = factorial(5) 
+in 
+    p.sum() + fact5;

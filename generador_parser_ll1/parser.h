@@ -31,6 +31,9 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
 // Imprime la tabla LL(1) (debugging)
 void ll1_table_print(LL1_Table* t, Grammar* g);
 
+// Exporta la tabla LL(1) a formato CSV
+int ll1_table_save_csv(LL1_Table* t, Grammar* g, const char* filename);
+
 // ============== SERIALIZACIÓN ==============
 
 // Guarda la tabla LL(1) en archivo binario

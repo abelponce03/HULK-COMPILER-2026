@@ -1,5 +1,0 @@
-actualmente no es un generador de parser ll(1)
-solo genera el parser ll(1) para una gramatica en especifico
-por eso hay q cambiar como estan definidos los simbolos 
-para hacerlo de forma dinamica y esto puede influir en muchas 
-funciones actuales.

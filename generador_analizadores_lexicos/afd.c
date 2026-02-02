@@ -19,7 +19,12 @@ DFA *dfa_create(char *alphabet, int alphabet_size)
     dfa->count = 0;
     dfa->capacity = 16;
     dfa->states = (DFAState *)malloc(sizeof(DFAState) * dfa->capacity);
-    dfa->alphabet = alphabet;
+    
+    // IMPORTANTE: Copiar el alfabeto porque puede ser una variable local
+    dfa->alphabet = (char *)malloc(alphabet_size + 1);
+    memcpy(dfa->alphabet, alphabet, alphabet_size);
+    dfa->alphabet[alphabet_size] = '\0';
+    
     dfa->alphabet_size = alphabet_size;
     dfa->next_state = NULL;
     dfa->ast_root = NULL;
@@ -35,6 +40,9 @@ void dfa_free(DFA *dfa) {
             free(dfa->states[i].transitions);
     }
     if (dfa->states) free(dfa->states);
+    
+    // Liberar alfabeto (ahora es memoria dinámica)
+    if (dfa->alphabet) free(dfa->alphabet);
     
     // Liberar tabla next_state
     if (dfa->next_state) {
@@ -91,31 +99,28 @@ void dfa_build(DFA *dfa, ASTNode *root) {
 
     // Cola para BFS - usar tamaño fijo grande
     int front = 0;
-    static PositionSet worklist[1024];
+    static PositionSet worklist[4096];  // Aumentar tamaño
     worklist[start_id] = start;
 
     while (front < dfa->count) {
         PositionSet current = worklist[front];
-        int s_id = dfa_find_state(dfa, &current);
-        DFAState *s = &dfa->states[s_id];
+        int s_id = front;  // El índice en worklist corresponde al id del estado
 
-        s->is_accept = 0;
-        s->token_id = -1;
         // Verificar si es estado de aceptación
+        dfa->states[s_id].is_accept = 0;
+        dfa->states[s_id].token_id = -1;
         for (int p = 0; p < MAX_POSITIONS; p++) 
         {   
             // Si la posición está en el conjunto y mapea a un token
             if (set_contains(&current, p) && pos_to_token[p] != -1) {
-                s->is_accept = 1;
+                dfa->states[s_id].is_accept = 1;
                 // Elegir el token con menor ID (prioridad)
-                if (s->token_id == -1 ||
-                    pos_to_token[p] < s->token_id) {
-                    s->token_id = pos_to_token[p];
+                if (dfa->states[s_id].token_id == -1 ||
+                    pos_to_token[p] < dfa->states[s_id].token_id) {
+                    dfa->states[s_id].token_id = pos_to_token[p];
                 }
             }
         }
-
-
 
         // Para cada símbolo del alfabeto
         for (int a = 0; a < dfa->alphabet_size; a++) {
@@ -142,9 +147,12 @@ void dfa_build(DFA *dfa, ASTNode *root) {
             int to_id = dfa_find_state(dfa, &next);
             if (to_id == -1) {
                 to_id = dfa_add_state(dfa, &next);
-                worklist[to_id] = next;
+                if (to_id < 4096) {  // Verificar límites
+                    worklist[to_id] = next;
+                }
             }
-            s->transitions[a] = to_id;
+            // IMPORTANTE: Acceder siempre por índice después de posible realloc
+            dfa->states[s_id].transitions[a] = to_id;
         }
 
         front++;
@@ -222,3 +230,132 @@ void dfa_simulate(DFA *dfa, const char *input) {
     }
 }
 
+// ============== EXPORTACIÓN A DOT (Graphviz) ==============
+
+// Escapa caracteres especiales para DOT
+static void escape_char_dot(char c, char* buf) {
+    if (c == '\\') strcpy(buf, "\\\\");
+    else if (c == '"') strcpy(buf, "\\\"");
+    else if (c == '\n') strcpy(buf, "\\n");
+    else if (c == '\t') strcpy(buf, "\\t");
+    else if (c == '\r') strcpy(buf, "\\r");
+    else if (c == ' ') strcpy(buf, "␣");
+    else if (c < 32 || c > 126) sprintf(buf, "0x%02X", (unsigned char)c);
+    else { buf[0] = c; buf[1] = '\0'; }
+}
+
+int dfa_save_dot(DFA *dfa, const char *filename, const char** token_names) {
+    FILE *f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        return 0;
+    }
+    
+    fprintf(f, "digraph DFA {\n");
+    fprintf(f, "    rankdir=LR;\n");
+    fprintf(f, "    node [shape=circle];\n");
+    fprintf(f, "    \n");
+    
+    // Nodo inicial invisible
+    fprintf(f, "    start [shape=point];\n");
+    fprintf(f, "    start -> q0;\n\n");
+    
+    // Definir estados
+    for (int i = 0; i < dfa->count; i++) {
+        DFAState *s = &dfa->states[i];
+        if (s->is_accept) {
+            const char* tname = token_names && s->token_id >= 0 ? token_names[s->token_id] : "?";
+            fprintf(f, "    q%d [shape=doublecircle, label=\"q%d\\n(%s)\"];\n", 
+                    i, i, tname);
+        } else {
+            fprintf(f, "    q%d [label=\"q%d\"];\n", i, i);
+        }
+    }
+    fprintf(f, "\n");
+    
+    // Agrupar transiciones por (origen, destino) para compactar etiquetas
+    for (int i = 0; i < dfa->count; i++) {
+        // Crear mapa de destino -> lista de símbolos
+        for (int j = 0; j < dfa->count; j++) {
+            char symbols[512] = "";
+            int sym_count = 0;
+            
+            for (int a = 0; a < dfa->alphabet_size; a++) {
+                if (dfa->states[i].transitions[a] == j) {
+                    char escaped[16];
+                    escape_char_dot(dfa->alphabet[a], escaped);
+                    
+                    if (sym_count > 0) strcat(symbols, ",");
+                    strcat(symbols, escaped);
+                    sym_count++;
+                    
+                    // Limitar longitud de etiqueta
+                    if (strlen(symbols) > 40) {
+                        strcat(symbols, "...");
+                        break;
+                    }
+                }
+            }
+            
+            if (sym_count > 0) {
+                fprintf(f, "    q%d -> q%d [label=\"%s\"];\n", i, j, symbols);
+            }
+        }
+    }
+    
+    fprintf(f, "}\n");
+    fclose(f);
+    
+    printf("DFA exportado a DOT: %s\n", filename);
+    printf("  Para visualizar: dot -Tpng %s -o dfa.png\n", filename);
+    return 1;
+}
+
+// ============== EXPORTACIÓN A CSV ==============
+
+int dfa_save_csv(DFA *dfa, const char *filename, const char** token_names) {
+    FILE *f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        return 0;
+    }
+    
+    // Encabezado: Estado, Es_Aceptacion, Token, y cada símbolo del alfabeto
+    fprintf(f, "Estado,Es_Aceptacion,Token");
+    for (int a = 0; a < dfa->alphabet_size; a++) {
+        char c = dfa->alphabet[a];
+        if (c == ',') fprintf(f, ",\"comma\"");
+        else if (c == '\n') fprintf(f, ",\"\\n\"");
+        else if (c == '\t') fprintf(f, ",\"\\t\"");
+        else if (c == '\r') fprintf(f, ",\"\\r\"");
+        else if (c == ' ') fprintf(f, ",\" \"");
+        else if (c < 32 || c > 126) fprintf(f, ",\"0x%02X\"", (unsigned char)c);
+        else fprintf(f, ",%c", c);
+    }
+    fprintf(f, "\n");
+    
+    // Filas: cada estado
+    for (int i = 0; i < dfa->count; i++) {
+        DFAState *s = &dfa->states[i];
+        const char* tname = "";
+        if (s->is_accept && token_names && s->token_id >= 0) {
+            tname = token_names[s->token_id];
+        }
+        
+        fprintf(f, "q%d,%d,%s", i, s->is_accept, tname);
+        
+        for (int a = 0; a < dfa->alphabet_size; a++) {
+            int next = s->transitions[a];
+            if (next == -1) {
+                fprintf(f, ",");
+            } else {
+                fprintf(f, ",q%d", next);
+            }
+        }
+        fprintf(f, "\n");
+    }
+    
+    fclose(f);
+    printf("DFA exportado a CSV: %s\n", filename);
+    return 1;
+}

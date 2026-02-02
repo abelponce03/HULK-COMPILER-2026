@@ -40,4 +40,8 @@ void dfa_print(DFA *dfa);
 void dfa_build_table(DFA *dfa);
 void dfa_simulate(DFA *dfa, const char *input);
 
+// Exportación para visualización
+int dfa_save_dot(DFA *dfa, const char *filename, const char** token_names);
+int dfa_save_csv(DFA *dfa, const char *filename, const char** token_names);
+
 #endif // AFD_H

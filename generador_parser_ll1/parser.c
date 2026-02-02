@@ -73,6 +73,10 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
     for (int p = 0; p < g->prod_count; p++) {
         Production* prod = &g->productions[p];
         int A = prod->left;
+        
+        // Determinar si es producción epsilon
+        int is_epsilon_prod = (prod->right_count == 0 || 
+                               (prod->right_count == 1 && prod->right[0].type == SYMBOL_EPSILON));
 
         // FIRST(α)
         First_Set first_alpha;
@@ -91,8 +95,18 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
                     fprintf(stderr, "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d\n",
                             g->nt_names[A], a, ll1->table[A][col], p);
                     is_ll1 = 0;
+                    // Preferir la producción NO epsilon
+                    Production* existing = &g->productions[ll1->table[A][col]];
+                    int existing_is_epsilon = (existing->right_count == 0 || 
+                                               (existing->right_count == 1 && existing->right[0].type == SYMBOL_EPSILON));
+                    // Si la existente es epsilon y la nueva no, usar la nueva
+                    if (existing_is_epsilon && !is_epsilon_prod) {
+                        ll1->table[A][col] = p;
+                    }
+                    // Si la nueva es epsilon, mantener la existente
+                } else {
+                    ll1->table[A][col] = p;
                 }
-                ll1->table[A][col] = p;
             }
         }
 
@@ -109,8 +123,11 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
                         fprintf(stderr, "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d\n",
                                 g->nt_names[A], b, ll1->table[A][col], p);
                         is_ll1 = 0;
+                        // Preferir la producción NO epsilon (que ya existe)
+                        // No sobrescribir con producción epsilon
+                    } else {
+                        ll1->table[A][col] = p;
                     }
-                    ll1->table[A][col] = p;
                 }
             }
         }
@@ -144,6 +161,67 @@ void ll1_table_print(LL1_Table* t, Grammar* g)
         }
         printf("\n");
     }
+}
+
+// ============== EXPORTAR A CSV ==============
+
+int ll1_table_save_csv(LL1_Table* t, Grammar* g, const char* filename)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        return 0;
+    }
+    
+    // Encabezado CSV
+    fprintf(f, "No-Terminal");
+    for (int j = 0; j < g->t_count; j++) {
+        fprintf(f, ",%s", g->t_names[j]);
+    }
+    fprintf(f, ",$\n");
+    
+    // Filas con producciones
+    for (int i = 0; i < t->nt_count; i++) {
+        fprintf(f, "%s", g->nt_names[i]);
+        for (int j = 0; j < t->t_count; j++) {
+            int p = t->table[i][j];
+            if (p == NO_PRODUCTION) {
+                fprintf(f, ",");
+            } else if (p == SYNC_ENTRY) {
+                fprintf(f, ",sync");
+            } else {
+                // Escribir la producción completa
+                Production* prod = &g->productions[p];
+                fprintf(f, ",\"%s ->", g->nt_names[prod->left]);
+                if (prod->right_count == 0) {
+                    fprintf(f, " ε");
+                } else {
+                    for (int k = 0; k < prod->right_count; k++) {
+                        GrammarSymbol* s = &prod->right[k];
+                        if (s->type == SYMBOL_TERMINAL) {
+                            // Buscar nombre del terminal
+                            const char* tname = "?";
+                            for (int ti = 0; ti < g->t_count; ti++) {
+                                if (g->terminals[ti] == s->id) {
+                                    tname = g->t_names[ti];
+                                    break;
+                                }
+                            }
+                            fprintf(f, " %s", tname);
+                        } else {
+                            fprintf(f, " %s", g->nt_names[s->id]);
+                        }
+                    }
+                }
+                fprintf(f, "\"");
+            }
+        }
+        fprintf(f, "\n");
+    }
+    
+    fclose(f);
+    printf("Tabla LL(1) exportada a CSV: %s\n", filename);
+    return 1;
 }
 
 // ============== SERIALIZACIÓN ==============

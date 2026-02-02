@@ -1,7 +1,7 @@
-Program      -> StmtList
-StmtList     -> TerminatedStmt StmtList | ε
+Program      -> TopLevel Program | ε
+TopLevel     -> FunctionDef | TypeDef | TerminatedStmt
 TerminatedStmt -> Stmt SEMICOLON
-Stmt         -> Expr | WhileStmt | ForStmt | BlockStmt | FunctionDef | TypeDef
+Stmt         -> Expr | WhileStmt | ForStmt | BlockStmt
 FunctionDef  -> FUNCTION IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
 TypeDef      -> TYPE IDENT TypeParams TypeInheritance LBRACE TypeBody RBRACE
 TypeParams   -> LPAREN ArgIdList RPAREN | ε
@@ -9,19 +9,21 @@ TypeInheritance -> INHERITS IDENT TypeBaseArgs | ε
 TypeBaseArgs -> LPAREN ArgList RPAREN | ε
 TypeBody     -> TypeMember TypeBody | ε
 TypeMember   -> IDENT TypeMemberTail
-TypeMemberTail -> TypeAnnotation TypeMemberTail' | LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody SEMICOLON
+TypeMemberTail -> TypeAnnotation TypeMemberTail' | LPAREN ArgIdList RPAREN TypeAnnotation MethodBody
 TypeMemberTail' -> SEMICOLON | ASSIGN Expr SEMICOLON
 AttributeDef -> IDENT ASSIGN Expr SEMICOLON
 MethodDef    -> IDENT LPAREN ArgIdList RPAREN FunctionBody
+MethodBody   -> ARROW Expr SEMICOLON | BlockStmt
 ArgIdList    -> ArgId ArgIdListTail | ε
 ArgIdListTail-> COMMA ArgId ArgIdListTail | ε
 ArgId        -> IDENT TypeAnnotation
-FunctionBody -> ARROW Expr | BlockStmt
+FunctionBody -> ARROW Expr SEMICOLON | BlockStmt
 WhileStmt    -> WHILE Expr WhileBody
 WhileBody    -> BlockStmt | Expr
 ForStmt      -> FOR LPAREN IDENT IN Expr RPAREN ForBody
 ForBody      -> BlockStmt | Expr
 BlockStmt    -> LBRACE StmtList RBRACE
+StmtList     -> TerminatedStmt StmtList | ε
 Expr         -> OrExpr | IfExpr | LetExpr
 LetExpr      -> LET VarBindingList IN LetBody
 LetBody      -> Expr | WhileStmt | ForStmt | BlockStmt

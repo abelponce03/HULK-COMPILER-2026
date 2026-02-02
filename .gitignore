@@ -1,0 +1,3 @@
+*.o
+generador_analizadores_lexicos/context_generador_analizadores_lexicos.txt
+generador_parser_ll1/context_generador_parser_ll1.txt

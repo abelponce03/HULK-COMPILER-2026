@@ -152,6 +152,9 @@ int grammar_find_terminal(Grammar* g, const char* name);
 // Carga gramática desde archivo .ll1
 int grammar_load_from_file(Grammar* g, const char* filename);
 
+// Carga gramática HULK desde archivo con mapeo de tokens
+int grammar_load_hulk(Grammar* g, const char* filename);
+
 // Imprime la gramática (debugging)
 void grammar_print(Grammar* g);
 

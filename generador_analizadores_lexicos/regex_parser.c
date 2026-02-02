@@ -112,6 +112,9 @@ void regex_parser_init(void) {
         fprintf(stderr, "Advertencia: la gramática de regex tiene conflictos LL(1)\n");
     }
     
+    // Exportar tabla LL(1) de regex a CSV
+    ll1_table_save_csv(&regex_ll1, &regex_grammar, "output/regex_ll1_table.csv");
+    
     regex_parser_initialized = 1;
 }
 
