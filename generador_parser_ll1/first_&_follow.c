@@ -1,51 +1,45 @@
 #include "first_&_follow.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
-//El objetivo es inicializar cada conjunto First vacio
-//con count = 0 y has_epsilon = 0
+// ============== FUNCIONES DE FIRST SET ==============
+
 void first_table_init(First_Table* table) {
     if (!table) return;
 
-    // Recorremos todos los posibles índices
     for (int i = 0; i < MAX_SYMBOLS; i++) {
         table->first[i].count = 0;
         table->first[i].has_epsilon = 0;
-        // Opcional: inicializar array elements a -1
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             table->first[i].elements[j] = -1;
         }
     }
 }
 
-//Agrega un simbolo a un First_Set si no esta ya presente
-static int first_set_add(First_Set* set, int symbol)
+int first_set_add(First_Set* set, int symbol)
 {
     for(int i = 0; i < set->count; i++)
     {
-        //Ya esta presente
         if(set->elements[i] == symbol) return 0;     
     }
     if(set->count < MAX_SYMBOLS)
     {
         set->elements[set->count++] = symbol;
-        return 1; // NO ESTABA PRESENTE
+        return 1;
     }
-    return 0; //No se pudo agregar (lleno)
+    return 0;
 }
 
-//Union de sets: FIRST(A) ← FIRST(A) ∪ FIRST(α)
-static int first_set_union(First_Set* First_A, First_Set* First_α)
+int first_set_union(First_Set* First_A, First_Set* First_alpha)
 {
     int changed = 0;
-    //Agregar todos los elementos de First(α) a First(A)
-    for(int i = 0; i < First_α->count; i++)
+    for(int i = 0; i < First_alpha->count; i++)
     {
-        if(first_set_add(First_A, First_α->elements[i]))
+        if(first_set_add(First_A, First_alpha->elements[i]))
             changed = 1;
     }
-    //Manejar epsilon
-    if(First_α->has_epsilon && !First_A->has_epsilon)
+    if(First_alpha->has_epsilon && !First_A->has_epsilon)
     {
         First_A->has_epsilon = 1;
         changed = 1;
@@ -53,11 +47,26 @@ static int first_set_union(First_Set* First_A, First_Set* First_α)
     return changed;
 }
 
-//Calcula FIRST de una secuencia α (array de GrammarSymbol)
-static void first_of_sequence(First_Table* table, GrammarSymbol* seq, int n, First_Set* result)
+int first_set_contains(First_Set* set, int symbol)
+{
+    for(int i = 0; i < set->count; i++)
+    {
+        if(set->elements[i] == symbol) return 1;
+    }
+    return 0;
+}
+
+void first_of_sequence(First_Table* table, GrammarSymbol* seq, int n, First_Set* result)
 {
     result->count = 0;
     result->has_epsilon = 0;
+    
+    // Secuencia vacía -> ε está en FIRST
+    if (n == 0) {
+        result->has_epsilon = 1;
+        return;
+    }
+    
     int all_have_epsilon = 1;
 
     for(int i = 0; i < n; i++)
@@ -65,7 +74,7 @@ static void first_of_sequence(First_Table* table, GrammarSymbol* seq, int n, Fir
         int index = symbol_index(seq[i]);
         First_Set* fs = &table->first[index];
 
-        //Agregamos FIRST(seq[i]) - {ε}
+        // Agregamos FIRST(seq[i]) - {ε}
         for(int j = 0; j < fs->count; j++)
         {
             first_set_add(result, fs->elements[j]);
@@ -74,25 +83,23 @@ static void first_of_sequence(First_Table* table, GrammarSymbol* seq, int n, Fir
         if(!fs->has_epsilon)
         {
             all_have_epsilon = 0;
-            break; //Detener al no encontrar simbolo que no deriva ε
+            break;
         }
     }
-    //Si todos los simbolos derivan ε, entonces ε ∈ FIRST(α)
+    
     if(all_have_epsilon)
     {
         result->has_epsilon = 1;
     }
 }
 
-//Calculo global de la tabla FIRST (iterativo)
-//Esto calcula First para todos los simbolos
 void compute_first_sets(Grammar* g, First_Table* table)
 {
     if(!g || !table) return;
 
-    first_table_init(table); // inicializamos todo a vacio
+    first_table_init(table);
 
-    //inicializar FIRST de terminales: FIRST(a) = {a}
+    // Inicializar FIRST de terminales: FIRST(a) = {a}
     for(int i = 0; i < g->t_count; i++)
     {
         GrammarSymbol s = {SYMBOL_TERMINAL, g->terminals[i]};
@@ -102,13 +109,12 @@ void compute_first_sets(Grammar* g, First_Table* table)
         first_set_add(&table->first[index], g->terminals[i]);
     }
 
-    //Iterativo hasta que no haya cambios (convergencia)
+    // Iterativo hasta convergencia
     int changed;
     do 
     {
         changed = 0;
 
-        //Recorrer todas las producciones
         for(int p = 0; p < g->prod_count; p++)
         {
             Production* prod = &g->productions[p];
@@ -121,16 +127,14 @@ void compute_first_sets(Grammar* g, First_Table* table)
             {
                 changed = 1;
             }
-
         }
     }
     while(changed);
 }
 
+// ============== FUNCIONES DE FOLLOW SET ==============
 
-//Todo lo relacionado con el conjunto follow a partir de aqui
-
-static int follow_set_add(Follow_Set* set, int symbol)
+int follow_set_add(Follow_Set* set, int symbol)
 {
     for(int i = 0; i < set->count; i++)
     {
@@ -140,13 +144,13 @@ static int follow_set_add(Follow_Set* set, int symbol)
     if(set->count < MAX_SYMBOLS)
     {
         set->elements[set->count++] = symbol;
-        return 1; // NO ESTABA PRESENTE
+        return 1;
     }
 
-    return 0; //No se pudo agregar (lleno)
+    return 0;
 }
 
-static int follow_set_union(Follow_Set* Follow_A, Follow_Set* Follow_B)
+int follow_set_union(Follow_Set* Follow_A, Follow_Set* Follow_B)
 {
     int changed = 0;
     for(int i = 0; i < Follow_B->count; i++)
@@ -157,17 +161,28 @@ static int follow_set_union(Follow_Set* Follow_A, Follow_Set* Follow_B)
     return changed;
 }
 
+int follow_set_contains(Follow_Set* set, int symbol)
+{
+    for(int i = 0; i < set->count; i++)
+    {
+        if(set->elements[i] == symbol) return 1;
+    }
+    return 0;
+}
 
 void follow_table_init(Follow_Table* table, Grammar* g)
 {
     if(!table || !g) return;
 
-    for(int i = 0; i < g->nt_count; i++)
+    for(int i = 0; i < MAX_SYMBOLS; i++)
     {
         table->follow[i].count = 0;
     }
 
-    follow_set_add(&table->follow[g->start_symbol], END_MARKER);
+    // $ ∈ FOLLOW(S)
+    if (g->start_symbol >= 0) {
+        follow_set_add(&table->follow[g->start_symbol], END_MARKER);
+    }
 }
 
 void compute_follow_sets(Grammar* g, First_Table* first_table, Follow_Table* follow_table)
@@ -182,18 +197,15 @@ void compute_follow_sets(Grammar* g, First_Table* first_table, Follow_Table* fol
     {
         changed = 0;
 
-        //Recorremos todas las producciones
         for(int p = 0; p < g->prod_count; p++)
         {
             Production* prod = &g->productions[p];
-            NonTerminal A = prod->left;
+            int A = prod->left;
             
-            //Recorremos el lado derecho
             for(int i = 0; i < prod->right_count; i++)
             {
                 GrammarSymbol Xi = prod->right[i];
 
-                //Solo interesa si Xi es NO TERMINAL
                 if(Xi.type != SYMBOL_NON_TERMINAL) continue;
 
                 // β = Xi+1 ... Xn
@@ -214,29 +226,79 @@ void compute_follow_sets(Grammar* g, First_Table* first_table, Follow_Table* fol
                 {
                     first_of_sequence(first_table, beta, beta_len, &first_beta);
 
-                    //FIRST(β) - {ε} ⊆ FOLLOW(Xi)
+                    // FIRST(β) - {ε} ⊆ FOLLOW(Xi)
                     for (int k = 0; k < first_beta.count; k++)
                     {
-                        if (follow_set_add(
-                            &follow_table->follow[Xi.id],
-                            first_beta.elements[k]
-                        ))
-                        changed = 1;
+                        if (follow_set_add(&follow_table->follow[Xi.id], first_beta.elements[k]))
+                            changed = 1;
                     }
                 }
 
                 // Si β ⇒* ε o β es vacío
                 if(beta_len == 0 || first_beta.has_epsilon)
                 {
-                    if(follow_set_union(
-                        &follow_table->follow[Xi.id],
-                        &follow_table->follow[A]
-                    ))
-                    changed = 1;
+                    if(follow_set_union(&follow_table->follow[Xi.id], &follow_table->follow[A]))
+                        changed = 1;
                 }
             }
         }
 
-    }while (changed);
+    } while (changed);
+}
+
+// ============== DEBUG ==============
+
+void print_first_sets(Grammar* g, First_Table* table) {
+    printf("\n=== FIRST Sets ===\n");
     
+    for (int i = 0; i < g->nt_count; i++) {
+        printf("FIRST(%s) = {", g->nt_names[i]);
+        
+        First_Set* fs = &table->first[NT_OFFSET + i];
+        for (int j = 0; j < fs->count; j++) {
+            if (j > 0) printf(", ");
+            // Buscar nombre del terminal
+            int found = 0;
+            for (int k = 0; k < g->t_count; k++) {
+                if (g->terminals[k] == fs->elements[j]) {
+                    printf("%s", g->t_names[k]);
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) printf("t%d", fs->elements[j]);
+        }
+        if (fs->has_epsilon) {
+            if (fs->count > 0) printf(", ");
+            printf("ε");
+        }
+        printf("}\n");
+    }
+}
+
+void print_follow_sets(Grammar* g, Follow_Table* table) {
+    printf("\n=== FOLLOW Sets ===\n");
+    
+    for (int i = 0; i < g->nt_count; i++) {
+        printf("FOLLOW(%s) = {", g->nt_names[i]);
+        
+        Follow_Set* fs = &table->follow[i];
+        for (int j = 0; j < fs->count; j++) {
+            if (j > 0) printf(", ");
+            if (fs->elements[j] == END_MARKER) {
+                printf("$");
+            } else {
+                int found = 0;
+                for (int k = 0; k < g->t_count; k++) {
+                    if (g->terminals[k] == fs->elements[j]) {
+                        printf("%s", g->t_names[k]);
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) printf("t%d", fs->elements[j]);
+            }
+        }
+        printf("}\n");
+    }
 }

@@ -24,11 +24,12 @@ typedef struct {
     int       capacity;
     char     *alphabet;     // conjunto de símbolos
     int       alphabet_size;
-    int     **next_state; // tabla next_state[state][ascii]
+    int     **next_state;   // tabla next_state[state][ascii]
+    ASTNode  *ast_root;     // referencia al AST para buscar hojas
 } DFA;
 
 // Funciones principales
-void init_pos_to_token();
+void init_pos_to_token(void);
 DFA *dfa_create(char *alphabet, int alphabet_size);
 void dfa_free(DFA *dfa);
 void dfa_build(DFA *dfa, ASTNode *root);

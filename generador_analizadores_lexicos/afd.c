@@ -15,22 +15,36 @@ void init_pos_to_token()
 // Crear un AFD vacío
 DFA *dfa_create(char *alphabet, int alphabet_size) 
 {
-    init_pos_to_token();
     DFA *dfa = (DFA *)malloc(sizeof(DFA));
     dfa->count = 0;
     dfa->capacity = 16;
     dfa->states = (DFAState *)malloc(sizeof(DFAState) * dfa->capacity);
     dfa->alphabet = alphabet;
     dfa->alphabet_size = alphabet_size;
+    dfa->next_state = NULL;
+    dfa->ast_root = NULL;
     return dfa;
 }
 
 // Liberar memoria del AFD
 void dfa_free(DFA *dfa) {
+    if (!dfa) return;
+    
     for (int i = 0; i < dfa->count; i++) {
-        free(dfa->states[i].transitions);
+        if (dfa->states[i].transitions)
+            free(dfa->states[i].transitions);
     }
-    free(dfa->states);
+    if (dfa->states) free(dfa->states);
+    
+    // Liberar tabla next_state
+    if (dfa->next_state) {
+        for (int i = 0; i < dfa->count; i++) {
+            if (dfa->next_state[i])
+                free(dfa->next_state[i]);
+        }
+        free(dfa->next_state);
+    }
+    
     free(dfa);
 }
 
@@ -75,9 +89,9 @@ void dfa_build(DFA *dfa, ASTNode *root) {
     PositionSet start = root->firstpos;
     int start_id = dfa_add_state(dfa, &start);
 
-    // Cola para BFS
+    // Cola para BFS - usar tamaño fijo grande
     int front = 0;
-    PositionSet worklist[dfa->capacity];
+    static PositionSet worklist[1024];
     worklist[start_id] = start;
 
     while (front < dfa->count) {
@@ -153,7 +167,9 @@ void dfa_print(DFA *dfa) {
 }
 
 // Construye la tabla next_state simple
-static void dfa_build_table(DFA *dfa) {
+void dfa_build_table(DFA *dfa) {
+    if (dfa->next_state != NULL) return; // Ya construida
+    
     int n = dfa->count;
     int A = 128; // ASCII 0..127
 
@@ -167,10 +183,10 @@ static void dfa_build_table(DFA *dfa) {
 
     for (int s = 0; s < n; s++) {
         for (int a = 0; a < dfa->alphabet_size; a++) {
-            char sym = dfa->alphabet[a];
+            unsigned char sym = (unsigned char)dfa->alphabet[a];
             int tid = dfa->states[s].transitions[a];
             if (tid != -1) {
-                dfa->next_state[s][(int)sym] = tid;
+                dfa->next_state[s][sym] = tid;
             }
         }
     }
