@@ -521,11 +521,14 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
     }
     
     // Primero, leer todo el archivo y unir líneas de continuación
-    char full_content[32768] = {0};  // Buffer grande para todo el archivo
+    size_t content_cap = 65536;
+    char* full_content = calloc(content_cap, 1);
+    if (!full_content) {
+        fprintf(stderr, "Error: sin memoria para buffer de gramática\n");
+        fclose(f);
+        return 0;
+    }
     char line[1024];
-    
-    int last_had_arrow = 0;  // Si la última línea tenía ->
-    int current_left_nt = -1;  // No terminal actual para continuaciones
     
     while (fgets(line, sizeof(line), f)) {
         char* trimmed = str_trim(line);
@@ -555,7 +558,6 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
     
     // Ahora parsear el contenido unido
     char* content = full_content;
-    char* line_start = content;
     
     while (*content) {
         // Buscar fin de línea o fin de string
@@ -665,6 +667,7 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
     
     printf("Gramática HULK cargada: %d no-terminales, %d terminales, %d producciones\n",
            g->nt_count, g->t_count, g->prod_count);
+    free(full_content);
     return 1;
 }
 

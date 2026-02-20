@@ -24,8 +24,7 @@ typedef struct {
     int       capacity;
     char     *alphabet;     // conjunto de símbolos
     int       alphabet_size;
-    int     **next_state;   // tabla next_state[state][ascii]
-    ASTNode  *ast_root;     // referencia al AST para buscar hojas
+    int     **next_state;   // tabla next_state[state][byte], 256 entradas
 } DFA;
 
 // Funciones principales

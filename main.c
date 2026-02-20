@@ -100,17 +100,9 @@ const char* get_token_name(int type) {
 
 static DFA* g_dfa = NULL;
 
-// Callback para el parser: obtiene el siguiente token (ignorando WS y COMMENT)
-Token parser_get_token(void* ctx) {
-    (void)ctx;
-    while (1) {
-        Token t = lexer_next_token();
-        // Ignorar whitespace y comentarios
-        if (t.type != TOKEN_WS && t.type != TOKEN_COMMENT) {
-            return t;
-        }
-        if (t.lexeme) free(t.lexeme);
-    }
+// Callback para el parser: obtiene el siguiente token del LexerContext
+static Token parser_get_token(void* ctx) {
+    return lexer_next_token((LexerContext*)ctx);
 }
 
 // ============== CONSTRUCCIÓN DEL LEXER ==============
@@ -133,6 +125,7 @@ DFA* build_hulk_lexer(void) {
     
     printf("Calculando funciones del AST...\n");
     ast_compute_functions(ast);
+    ast_build_leaf_index(ast);
     ast_compute_followpos(ast);
     
     // Alfabeto ASCII imprimible + whitespace
@@ -167,24 +160,17 @@ void test_lexer(DFA* dfa, const char* input) {
     printf("\n--- INPUT ---\n%s\n", input);
     printf("\n--- TOKENS ---\n");
     
-    // Construir tabla si no existe
-    if (dfa->next_state == NULL) {
-        dfa_build_table(dfa);
-    }
-    
-    lexer_init(dfa, input);
+    LexerContext lctx;
+    lexer_init(&lctx, dfa, input);
     
     while (1) {
-        Token t = lexer_next_token();
+        Token t = lexer_next_token(&lctx);
         if (t.type == TOKEN_EOF) {
             printf("[EOF]\n");
             break;
         }
         
-        // No imprimir whitespace
-        if (t.type != TOKEN_WS && t.type != TOKEN_COMMENT) {
-            printf("%-12s \"%s\"\n", get_token_name(t.type), t.lexeme);
-        }
+        printf("[%d:%d] %-12s \"%s\"\n", t.line, t.col, get_token_name(t.type), t.lexeme);
         free(t.lexeme);
     }
     
@@ -279,11 +265,12 @@ void test_parser(DFA* dfa, const char* input, const char* grammar_file) {
     printf("INPUT: %s\n", input);
     
     ParserContext ctx;
-    parser_init(&ctx, &grammar, &ll1);
-    parser_set_lexer(&ctx, parser_get_token, NULL);
+    parser_init(&ctx, &grammar, &ll1, &follow);
     
     // Inicializar lexer con la entrada
-    lexer_init(dfa, input);
+    LexerContext lctx;
+    lexer_init(&lctx, dfa, input);
+    parser_set_lexer(&ctx, parser_get_token, &lctx);
     
     // 5. Ejecutar parsing
     int result = parser_parse(&ctx);

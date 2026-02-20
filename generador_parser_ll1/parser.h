@@ -70,6 +70,7 @@ typedef struct
 typedef struct {
     Grammar* grammar;
     LL1_Table* table;
+    Follow_Table* follow;  // Para recuperación de errores (panic mode)
     ParserStack stack;
     
     // Funciones de callback para obtener tokens
@@ -79,16 +80,15 @@ typedef struct {
     // Token actual (lookahead)
     Token lookahead;
     
-    // Para reportar errores
+    // Control de errores
     int error_count;
-    int line;
-    int column;
+    int max_errors;  // Límite antes de abortar (0 = sin límite)
 } ParserContext;
 
 // ============== FUNCIONES DEL PARSER ==============
 
 // Inicializa el contexto del parser
-void parser_init(ParserContext* ctx, Grammar* g, LL1_Table* table);
+void parser_init(ParserContext* ctx, Grammar* g, LL1_Table* table, Follow_Table* follow);
 
 // Configura el lexer para el parser
 void parser_set_lexer(ParserContext* ctx, Token (*get_token)(void*), void* lexer_ctx);

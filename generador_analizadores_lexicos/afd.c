@@ -27,7 +27,6 @@ DFA *dfa_create(char *alphabet, int alphabet_size)
     
     dfa->alphabet_size = alphabet_size;
     dfa->next_state = NULL;
-    dfa->ast_root = NULL;
     return dfa;
 }
 
@@ -91,30 +90,34 @@ int dfa_add_state(DFA *dfa, PositionSet *set) {
     return id;
 }
 
-// Construir el AFD desde el AST
+// Algoritmo 3.36 (Dragon Book): Construcción directa de DFA desde AST
+// Precondición: leaf_at[] y followpos[] ya calculados
 void dfa_build(DFA *dfa, ASTNode *root) {
-    // Estado inicial
+    // Estado inicial = firstpos(root)
     PositionSet start = root->firstpos;
-    int start_id = dfa_add_state(dfa, &start);
+    dfa_add_state(dfa, &start);
 
-    // Cola para BFS - usar tamaño fijo grande
+    // Worklist dinámico indexado por ID de estado
+    int wl_cap = 256;
+    PositionSet *worklist = malloc(sizeof(PositionSet) * wl_cap);
+    if (!worklist) {
+        fprintf(stderr, "Error: sin memoria para worklist\n");
+        return;
+    }
+    worklist[0] = start;
+
     int front = 0;
-    static PositionSet worklist[4096];  // Aumentar tamaño
-    worklist[start_id] = start;
-
     while (front < dfa->count) {
         PositionSet current = worklist[front];
-        int s_id = front;  // El índice en worklist corresponde al id del estado
+        int s_id = front;
 
-        // Verificar si es estado de aceptación
+        // Determinar aceptación: posición # con token asociado
         dfa->states[s_id].is_accept = 0;
         dfa->states[s_id].token_id = -1;
-        for (int p = 0; p < MAX_POSITIONS; p++) 
-        {   
-            // Si la posición está en el conjunto y mapea a un token
+        for (int p = 0; p < MAX_POSITIONS; p++) {
             if (set_contains(&current, p) && pos_to_token[p] != -1) {
                 dfa->states[s_id].is_accept = 1;
-                // Elegir el token con menor ID (prioridad)
+                // Menor token_id = mayor prioridad (keywords antes que IDENT)
                 if (dfa->states[s_id].token_id == -1 ||
                     pos_to_token[p] < dfa->states[s_id].token_id) {
                     dfa->states[s_id].token_id = pos_to_token[p];
@@ -122,41 +125,45 @@ void dfa_build(DFA *dfa, ASTNode *root) {
             }
         }
 
-        // Para cada símbolo del alfabeto
+        // Para cada símbolo del alfabeto, calcular transición
         for (int a = 0; a < dfa->alphabet_size; a++) {
             char sym = dfa->alphabet[a];
             PositionSet next;
             set_init(&next);
 
-            // Recolectar uniones de followpos
+            // U = ∪ followpos(p) para p ∈ current donde symbol(p) == sym
             for (int p = 0; p < MAX_POSITIONS; p++) {
                 if (set_contains(&current, p)) {
-                    // Obtener símbolo en la posición p
-                    ASTNode *leaf = find_leaf_by_pos(root, p);
+                    ASTNode *leaf = leaf_at[p];  // O(1) en vez de O(n)
                     if (leaf && leaf->symbol == sym) {
                         set_union(&next, &next, &followpos[p]);
                     }
                 }
             }
 
-            if (!memcmp(next.bits, (PositionSet){0}.bits, sizeof(next.bits))) {
-                // vacío, no transicion
-                continue;
-            }
+            if (set_is_empty(&next)) continue;
 
             int to_id = dfa_find_state(dfa, &next);
             if (to_id == -1) {
                 to_id = dfa_add_state(dfa, &next);
-                if (to_id < 4096) {  // Verificar límites
-                    worklist[to_id] = next;
+                // Expandir worklist si necesario
+                if (to_id >= wl_cap) {
+                    wl_cap *= 2;
+                    worklist = realloc(worklist, sizeof(PositionSet) * wl_cap);
+                    if (!worklist) {
+                        fprintf(stderr, "Error: sin memoria expandiendo worklist\n");
+                        return;
+                    }
                 }
+                worklist[to_id] = next;
             }
-            // IMPORTANTE: Acceder siempre por índice después de posible realloc
             dfa->states[s_id].transitions[a] = to_id;
         }
 
         front++;
     }
+
+    free(worklist);
 }
 
 // Imprimir AFD (para debugging)
@@ -179,7 +186,7 @@ void dfa_build_table(DFA *dfa) {
     if (dfa->next_state != NULL) return; // Ya construida
     
     int n = dfa->count;
-    int A = 128; // ASCII 0..127
+    int A = 256; // Rango byte completo 0..255
 
     dfa->next_state = malloc(n * sizeof(int *));
     for (int s = 0; s < n; s++) {

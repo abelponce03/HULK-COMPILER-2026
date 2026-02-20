@@ -84,12 +84,16 @@ static Token regex_get_token_wrapper(void* ctx) {
         tok.type = TOKEN_EOF;
         tok.lexeme = NULL;
         tok.length = 0;
+        tok.line = 0;
+        tok.col = 0;
     } else {
         tok.type = type;
         tok.lexeme = malloc(2);
         tok.lexeme[0] = regex_char_value;
         tok.lexeme[1] = '\0';
         tok.length = 1;
+        tok.line = 0;
+        tok.col = 0;
     }
     
     return tok;

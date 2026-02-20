@@ -3,6 +3,7 @@
 // Definición de variables globales
 PositionSet followpos[MAX_POSITIONS];
 int next_position = 1;
+ASTNode* leaf_at[MAX_POSITIONS];
 
 // Inicializa un conjunto vacío
 void set_init(PositionSet *s) 
@@ -256,10 +257,7 @@ void ast_compute_functions(ASTNode *node)
 
 void followpos_init_all(void) 
 {
-    for (int i = 0; i < MAX_POSITIONS; i++) 
-    {
-        set_init(&followpos[i]);
-    }
+    memset(followpos, 0, sizeof(followpos));
 }
 
 
@@ -312,6 +310,22 @@ ASTNode* find_leaf_by_pos(ASTNode *root, int pos) {
     ASTNode *found = find_leaf_by_pos(root->left, pos);
     if (found) return found;
     return find_leaf_by_pos(root->right, pos);
+}
+
+// --- Índice directo posición → hoja (reemplaza find_leaf_by_pos) ---
+
+static void leaf_index_fill(ASTNode *node) {
+    if (!node) return;
+    if (node->type == NODE_LEAF && node->pos >= 0 && node->pos < MAX_POSITIONS)
+        leaf_at[node->pos] = node;
+    leaf_index_fill(node->left);
+    leaf_index_fill(node->right);
+}
+
+// Construye índice leaf_at[pos] → nodo hoja en una sola pasada O(n)
+void ast_build_leaf_index(ASTNode *root) {
+    memset(leaf_at, 0, sizeof(leaf_at));
+    leaf_index_fill(root);
 }
 
 // Liberar memoria del AST

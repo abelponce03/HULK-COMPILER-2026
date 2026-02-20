@@ -77,14 +77,23 @@ typedef struct {
     TokenType  type;      // token_id
     char *lexeme;    // texto reconocido
     int   length;
+    int   line;      // línea (1-based)
+    int   col;       // columna (1-based)
 } Token;
 
+// Contexto del lexer (elimina estado global)
+typedef struct {
+    DFA        *dfa;
+    const char *input;
+    int         pos;
+    int         line;
+    int         col;
+} LexerContext;
 
-// Función para inicializar el lexer
-void lexer_init(DFA *dfa, const char *input);
+// Inicializar el lexer con contexto
+void lexer_init(LexerContext *ctx, DFA *dfa, const char *input);
 
-// Función para obtener el siguiente token
-Token lexer_next_token();
-
+// Obtener el siguiente token (ignora whitespace y comentarios)
+Token lexer_next_token(LexerContext *ctx);
 
 #endif

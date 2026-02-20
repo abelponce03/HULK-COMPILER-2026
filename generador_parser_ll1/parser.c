@@ -335,16 +335,16 @@ int ll1_table_load(LL1_Table* t, Grammar* g, const char* filename)
 
 // ============== PARSER ==============
 
-void parser_init(ParserContext* ctx, Grammar* g, LL1_Table* table)
+void parser_init(ParserContext* ctx, Grammar* g, LL1_Table* table, Follow_Table* follow)
 {
     ctx->grammar = g;
     ctx->table = table;
+    ctx->follow = follow;
     stack_init(&ctx->stack);
     ctx->get_next_token = NULL;
     ctx->lexer_ctx = NULL;
     ctx->error_count = 0;
-    ctx->line = 1;
-    ctx->column = 1;
+    ctx->max_errors = 50;
 }
 
 void parser_set_lexer(ParserContext* ctx, Token (*get_token)(void*), void* lexer_ctx)
@@ -357,8 +357,26 @@ void parser_reset(ParserContext* ctx)
 {
     stack_init(&ctx->stack);
     ctx->error_count = 0;
-    ctx->line = 1;
-    ctx->column = 1;
+}
+
+// Verifica si un terminal está en FOLLOW(nt)
+static int follow_contains(Follow_Table* ft, int nt, int terminal) {
+    if (!ft) return 0;
+    Follow_Set* fs = &ft->follow[nt];
+    for (int i = 0; i < fs->count; i++) {
+        if (fs->elements[i] == terminal) return 1;
+    }
+    return 0;
+}
+
+// Busca el nombre de un terminal en la gramática
+static const char* get_terminal_name(Grammar* g, int token_type) {
+    if (token_type == TOKEN_EOF) return "$";
+    for (int i = 0; i < g->t_count; i++) {
+        if (g->terminals[i] == token_type)
+            return g->t_names[i];
+    }
+    return "?";
 }
 
 int parser_parse(ParserContext* ctx)
@@ -381,6 +399,12 @@ int parser_parse(ParserContext* ctx)
     ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
     
     while (1) {
+        // Verificar límite de errores
+        if (ctx->max_errors > 0 && ctx->error_count >= ctx->max_errors) {
+            fprintf(stderr, "Demasiados errores (%d), abortando análisis\n", ctx->error_count);
+            return 0;
+        }
+        
         StackSymbol top = stack_peek(stack);
         
         // Caso: stack vacío (solo $)
@@ -388,7 +412,8 @@ int parser_parse(ParserContext* ctx)
             if (ctx->lookahead.type == TOKEN_EOF) {
                 return ctx->error_count == 0; // Éxito
             } else {
-                fprintf(stderr, "Error: entrada extra después de parse completo\n");
+                fprintf(stderr, "Error [%d:%d]: entrada extra después del parse completo\n",
+                        ctx->lookahead.line, ctx->lookahead.col);
                 ctx->error_count++;
                 return 0;
             }
@@ -398,23 +423,16 @@ int parser_parse(ParserContext* ctx)
         if (top.type == STACK_TERMINAL) {
             if (top.id == ctx->lookahead.type) {
                 // Match!
+                if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
                 stack_pop(stack);
                 ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
             } else {
                 // Error: terminal no coincide
-                const char* expected = "?";
-                const char* found = "?";
+                const char* expected = get_terminal_name(g, top.id);
+                const char* found = get_terminal_name(g, ctx->lookahead.type);
                 
-                // Buscar nombres
-                for (int i = 0; i < g->t_count; i++) {
-                    if (g->terminals[i] == top.id)
-                        expected = g->t_names[i];
-                    if (g->terminals[i] == ctx->lookahead.type)
-                        found = g->t_names[i];
-                }
-                
-                fprintf(stderr, "Error sintáctico: se esperaba '%s', se encontró '%s'\n",
-                        expected, found);
+                fprintf(stderr, "Error sintáctico [%d:%d]: se esperaba '%s', se encontró '%s'\n",
+                        ctx->lookahead.line, ctx->lookahead.col, expected, found);
                 ctx->error_count++;
                 
                 // Recuperación: descartar el terminal del stack
@@ -433,9 +451,10 @@ int parser_parse(ParserContext* ctx)
             }
             
             if (col < 0) {
-                fprintf(stderr, "Error: token %d no reconocido en gramática\n", 
-                        ctx->lookahead.type);
+                fprintf(stderr, "Error [%d:%d]: token %d no reconocido en gramática\n",
+                        ctx->lookahead.line, ctx->lookahead.col, ctx->lookahead.type);
                 ctx->error_count++;
+                if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
                 ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
                 continue;
             }
@@ -443,24 +462,35 @@ int parser_parse(ParserContext* ctx)
             int prod_index = ll1->table[row][col];
             
             if (prod_index == NO_PRODUCTION) {
-                // Error: no hay producción
                 const char* nt_name = g->nt_names[row];
-                const char* t_name = "?";
-                for (int i = 0; i < g->t_count; i++) {
-                    if (g->terminals[i] == ctx->lookahead.type) {
-                        t_name = g->t_names[i];
-                        break;
-                    }
-                }
-                if (ctx->lookahead.type == TOKEN_EOF)
-                    t_name = "$";
+                const char* t_name = get_terminal_name(g, ctx->lookahead.type);
                 
-                fprintf(stderr, "Error sintáctico: no hay producción para [%s, %s]\n",
-                        nt_name, t_name);
+                fprintf(stderr, "Error sintáctico [%d:%d]: no hay producción para [%s, %s]\n",
+                        ctx->lookahead.line, ctx->lookahead.col, nt_name, t_name);
                 ctx->error_count++;
                 
-                // Recuperación en modo pánico: descartar token
-                ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
+                // Recuperación en modo pánico con FOLLOW (Dragon Book §4.4.1)
+                if (ctx->follow) {
+                    // Saltar tokens hasta encontrar uno en FOLLOW(A) o EOF
+                    while (ctx->lookahead.type != TOKEN_EOF) {
+                        int la = ctx->lookahead.type;
+                        if (follow_contains(ctx->follow, row, la)) break;
+                        if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
+                        ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
+                    }
+                    // Pop A - se sincroniza con el siguiente token válido
+                    if (ctx->lookahead.type == TOKEN_EOF) {
+                        if (follow_contains(ctx->follow, row, END_MARKER)) {
+                            stack_pop(stack);
+                        }
+                    } else {
+                        stack_pop(stack);
+                    }
+                } else {
+                    // Fallback sin FOLLOW: descartar un token
+                    if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
+                    ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
+                }
                 continue;
             }
             
@@ -474,6 +504,12 @@ int parser_parse(ParserContext* ctx)
             stack_pop(stack);
             
             Production* prod = &g->productions[prod_index];
+            
+            // Verificar desbordamiento de pila
+            if (stack->top + prod->right_count >= STACK_MAX) {
+                fprintf(stderr, "Error: desbordamiento de pila del parser (STACK_MAX=%d)\n", STACK_MAX);
+                return 0;
+            }
             
             // Push RHS en orden inverso (si no es ε)
             for (int i = prod->right_count - 1; i >= 0; i--) {
@@ -506,7 +542,7 @@ int parser_create_from_file(Parser* p, const char* grammar_file, const char* tab
     // Intentar cargar tabla desde cache
     if (table_cache && ll1_table_load(&p->ll1, &p->grammar, table_cache)) {
         p->initialized = 1;
-        parser_init(&p->ctx, &p->grammar, &p->ll1);
+        parser_init(&p->ctx, &p->grammar, &p->ll1, NULL);
         return 1;
     }
     
@@ -524,7 +560,7 @@ int parser_create_from_file(Parser* p, const char* grammar_file, const char* tab
         ll1_table_save(&p->ll1, &p->grammar, table_cache);
     }
     
-    parser_init(&p->ctx, &p->grammar, &p->ll1);
+    parser_init(&p->ctx, &p->grammar, &p->ll1, &p->follow);
     p->initialized = 1;
     
     return 1;
@@ -546,7 +582,7 @@ int parser_create_predefined(Parser* p, const char* type, const char* table_cach
     // Intentar cargar tabla desde cache
     if (table_cache && ll1_table_load(&p->ll1, &p->grammar, table_cache)) {
         p->initialized = 1;
-        parser_init(&p->ctx, &p->grammar, &p->ll1);
+        parser_init(&p->ctx, &p->grammar, &p->ll1, NULL);
         return 1;
     }
     
@@ -564,7 +600,7 @@ int parser_create_predefined(Parser* p, const char* type, const char* table_cach
         ll1_table_save(&p->ll1, &p->grammar, table_cache);
     }
     
-    parser_init(&p->ctx, &p->grammar, &p->ll1);
+    parser_init(&p->ctx, &p->grammar, &p->ll1, &p->follow);
     p->initialized = 1;
     
     return 1;

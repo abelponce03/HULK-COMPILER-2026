@@ -22,7 +22,7 @@ typedef enum {
 // Necesitamos una forma de representar conjuntos de posiciones 
 // (firstpos, lastpos, followpos).
 
-#define MAX_POSITIONS 512
+#define MAX_POSITIONS 4096
 
 typedef struct 
 {
@@ -65,6 +65,9 @@ extern PositionSet followpos[MAX_POSITIONS];
 // Contador de posiciones (para asignar posiciones únicas a hojas)
 extern int next_position;
 
+// Índice directo posición → nodo hoja (construido por ast_build_leaf_index)
+extern ASTNode* leaf_at[MAX_POSITIONS];
+
 // Funciones de creación de nodos AST
 ASTNode* ast_create_leaf(char symbol, int pos);
 ASTNode* ast_create_concat(ASTNode *left, ASTNode *right);
@@ -91,6 +94,10 @@ void ast_compute_followpos(ASTNode *root);
 
 // Función que recorre el AST y devuelve el nodo hoja con la posición pos
 ASTNode* find_leaf_by_pos(ASTNode *root, int pos);
+
+// Construye el índice leaf_at[pos] → nodo hoja en O(n)
+// Debe llamarse después de construir el AST y antes de dfa_build()
+void ast_build_leaf_index(ASTNode *root);
 
 // Liberar memoria del AST
 void ast_free(ASTNode *node);
