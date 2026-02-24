@@ -16,8 +16,11 @@ int main() {
     if (!ctx) { printf("Sin memoria\n"); return 1; }
     ast_context_init(ctx);
     
-    ASTNode *ast = build_lexer_ast(test_tokens, test_count, ctx);
-    if (!ast) { printf("AST NULL\n"); free(ctx); return 1; }
+    RegexParserContext *rctx = regex_parser_create();
+    if (!rctx) { printf("Sin memoria rctx\n"); free(ctx); return 1; }
+    
+    ASTNode *ast = build_lexer_ast(test_tokens, test_count, ctx, rctx);
+    if (!ast) { printf("AST NULL\n"); regex_parser_destroy(rctx); free(ctx); return 1; }
     
     ast_compute_functions(ast);
     ast_build_leaf_index(ast, ctx);
@@ -30,7 +33,7 @@ int main() {
     alphabet[alphabet_size++] = '\n';
     
     DFA *dfa = dfa_create(alphabet, alphabet_size);
-    dfa_build(dfa, ast, ctx);
+    dfa_build(dfa, ast, ctx, NULL);
     printf("DFA: %d estados\n", dfa->count);
     
     dfa_build_table(dfa);

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "hulk_compiler.h"
+#include "error_handler.h"
 
 // ============== MAIN ==============
 
@@ -17,7 +18,7 @@ int main(int argc, char* argv[]) {
     // Inicializar compilador (construye el DFA del lexer)
     HulkCompiler hc;
     if (!hulk_compiler_init(&hc)) {
-        fprintf(stderr, "Error fatal: no se pudo construir el lexer\n");
+        LOG_FATAL_MSG("main", "no se pudo construir el lexer");
         return 1;
     }
     

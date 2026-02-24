@@ -1,7 +1,12 @@
 #include "ast.h"
+#include "../error_handler.h"
+
+// ============ POOL / ARENA DE NODOS ============
+
+#define AST_POOL_INITIAL_CAPACITY 4096
 
 // Inicializa un ASTContext (reemplaza init_pos_to_token +
-// followpos_init_all + reset_position_counter)
+// followpos_init_all + reset_position_counter + pool_init)
 void ast_context_init(ASTContext *ctx) {
     memset(ctx->followpos, 0, sizeof(ctx->followpos));
     memset(ctx->leaf_at,   0, sizeof(ctx->leaf_at));
@@ -9,6 +14,37 @@ void ast_context_init(ASTContext *ctx) {
         ctx->pos_to_token[i] = -1;
     ctx->next_position = 1;
     ctx->max_position  = 0;
+
+    // Inicializar pool
+    ctx->pool_nodes    = (ASTNode*)malloc(sizeof(ASTNode) * AST_POOL_INITIAL_CAPACITY);
+    ctx->pool_count    = 0;
+    ctx->pool_capacity = ctx->pool_nodes ? AST_POOL_INITIAL_CAPACITY : 0;
+}
+
+// Libera la arena completa (sustituye el ast_free recursivo)
+void ast_context_free(ASTContext *ctx) {
+    if (ctx->pool_nodes) {
+        free(ctx->pool_nodes);
+        ctx->pool_nodes    = NULL;
+        ctx->pool_count    = 0;
+        ctx->pool_capacity = 0;
+    }
+}
+
+// Obtiene un nodo del pool (crece automáticamente)
+static ASTNode* pool_alloc(ASTContext *ctx) {
+    if (ctx->pool_count >= ctx->pool_capacity) {
+        int new_cap = ctx->pool_capacity * 2;
+        ASTNode *tmp = (ASTNode*)realloc(ctx->pool_nodes,
+                                         sizeof(ASTNode) * new_cap);
+        if (!tmp) {
+            LOG_FATAL_MSG("ast", "sin memoria expandiendo pool (%d nodos)", new_cap);
+            return NULL;
+        }
+        ctx->pool_nodes    = tmp;
+        ctx->pool_capacity = new_cap;
+    }
+    return &ctx->pool_nodes[ctx->pool_count++];
 }
 
 // Inicializa un conjunto vacío
@@ -55,18 +91,32 @@ int posset_is_empty(PositionSet *s)
 }
 
 
-// ============ CREACIÓN DE NODOS AST ============
+// ============ CREACIÓN DE NODOS AST (via Pool) ============
+
+// Inicializa los campos comunes de un nodo interno
+static void node_init_internal(ASTNode *node, NodeType type,
+                               ASTNode *left, ASTNode *right) {
+    node->type     = type;
+    node->left     = left;
+    node->right    = right;
+    node->symbol   = 0;
+    node->pos      = -1;
+    node->nullable = 0;
+    posset_init(&node->firstpos);
+    posset_init(&node->lastpos);
+}
 
 // NODO HOJA
-ASTNode* ast_create_leaf(char symbol, int pos) 
+ASTNode* ast_create_leaf(ASTContext *ctx, char symbol, int pos) 
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
     node->type = NODE_LEAF;
     node->left = node->right = NULL;
     node->symbol = symbol;
     node->pos = pos;
 
-    node->nullable = 0;  // hojas no son nullable
+    node->nullable = 0;
     posset_init(&node->firstpos);
     posset_init(&node->lastpos);
 
@@ -78,94 +128,52 @@ ASTNode* ast_create_leaf(char symbol, int pos)
 }
 
 // NODO CONCATENACIÓN
-ASTNode* ast_create_concat(ASTNode *left, ASTNode *right) 
+ASTNode* ast_create_concat(ASTContext *ctx, ASTNode *left, ASTNode *right) 
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
-    node->type = NODE_CONCAT;
-    node->left = left;
-    node->right = right;
-
-    node->symbol = 0;
-    node->pos = -1;
-
-    node->nullable = 0;
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
+    node_init_internal(node, NODE_CONCAT, left, right);
     return node;
 }
 
 // NODO ALTERNANCIA (OR)
-ASTNode* ast_create_or(ASTNode *left, ASTNode *right) 
+ASTNode* ast_create_or(ASTContext *ctx, ASTNode *left, ASTNode *right) 
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
-    node->type = NODE_OR;
-    node->left = left;
-    node->right = right;
-
-    node->symbol = 0;
-    node->pos = -1;
-
-    node->nullable = 0;
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
+    node_init_internal(node, NODE_OR, left, right);
     return node;
 }
 
 // NODO CERRADURA (STAR) - cero o más
-ASTNode* ast_create_star(ASTNode *child)
+ASTNode* ast_create_star(ASTContext *ctx, ASTNode *child)
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
-    node->type = NODE_STAR;
-    node->left = child;
-    node->right = NULL;
-
-    node->symbol = 0;
-    node->pos = -1;
-
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
+    node_init_internal(node, NODE_STAR, child, NULL);
     node->nullable = 1;  // por definición la estrella puede ser nullable
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
     return node;
 }
 
 // NODO CERRADURA POSITIVA (PLUS) - uno o más
 // a+ equivale a aa*
-ASTNode* ast_create_plus(ASTNode *child)
+ASTNode* ast_create_plus(ASTContext *ctx, ASTNode *child)
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
-    node->type = NODE_PLUS;
-    node->left = child;
-    node->right = NULL;
-
-    node->symbol = 0;
-    node->pos = -1;
-
-    node->nullable = 0;  // plus no es nullable (requiere al menos uno)
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
+    node_init_internal(node, NODE_PLUS, child, NULL);
+    // plus no es nullable (requiere al menos uno)
     return node;
 }
 
 // NODO OPCIONAL (QUESTION) - cero o uno
 // a? equivale a (a|ε)
-ASTNode* ast_create_question(ASTNode *child)
+ASTNode* ast_create_question(ASTContext *ctx, ASTNode *child)
 {
-    ASTNode *node = (ASTNode*)malloc(sizeof(ASTNode));
-    node->type = NODE_QUESTION;
-    node->left = child;
-    node->right = NULL;
-
-    node->symbol = 0;
-    node->pos = -1;
-
+    ASTNode *node = pool_alloc(ctx);
+    if (!node) return NULL;
+    node_init_internal(node, NODE_QUESTION, child, NULL);
     node->nullable = 1;  // question es nullable (puede ser cero)
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
     return node;
 }
 
@@ -179,183 +187,196 @@ int get_next_position(ASTContext *ctx) {
 }
 
 
-// ============ CÁLCULO DE FUNCIONES DEL AST ============
+// ============ PATRÓN VISITOR — WALKERS GENÉRICOS ============
 
-// Función principal para calcular nullable, firstpos y lastpos
-void ast_compute_functions(ASTNode *node) 
-{
-    if (node == NULL) {
-        return;
-    }
-
-    // Recorrer hijos primero (post-orden)
-    ast_compute_functions(node->left);
-    ast_compute_functions(node->right);
-
-    // Inicializar conjuntos a vacío antes de calcular
-    posset_init(&node->firstpos);
-    posset_init(&node->lastpos);
-
-    switch (node->type) {
-        case NODE_LEAF:
-            // Las hojas: firstpos y lastpos son su propia posición
-            node->nullable = 0;
-            posset_add(&node->firstpos, node->pos);
-            posset_add(&node->lastpos, node->pos);
-            break;
-
-        case NODE_OR: {
-            ASTNode *c1 = node->left;
-            ASTNode *c2 = node->right;
-
-            node->nullable = c1->nullable || c2->nullable;
-            posset_union(&node->firstpos, &c1->firstpos, &c2->firstpos);
-            posset_union(&node->lastpos, &c1->lastpos, &c2->lastpos);
-        } break;
-
-        case NODE_CONCAT: {
-            ASTNode *c1 = node->left;
-            ASTNode *c2 = node->right;
-
-            node->nullable = c1->nullable && c2->nullable;
-
-            // firstpos
-            if (c1->nullable) {
-                posset_union(&node->firstpos, &c1->firstpos, &c2->firstpos);
-            } else {
-                node->firstpos = c1->firstpos;
-            }
-
-            // lastpos
-            if (c2->nullable) {
-                posset_union(&node->lastpos, &c1->lastpos, &c2->lastpos);
-            } else {
-                node->lastpos = c2->lastpos;
-            }
-        } break;
-
-        case NODE_STAR: {
-            ASTNode *c = node->left;
-            node->nullable = 1;
-            node->firstpos = c->firstpos;
-            node->lastpos = c->lastpos;
-        } break;
-
-        case NODE_PLUS: {
-            // a+ = aa*, firstpos = firstpos(a), lastpos = lastpos(a)
-            ASTNode *c = node->left;
-            node->nullable = c->nullable;  // plus es nullable solo si hijo es nullable
-            node->firstpos = c->firstpos;
-            node->lastpos = c->lastpos;
-        } break;
-
-        case NODE_QUESTION: {
-            // a? = (a|ε), siempre nullable
-            ASTNode *c = node->left;
-            node->nullable = 1;
-            node->firstpos = c->firstpos;
-            node->lastpos = c->lastpos;
-        } break;
-    }
+// Dispatch: llama al callback correspondiente al tipo del nodo
+static void visitor_dispatch(ASTNode *node, const ASTVisitor *v, void *data) {
+    static const int type_to_index[] = {0, 1, 2, 3, 4, 5};
+    // NODE_LEAF=0, NODE_CONCAT=1, NODE_OR=2, NODE_STAR=3, NODE_PLUS=4, NODE_QUESTION=5
+    ASTVisitFn callbacks[] = {
+        v->visit_leaf, v->visit_concat, v->visit_or,
+        v->visit_star, v->visit_plus,   v->visit_question
+    };
+    (void)type_to_index;
+    ASTVisitFn fn = callbacks[node->type];
+    if (fn) fn(node, data);
 }
 
-
-// Recorre el AST y actualiza ctx->followpos
-void ast_compute_followpos(ASTNode *node, ASTContext *ctx)
-{
-    if (node == NULL) {
-        return;
-    }
-
-    // Recorremos hijos primero
-    ast_compute_followpos(node->left, ctx);
-    ast_compute_followpos(node->right, ctx);
-
-    int limit = ctx->max_position + 1;
-
-    if (node->type == NODE_CONCAT) {
-        ASTNode *c1 = node->left;
-        ASTNode *c2 = node->right;
-
-        for (int i = 0; i < limit; i++) {
-            if (posset_contains(&c1->lastpos, i)) {
-                posset_union(&ctx->followpos[i], &ctx->followpos[i], &c2->firstpos);
-            }
-        }
-
-    } else if (node->type == NODE_STAR || node->type == NODE_PLUS) {
-        ASTNode *c = node->left;
-
-        for (int i = 0; i < limit; i++) {
-            if (posset_contains(&c->lastpos, i)) {
-                posset_union(&ctx->followpos[i], &ctx->followpos[i], &c->firstpos);
-            }
-        }
-    }
-}
-
-
-// --- Índice directo posición → hoja ---
-
-static void leaf_index_fill(ASTNode *node, ASTContext *ctx) {
+void ast_walk_postorder(ASTNode *node, const ASTVisitor *v, void *data) {
     if (!node) return;
-    if (node->type == NODE_LEAF && node->pos >= 0 && node->pos < MAX_POSITIONS)
-        ctx->leaf_at[node->pos] = node;
-    leaf_index_fill(node->left, ctx);
-    leaf_index_fill(node->right, ctx);
+    ast_walk_postorder(node->left, v, data);
+    ast_walk_postorder(node->right, v, data);
+    visitor_dispatch(node, v, data);
 }
 
-// Construye índice ctx->leaf_at[pos] → nodo hoja en una sola pasada O(n)
+void ast_walk_preorder(ASTNode *node, const ASTVisitor *v, void *data) {
+    if (!node) return;
+    visitor_dispatch(node, v, data);
+    ast_walk_preorder(node->left, v, data);
+    ast_walk_preorder(node->right, v, data);
+}
+
+// ============ VISITORS CONCRETOS ============
+
+// --- compute_functions: calcula nullable, firstpos, lastpos (post-orden) ---
+
+static void visit_compute_leaf(ASTNode *n, void *data) {
+    (void)data;
+    posset_init(&n->firstpos);
+    posset_init(&n->lastpos);
+    n->nullable = 0;
+    posset_add(&n->firstpos, n->pos);
+    posset_add(&n->lastpos, n->pos);
+}
+
+static void visit_compute_or(ASTNode *n, void *data) {
+    (void)data;
+    posset_init(&n->firstpos);
+    posset_init(&n->lastpos);
+    n->nullable = n->left->nullable || n->right->nullable;
+    posset_union(&n->firstpos, &n->left->firstpos, &n->right->firstpos);
+    posset_union(&n->lastpos, &n->left->lastpos, &n->right->lastpos);
+}
+
+static void visit_compute_concat(ASTNode *n, void *data) {
+    (void)data;
+    ASTNode *c1 = n->left, *c2 = n->right;
+    posset_init(&n->firstpos);
+    posset_init(&n->lastpos);
+    n->nullable = c1->nullable && c2->nullable;
+    if (c1->nullable)
+        posset_union(&n->firstpos, &c1->firstpos, &c2->firstpos);
+    else
+        n->firstpos = c1->firstpos;
+    if (c2->nullable)
+        posset_union(&n->lastpos, &c1->lastpos, &c2->lastpos);
+    else
+        n->lastpos = c2->lastpos;
+}
+
+static void visit_compute_star(ASTNode *n, void *data) {
+    (void)data;
+    n->nullable = 1;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+
+static void visit_compute_plus(ASTNode *n, void *data) {
+    (void)data;
+    n->nullable = n->left->nullable;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+
+static void visit_compute_question(ASTNode *n, void *data) {
+    (void)data;
+    n->nullable = 1;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+
+void ast_compute_functions(ASTNode *root) {
+    static const ASTVisitor compute_visitor = {
+        .visit_leaf     = visit_compute_leaf,
+        .visit_concat   = visit_compute_concat,
+        .visit_or       = visit_compute_or,
+        .visit_star     = visit_compute_star,
+        .visit_plus     = visit_compute_plus,
+        .visit_question = visit_compute_question,
+    };
+    ast_walk_postorder(root, &compute_visitor, NULL);
+}
+
+// --- compute_followpos (post-orden, solo concat/star/plus importan) ---
+
+static void visit_followpos_concat(ASTNode *n, void *data) {
+    ASTContext *ctx = (ASTContext*)data;
+    int limit = ctx->max_position + 1;
+    for (int i = 0; i < limit; i++) {
+        if (posset_contains(&n->left->lastpos, i))
+            posset_union(&ctx->followpos[i], &ctx->followpos[i], &n->right->firstpos);
+    }
+}
+
+static void visit_followpos_repeat(ASTNode *n, void *data) {
+    ASTContext *ctx = (ASTContext*)data;
+    int limit = ctx->max_position + 1;
+    for (int i = 0; i < limit; i++) {
+        if (posset_contains(&n->left->lastpos, i))
+            posset_union(&ctx->followpos[i], &ctx->followpos[i], &n->left->firstpos);
+    }
+}
+
+void ast_compute_followpos(ASTNode *root, ASTContext *ctx) {
+    static const ASTVisitor followpos_visitor = {
+        .visit_leaf     = NULL,
+        .visit_concat   = visit_followpos_concat,
+        .visit_or       = NULL,
+        .visit_star     = visit_followpos_repeat,
+        .visit_plus     = visit_followpos_repeat,
+        .visit_question = NULL,
+    };
+    ast_walk_postorder(root, &followpos_visitor, ctx);
+}
+
+// --- build_leaf_index (pre-orden, solo hojas importan) ---
+
+static void visit_leaf_index(ASTNode *n, void *data) {
+    ASTContext *ctx = (ASTContext*)data;
+    if (n->pos >= 0 && n->pos < MAX_POSITIONS)
+        ctx->leaf_at[n->pos] = n;
+}
+
 void ast_build_leaf_index(ASTNode *root, ASTContext *ctx) {
     memset(ctx->leaf_at, 0, sizeof(ctx->leaf_at));
-    leaf_index_fill(root, ctx);
+    static const ASTVisitor leaf_visitor = {
+        .visit_leaf     = visit_leaf_index,
+        .visit_concat   = NULL,
+        .visit_or       = NULL,
+        .visit_star     = NULL,
+        .visit_plus     = NULL,
+        .visit_question = NULL,
+    };
+    ast_walk_preorder(root, &leaf_visitor, ctx);
 }
 
-// Liberar memoria del AST
+// Liberar memoria del AST — noop cuando se usa pool.
+// Se mantiene por compatibilidad; usar ast_context_free() para liberar todo.
 void ast_free(ASTNode *node)
 {
-    if (node == NULL) return;
-    ast_free(node->left);
-    ast_free(node->right);
-    free(node);
+    (void)node;  // Los nodos viven en la arena del ASTContext
 }
 
-// Imprime el AST de forma indentada (debugging)
+// --- ast_print (pre-orden) ---
+
+static void visit_print_leaf(ASTNode *n, void *data) {
+    int depth = *(int*)data;
+    for (int i = 0; i < depth; i++) printf("  ");
+    if (n->symbol == '#')
+        printf("LEAF(#, pos=%d)\n", n->pos);
+    else if (n->symbol >= 32 && n->symbol < 127)
+        printf("LEAF('%c', pos=%d)\n", n->symbol, n->pos);
+    else
+        printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)n->symbol, n->pos);
+}
+
+static void visit_print_internal(ASTNode *n, void *data) {
+    int *depth = (int*)data;
+    for (int i = 0; i < *depth; i++) printf("  ");
+    const char *names[] = {"LEAF","CONCAT","OR","STAR","PLUS","QUESTION"};
+    printf("%s\n", names[n->type]);
+    // Recurse children manually with depth+1
+    int child_depth = *depth + 1;
+    ast_print(n->left, child_depth);
+    ast_print(n->right, child_depth);
+}
+
+// ast_print uses manual recursion because depth changes per level
 void ast_print(ASTNode* node, int depth) {
     if (!node) return;
-    
-    for (int i = 0; i < depth; i++) printf("  ");
-    
-    switch (node->type) {
-        case NODE_LEAF:
-            if (node->symbol == '#')
-                printf("LEAF(#, pos=%d)\n", node->pos);
-            else if (node->symbol >= 32 && node->symbol < 127)
-                printf("LEAF('%c', pos=%d)\n", node->symbol, node->pos);
-            else
-                printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)node->symbol, node->pos);
-            break;
-        case NODE_CONCAT:
-            printf("CONCAT\n");
-            ast_print(node->left, depth + 1);
-            ast_print(node->right, depth + 1);
-            break;
-        case NODE_OR:
-            printf("OR\n");
-            ast_print(node->left, depth + 1);
-            ast_print(node->right, depth + 1);
-            break;
-        case NODE_STAR:
-            printf("STAR\n");
-            ast_print(node->left, depth + 1);
-            break;
-        case NODE_PLUS:
-            printf("PLUS\n");
-            ast_print(node->left, depth + 1);
-            break;
-        case NODE_QUESTION:
-            printf("QUESTION\n");
-            ast_print(node->left, depth + 1);
-            break;
+    if (node->type == NODE_LEAF) {
+        visit_print_leaf(node, &depth);
+    } else {
+        visit_print_internal(node, &depth);
     }
 }

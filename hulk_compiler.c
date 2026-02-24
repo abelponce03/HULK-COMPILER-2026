@@ -17,65 +17,117 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "error_handler.h"
 
-// ============== CONSTRUCCIÓN DEL LEXER (interno) ==============
+// ============== PATRÓN PIPELINE ==============
+// Cada fase del compilador se encapsula como un CompilerPhase:
+//   execute(ctx) → 1 OK, 0 error.
+// Las fases comparten un LexerBuildContext opaco.
 
-static DFA* build_hulk_lexer(void) {
-    printf("\n========== CONSTRUCCIÓN DEL LEXER ==========\n");
-    
-    ASTContext *ctx = malloc(sizeof(ASTContext));
-    if (!ctx) {
-        fprintf(stderr, "Error: sin memoria para ASTContext\n");
-        return NULL;
+typedef struct {
+    ASTContext          *ast_ctx;
+    RegexParserContext  *rctx;
+    ASTNode             *ast;
+    DFA                 *dfa;
+} LexerBuildContext;
+
+typedef struct {
+    const char *name;
+    int (*execute)(LexerBuildContext *lbc);
+} CompilerPhase;
+
+// --- Fases individuales ---
+
+static int phase_alloc_contexts(LexerBuildContext *lbc) {
+    lbc->ast_ctx = malloc(sizeof(ASTContext));
+    if (!lbc->ast_ctx) {
+        LOG_FATAL_MSG("lexer", "sin memoria para ASTContext");
+        return 0;
     }
-    ast_context_init(ctx);
-    
-    RegexParserContext *rctx = regex_parser_create();
-    if (!rctx) {
-        fprintf(stderr, "Error: sin memoria para RegexParserContext\n");
-        free(ctx);
-        return NULL;
+    ast_context_init(lbc->ast_ctx);
+
+    lbc->rctx = regex_parser_create();
+    if (!lbc->rctx) {
+        LOG_FATAL_MSG("lexer", "sin memoria para RegexParserContext");
+        return 0;
     }
-    
-    printf("Construyendo AST del lexer...\n");
-    ASTNode *ast = build_lexer_ast(hulk_tokens, hulk_token_count, ctx, rctx);
-    
-    if (!ast) {
-        printf("Error: no se pudo construir el AST\n");
-        regex_parser_destroy(rctx);
-        free(ctx);
-        return NULL;
+    return 1;
+}
+
+static int phase_build_ast(LexerBuildContext *lbc) {
+    lbc->ast = build_lexer_ast(hulk_tokens, hulk_token_count,
+                               lbc->ast_ctx, lbc->rctx);
+    if (!lbc->ast) {
+        LOG_ERROR_MSG("lexer", "no se pudo construir el AST");
+        return 0;
     }
-    
-    printf("Calculando funciones del AST...\n");
-    ast_compute_functions(ast);
-    ast_build_leaf_index(ast, ctx);
-    ast_compute_followpos(ast, ctx);
-    
-    // Alfabeto ASCII imprimible + whitespace
+    return 1;
+}
+
+static int phase_compute_functions(LexerBuildContext *lbc) {
+    ast_compute_functions(lbc->ast);
+    ast_build_leaf_index(lbc->ast, lbc->ast_ctx);
+    ast_compute_followpos(lbc->ast, lbc->ast_ctx);
+    return 1;
+}
+
+static int phase_build_dfa(LexerBuildContext *lbc) {
     char alphabet[128];
     int alphabet_size = 0;
-    for (int c = 32; c < 127; c++) {
+    for (int c = 32; c < 127; c++)
         alphabet[alphabet_size++] = (char)c;
-    }
     alphabet[alphabet_size++] = '\t';
     alphabet[alphabet_size++] = '\n';
     alphabet[alphabet_size++] = '\r';
-    
-    printf("Construyendo DFA...\n");
-    DFA *dfa = dfa_create(alphabet, alphabet_size);
-    dfa_build(dfa, ast, ctx);
-    
-    printf("DFA construido con %d estados\n", dfa->count);
-    
-    // Exportar DFA para visualización
-    dfa_save_dot(dfa, "output/lexer_dfa.dot", token_names);
-    dfa_save_csv(dfa, "output/lexer_dfa.csv", token_names);
-    
-    ast_free(ast);
-    regex_parser_destroy(rctx);
-    free(ctx);
-    
+
+    lbc->dfa = dfa_create(alphabet, alphabet_size);
+    dfa_build(lbc->dfa, lbc->ast, lbc->ast_ctx, NULL);
+    printf("DFA construido con %d estados\n", lbc->dfa->count);
+    return 1;
+}
+
+static int phase_export_dfa(LexerBuildContext *lbc) {
+    dfa_save_dot(lbc->dfa, "output/lexer_dfa.dot", token_names);
+    dfa_save_csv(lbc->dfa, "output/lexer_dfa.csv", token_names);
+    return 1;
+}
+
+// --- Pipeline del lexer ---
+
+static const CompilerPhase lexer_pipeline[] = {
+    { "Asignar contextos",     phase_alloc_contexts     },
+    { "Construir AST",         phase_build_ast          },
+    { "Calcular funciones",    phase_compute_functions   },
+    { "Construir DFA",         phase_build_dfa          },
+    { "Exportar DFA",          phase_export_dfa         },
+    { NULL, NULL }  // terminador
+};
+
+static DFA* build_hulk_lexer(void) {
+    printf("\n========== CONSTRUCCIÓN DEL LEXER ==========\n");
+
+    LexerBuildContext lbc = {0};
+
+    // Ejecutar pipeline fase por fase
+    for (int i = 0; lexer_pipeline[i].execute; i++) {
+        printf("[Pipeline] %s...\n", lexer_pipeline[i].name);
+        if (!lexer_pipeline[i].execute(&lbc)) {
+            LOG_ERROR_MSG("pipeline", "fallo en fase '%s'",
+                          lexer_pipeline[i].name);
+            // Limpieza parcial
+            if (lbc.dfa) dfa_free(lbc.dfa);
+            if (lbc.ast_ctx) { ast_context_free(lbc.ast_ctx); free(lbc.ast_ctx); }
+            if (lbc.rctx) regex_parser_destroy(lbc.rctx);
+            return NULL;
+        }
+    }
+
+    // Limpieza de artefactos temporales (el DFA se devuelve)
+    DFA *dfa = lbc.dfa;
+    ast_context_free(lbc.ast_ctx);
+    free(lbc.ast_ctx);
+    regex_parser_destroy(lbc.rctx);
+
     return dfa;
 }
 
@@ -132,7 +184,7 @@ static int build_parser_tables(const char *grammar_file,
     grammar_init_hulk(grammar);
     
     if (!grammar_load_hulk(grammar, grammar_file)) {
-        fprintf(stderr, "Error: no se pudo cargar la gramática\n");
+        LOG_ERROR_MSG("parser", "no se pudo cargar la gramática");
         return -1;
     }
     
@@ -148,7 +200,7 @@ static int build_parser_tables(const char *grammar_file,
     int is_ll1 = build_ll1_table(grammar, first, follow, ll1);
     
     if (!is_ll1) {
-        fprintf(stderr, "ADVERTENCIA: La gramática NO es LL(1). Hay conflictos.\n");
+        LOG_WARN_MSG("parser", "La gramática NO es LL(1). Hay conflictos.");
     } else {
         printf("La gramática es LL(1) ✓\n");
     }

@@ -64,29 +64,60 @@ typedef struct ASTNode {
 //   - pos_to_token[]:   mapa posición '#' → token_id
 //   - next_position:    contador de posiciones únicas
 //   - max_position:     mayor posición asignada (para acotar iteraciones)
+//   - pool:             arena de nodos AST (Object Pool)
 typedef struct {
     PositionSet followpos[MAX_POSITIONS];
     ASTNode*    leaf_at[MAX_POSITIONS];
     int         pos_to_token[MAX_POSITIONS];
     int         next_position;
     int         max_position;   // = next_position - 1 tras construir AST
+
+    // Object Pool: arena de nodos pre-asignada
+    ASTNode*    pool_nodes;     // bloque contiguo de nodos
+    int         pool_count;     // nodos asignados
+    int         pool_capacity;  // capacidad total
 } ASTContext;
 
 // Inicializa todos los campos de un ASTContext (followpos, leaf_at,
-// pos_to_token a -1, next_position a 1).  Reemplaza las tres llamadas
-// independientes init_pos_to_token + followpos_init_all + reset_position_counter.
+// pos_to_token a -1, next_position a 1, pool vacío).
 void ast_context_init(ASTContext *ctx);
 
-// Funciones de creación de nodos AST
-ASTNode* ast_create_leaf(char symbol, int pos);
-ASTNode* ast_create_concat(ASTNode *left, ASTNode *right);
-ASTNode* ast_create_or(ASTNode *left, ASTNode *right);
-ASTNode* ast_create_star(ASTNode *child);
-ASTNode* ast_create_plus(ASTNode *child);
-ASTNode* ast_create_question(ASTNode *child);
+// Libera la arena de nodos (sustituye ast_free recursivo)
+void ast_context_free(ASTContext *ctx);
+
+// Funciones de creación de nodos AST (usan el pool del contexto)
+ASTNode* ast_create_leaf(ASTContext *ctx, char symbol, int pos);
+ASTNode* ast_create_concat(ASTContext *ctx, ASTNode *left, ASTNode *right);
+ASTNode* ast_create_or(ASTContext *ctx, ASTNode *left, ASTNode *right);
+ASTNode* ast_create_star(ASTContext *ctx, ASTNode *child);
+ASTNode* ast_create_plus(ASTContext *ctx, ASTNode *child);
+ASTNode* ast_create_question(ASTContext *ctx, ASTNode *child);
 
 // Obtener siguiente posición única
 int get_next_position(ASTContext *ctx);
+
+// ============== PATRÓN VISITOR ==============
+// Función genérica de visita: recibe el nodo y datos del usuario.
+typedef void (*ASTVisitFn)(ASTNode *node, void *data);
+
+// Visitor con un callback por tipo de nodo.
+// Los campos pueden ser NULL si no se necesita visitar ese tipo.
+typedef struct {
+    ASTVisitFn visit_leaf;
+    ASTVisitFn visit_concat;
+    ASTVisitFn visit_or;
+    ASTVisitFn visit_star;
+    ASTVisitFn visit_plus;
+    ASTVisitFn visit_question;
+} ASTVisitor;
+
+// Recorre el AST en post-orden (hijos primero, luego raíz)
+void ast_walk_postorder(ASTNode *node, const ASTVisitor *v, void *data);
+
+// Recorre el AST en pre-orden (raíz primero, luego hijos)
+void ast_walk_preorder(ASTNode *node, const ASTVisitor *v, void *data);
+
+// ============== FUNCIONES DE ALTO NIVEL ==============
 
 // Función que recorre el AST post-orden, calcula y almacena:
 // nullable, firstpos, lastpos para cada nodo
@@ -99,7 +130,7 @@ void ast_compute_followpos(ASTNode *root, ASTContext *ctx);
 // Debe llamarse después de construir el AST y antes de dfa_build()
 void ast_build_leaf_index(ASTNode *root, ASTContext *ctx);
 
-// Liberar memoria del AST
+// Liberar memoria del AST (noop cuando se usa pool — usar ast_context_free)
 void ast_free(ASTNode *node);
 
 // Imprime el AST de forma indentada (debugging)

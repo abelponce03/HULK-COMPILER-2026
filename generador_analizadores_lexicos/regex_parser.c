@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../error_handler.h"
 
 // ============== CONTEXTO OPACO DEL PARSER ==============
 //
@@ -128,7 +129,7 @@ static void regex_parser_ensure_init(RegexParserContext *rctx) {
     
     // Construir tabla LL(1)
     if (!build_ll1_table(&rctx->grammar, &rctx->first, &rctx->follow, &rctx->ll1)) {
-        fprintf(stderr, "Advertencia: la gramática de regex tiene conflictos LL(1)\n");
+        LOG_WARN_MSG("regex", "la gramática de regex tiene conflictos LL(1)");
     }
     
     // Exportar tabla LL(1) de regex a CSV
@@ -289,7 +290,7 @@ static void push_production(int prod_id, GrammarSymbol* stack, int* top) {
         rpush(stack, top, SYMBOL_ACTION, ACT_LEAF_RANGE_START);
         break;
     default:
-        fprintf(stderr, "Error regex: producción desconocida %d\n", prod_id);
+        LOG_ERROR_MSG("regex", "producción desconocida %d", prod_id);
         break;
     }
 }
@@ -302,14 +303,14 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
     switch (act) {
     case ACT_LEAF:
         if (*sem_top < SEM_STACK_MAX)
-            sem[(*sem_top)++] = ast_create_leaf(saved_char, get_next_position(ctx));
+            sem[(*sem_top)++] = ast_create_leaf(ctx, saved_char, get_next_position(ctx));
         break;
 
     case ACT_DOT: {
         ASTNode* result = NULL;
         for (int c = 32; c < 127; c++) {
-            ASTNode* leaf = ast_create_leaf((char)c, get_next_position(ctx));
-            result = result ? ast_create_or(result, leaf) : leaf;
+            ASTNode* leaf = ast_create_leaf(ctx, (char)c, get_next_position(ctx));
+            result = result ? ast_create_or(ctx, result, leaf) : leaf;
         }
         if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
         break;
@@ -317,24 +318,24 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 
     case ACT_STAR:
         if (*sem_top > 0)
-            sem[*sem_top - 1] = ast_create_star(sem[*sem_top - 1]);
+            sem[*sem_top - 1] = ast_create_star(ctx, sem[*sem_top - 1]);
         break;
 
     case ACT_PLUS_OP:
         if (*sem_top > 0)
-            sem[*sem_top - 1] = ast_create_plus(sem[*sem_top - 1]);
+            sem[*sem_top - 1] = ast_create_plus(ctx, sem[*sem_top - 1]);
         break;
 
     case ACT_QUESTION_OP:
         if (*sem_top > 0)
-            sem[*sem_top - 1] = ast_create_question(sem[*sem_top - 1]);
+            sem[*sem_top - 1] = ast_create_question(ctx, sem[*sem_top - 1]);
         break;
 
     case ACT_OR: {
         ASTNode* right = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
         ASTNode* left  = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
         if (*sem_top < SEM_STACK_MAX)
-            sem[(*sem_top)++] = ast_create_or(left, right);
+            sem[(*sem_top)++] = ast_create_or(ctx, left, right);
         break;
     }
 
@@ -343,7 +344,7 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
         ASTNode* item = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
         if (*sem_top < SEM_STACK_MAX)
             sem[(*sem_top)++] = (rest == NULL) ? item
-                                               : ast_create_concat(item, rest);
+                                               : ast_create_concat(ctx, item, rest);
         break;
     }
 
@@ -356,7 +357,7 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
         ASTNode* item = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
         if (*sem_top < SEM_STACK_MAX)
             sem[(*sem_top)++] = (rest == NULL) ? item
-                                               : ast_create_or(item, rest);
+                                               : ast_create_or(ctx, item, rest);
         break;
     }
 
@@ -366,14 +367,14 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 
     case ACT_LEAF_RANGE_START:
         if (*sem_top < SEM_STACK_MAX)
-            sem[(*sem_top)++] = ast_create_leaf(range_start_char, get_next_position(ctx));
+            sem[(*sem_top)++] = ast_create_leaf(ctx, range_start_char, get_next_position(ctx));
         break;
 
     case ACT_RANGE: {
         ASTNode* result = NULL;
         for (char c = range_start_char; c <= saved_char; c++) {
-            ASTNode* leaf = ast_create_leaf(c, get_next_position(ctx));
-            result = result ? ast_create_or(result, leaf) : leaf;
+            ASTNode* leaf = ast_create_leaf(ctx, c, get_next_position(ctx));
+            result = result ? ast_create_or(ctx, result, leaf) : leaf;
         }
         if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
         break;
@@ -381,7 +382,7 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 
     case ACT_NEGATE:
         // TODO: implementar negación de clase de caracteres
-        fprintf(stderr, "Advertencia: clases negadas [^...] no soportadas completamente\n");
+        LOG_WARN_MSG("regex", "clases negadas [^...] no soportadas completamente");
         break;
     }
 }
@@ -431,7 +432,7 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx,
             break; // no debería ocurrir
         case SYMBOL_END:
             if (current_token_type != REGEX_T_EOF) {
-                fprintf(stderr, "Error regex: entrada extra después del parse\n");
+                LOG_ERROR_MSG("regex", "entrada extra después del parse");
                 error = 1;
             }
             goto done;
@@ -441,8 +442,8 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx,
                 saved_char = current_char_value;
                 regex_advance(&current_token_type, &current_char_value);
             } else {
-                fprintf(stderr, "Error regex: se esperaba token %d, se encontró %d\n",
-                        top.id, current_token_type);
+                LOG_ERROR_MSG("regex", "se esperaba token %d, se encontró %d",
+                              top.id, current_token_type);
                 error = 1;
             }
             break;
@@ -450,8 +451,8 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx,
         case SYMBOL_NON_TERMINAL: {
             int prod = ll1_lookup(rctx, top.id, current_token_type);
             if (prod == NO_PRODUCTION) {
-                fprintf(stderr, "Error regex: sin producción para NT=%d, token=%d\n",
-                        top.id, current_token_type);
+                LOG_ERROR_MSG("regex", "sin producción para NT=%d, token=%d",
+                              top.id, current_token_type);
                 error = 1;
             } else {
                 push_production(prod, pstack, &ptop);
@@ -496,26 +497,26 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count,
         ASTNode* ast = regex_parse(tokens[i].regex, ctx, rctx);
         
         if (ast == NULL) {
-            fprintf(stderr, "Error parseando regex para token %d: '%s'\n", 
-                    tokens[i].token_id, tokens[i].regex);
+            LOG_ERROR_MSG("regex", "Error parseando regex para token %d: '%s'",
+                          tokens[i].token_id, tokens[i].regex);
             continue;
         }
         
         // Agregar marcador de fin (#) y asociar token_id
         int end_pos = get_next_position(ctx);
-        ASTNode* end_marker = ast_create_leaf('#', end_pos);
+        ASTNode* end_marker = ast_create_leaf(ctx, '#', end_pos);
         
         // Registrar qué token corresponde a esta posición
         ctx->pos_to_token[end_pos] = tokens[i].token_id;
         
         // regex#
-        ASTNode* marked = ast_create_concat(ast, end_marker);
+        ASTNode* marked = ast_create_concat(ctx, ast, end_marker);
         
         // Combinar con OR
         if (combined == NULL) {
             combined = marked;
         } else {
-            combined = ast_create_or(combined, marked);
+            combined = ast_create_or(ctx, combined, marked);
         }
     }
     

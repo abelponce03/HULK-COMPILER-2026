@@ -1,4 +1,5 @@
 #include "afd.h"
+#include "../error_handler.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -52,7 +53,7 @@ static int positions_equal(PositionSet *a, PositionSet *b) {
 }
 
 // Buscar si el conjunto ya existe como estado
-int dfa_find_state(DFA *dfa, PositionSet *set) {
+static int dfa_find_state(DFA *dfa, PositionSet *set) {
     for (int i = 0; i < dfa->count; i++) {
         if (positions_equal(&dfa->states[i].positions, set)) {
             return i;
@@ -62,7 +63,7 @@ int dfa_find_state(DFA *dfa, PositionSet *set) {
 }
 
 // Agrega un estado nuevo al AFD
-int dfa_add_state(DFA *dfa, PositionSet *set) {
+static int dfa_add_state(DFA *dfa, PositionSet *set) {
     if (dfa->count == dfa->capacity) {
         dfa->capacity *= 2;
         dfa->states = (DFAState *)realloc(dfa->states, sizeof(DFAState) * dfa->capacity);
@@ -81,9 +82,16 @@ int dfa_add_state(DFA *dfa, PositionSet *set) {
     return id;
 }
 
+// Estrategia por defecto: menor token_id = mayor prioridad
+int dfa_priority_min_id(int a, int b) {
+    return (a <= b) ? a : b;
+}
+
 // Algoritmo 3.36 (Dragon Book): Construcción directa de DFA desde AST
 // Precondición: ctx->leaf_at[] y ctx->followpos[] ya calculados
-void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
+void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx,
+               TokenPriorityFn priority) {
+    if (!priority) priority = dfa_priority_min_id;
     // Estado inicial = firstpos(root)
     PositionSet start = root->firstpos;
     dfa_add_state(dfa, &start);
@@ -92,7 +100,7 @@ void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
     int wl_cap = 256;
     PositionSet *worklist = malloc(sizeof(PositionSet) * wl_cap);
     if (!worklist) {
-        fprintf(stderr, "Error: sin memoria para worklist\n");
+        LOG_FATAL_MSG("dfa", "sin memoria para worklist");
         return;
     }
     worklist[0] = start;
@@ -110,10 +118,12 @@ void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
         for (int p = 0; p < limit; p++) {
             if (posset_contains(&current, p) && ctx->pos_to_token[p] != -1) {
                 dfa->states[s_id].is_accept = 1;
-                // Menor token_id = mayor prioridad (keywords antes que IDENT)
-                if (dfa->states[s_id].token_id == -1 ||
-                    ctx->pos_to_token[p] < dfa->states[s_id].token_id) {
+                // Usar la estrategia de prioridad inyectada
+                if (dfa->states[s_id].token_id == -1) {
                     dfa->states[s_id].token_id = ctx->pos_to_token[p];
+                } else {
+                    dfa->states[s_id].token_id =
+                        priority(dfa->states[s_id].token_id, ctx->pos_to_token[p]);
                 }
             }
         }
@@ -144,7 +154,7 @@ void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
                     wl_cap *= 2;
                     worklist = realloc(worklist, sizeof(PositionSet) * wl_cap);
                     if (!worklist) {
-                        fprintf(stderr, "Error: sin memoria expandiendo worklist\n");
+                        LOG_FATAL_MSG("dfa", "sin memoria expandiendo worklist");
                         return;
                     }
                 }
@@ -157,21 +167,6 @@ void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
     }
 
     free(worklist);
-}
-
-// Imprimir AFD (para debugging)
-void dfa_print(DFA *dfa) {
-    printf("AFD con %d estados\n", dfa->count);
-    for (int i = 0; i < dfa->count; i++) {
-        printf("estado %d: accept=%d token=%d\n",
-               i, dfa->states[i].is_accept, dfa->states[i].token_id);
-        for (int a = 0; a < dfa->alphabet_size; a++) {
-            if (dfa->states[i].transitions[a] != -1) {
-                printf("  '%c' -> %d\n", dfa->alphabet[a],
-                       dfa->states[i].transitions[a]);
-            }
-        }
-    }
 }
 
 // Construye la tabla next_state simple
@@ -217,7 +212,7 @@ static void escape_char_dot(char c, char* buf) {
 int dfa_save_dot(DFA *dfa, const char *filename, const char** token_names) {
     FILE *f = fopen(filename, "w");
     if (!f) {
-        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        LOG_ERROR_MSG("dfa", "no se pudo crear %s", filename);
         return 0;
     }
     
@@ -286,7 +281,7 @@ int dfa_save_dot(DFA *dfa, const char *filename, const char** token_names) {
 int dfa_save_csv(DFA *dfa, const char *filename, const char** token_names) {
     FILE *f = fopen(filename, "w");
     if (!f) {
-        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        LOG_ERROR_MSG("dfa", "no se pudo crear %s", filename);
         return 0;
     }
     

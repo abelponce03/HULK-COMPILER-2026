@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "../error_handler.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -92,8 +93,8 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
 
             if (col >= 0) {
                 if (ll1->table[A][col] != NO_PRODUCTION && ll1->table[A][col] != p) {
-                    fprintf(stderr, "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d\n",
-                            g->nt_names[A], a, ll1->table[A][col], p);
+                    LOG_WARN_MSG("ll1", "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d",
+                                 g->nt_names[A], a, ll1->table[A][col], p);
                     is_ll1 = 0;
                     // Preferir la producción NO epsilon
                     Production* existing = &g->productions[ll1->table[A][col]];
@@ -120,8 +121,8 @@ int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_t
 
                 if (col >= 0) {
                     if (ll1->table[A][col] != NO_PRODUCTION && ll1->table[A][col] != p) {
-                        fprintf(stderr, "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d\n",
-                                g->nt_names[A], b, ll1->table[A][col], p);
+                        LOG_WARN_MSG("ll1", "Conflicto LL(1) en M[%s, t%d]: prod %d vs %d",
+                                     g->nt_names[A], b, ll1->table[A][col], p);
                         is_ll1 = 0;
                         // Preferir la producción NO epsilon (que ya existe)
                         // No sobrescribir con producción epsilon
@@ -169,7 +170,7 @@ int ll1_table_save_csv(LL1_Table* t, Grammar* g, const char* filename)
 {
     FILE* f = fopen(filename, "w");
     if (!f) {
-        fprintf(stderr, "Error: no se pudo crear %s\n", filename);
+        LOG_ERROR_MSG("ll1", "no se pudo crear %s", filename);
         return 0;
     }
     
@@ -345,6 +346,7 @@ void parser_init(ParserContext* ctx, Grammar* g, LL1_Table* table, Follow_Table*
     ctx->lexer_ctx = NULL;
     ctx->error_count = 0;
     ctx->max_errors = 50;
+    ctx->error_recovery = NULL;  // usa panic mode por defecto
 }
 
 void parser_set_lexer(ParserContext* ctx, Token (*get_token)(void*), void* lexer_ctx)
@@ -382,7 +384,7 @@ static const char* get_terminal_name(Grammar* g, int token_type) {
 int parser_parse(ParserContext* ctx)
 {
     if (!ctx->grammar || !ctx->table || !ctx->get_next_token) {
-        fprintf(stderr, "Parser no configurado correctamente\n");
+        LOG_ERROR_MSG("parser", "Parser no configurado correctamente");
         return 0;
     }
     
@@ -401,7 +403,7 @@ int parser_parse(ParserContext* ctx)
     while (1) {
         // Verificar límite de errores
         if (ctx->max_errors > 0 && ctx->error_count >= ctx->max_errors) {
-            fprintf(stderr, "Demasiados errores (%d), abortando análisis\n", ctx->error_count);
+            LOG_ERROR_MSG("parser", "Demasiados errores (%d), abortando análisis", ctx->error_count);
             return 0;
         }
         
@@ -412,8 +414,8 @@ int parser_parse(ParserContext* ctx)
             if (ctx->lookahead.type == TOKEN_EOF) {
                 return ctx->error_count == 0; // Éxito
             } else {
-                fprintf(stderr, "Error [%d:%d]: entrada extra después del parse completo\n",
-                        ctx->lookahead.line, ctx->lookahead.col);
+                LOG_ERROR_MSG("parser", "[%d:%d] entrada extra después del parse completo",
+                              ctx->lookahead.line, ctx->lookahead.col);
                 ctx->error_count++;
                 return 0;
             }
@@ -431,8 +433,8 @@ int parser_parse(ParserContext* ctx)
                 const char* expected = get_terminal_name(g, top.id);
                 const char* found = get_terminal_name(g, ctx->lookahead.type);
                 
-                fprintf(stderr, "Error sintáctico [%d:%d]: se esperaba '%s', se encontró '%s'\n",
-                        ctx->lookahead.line, ctx->lookahead.col, expected, found);
+                LOG_ERROR_MSG("parser", "[%d:%d] se esperaba '%s', se encontró '%s'",
+                              ctx->lookahead.line, ctx->lookahead.col, expected, found);
                 ctx->error_count++;
                 
                 // Recuperación: descartar el terminal del stack
@@ -451,8 +453,8 @@ int parser_parse(ParserContext* ctx)
             }
             
             if (col < 0) {
-                fprintf(stderr, "Error [%d:%d]: token %d no reconocido en gramática\n",
-                        ctx->lookahead.line, ctx->lookahead.col, ctx->lookahead.type);
+                LOG_ERROR_MSG("parser", "[%d:%d] token %d no reconocido en gramática",
+                              ctx->lookahead.line, ctx->lookahead.col, ctx->lookahead.type);
                 ctx->error_count++;
                 if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
                 ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
@@ -465,8 +467,8 @@ int parser_parse(ParserContext* ctx)
                 const char* nt_name = g->nt_names[row];
                 const char* t_name = get_terminal_name(g, ctx->lookahead.type);
                 
-                fprintf(stderr, "Error sintáctico [%d:%d]: no hay producción para [%s, %s]\n",
-                        ctx->lookahead.line, ctx->lookahead.col, nt_name, t_name);
+                LOG_ERROR_MSG("parser", "[%d:%d] no hay producción para [%s, %s]",
+                              ctx->lookahead.line, ctx->lookahead.col, nt_name, t_name);
                 ctx->error_count++;
                 
                 // Recuperación en modo pánico con FOLLOW (Dragon Book §4.4.1)
@@ -507,7 +509,7 @@ int parser_parse(ParserContext* ctx)
             
             // Verificar desbordamiento de pila
             if (stack->top + prod->right_count >= STACK_MAX) {
-                fprintf(stderr, "Error: desbordamiento de pila del parser (STACK_MAX=%d)\n", STACK_MAX);
+                LOG_FATAL_MSG("parser", "desbordamiento de pila del parser (STACK_MAX=%d)", STACK_MAX);
                 return 0;
             }
             
@@ -535,7 +537,7 @@ int parser_create_from_file(Parser* p, const char* grammar_file, const char* tab
     grammar_init(&p->grammar, "loaded");
     
     if (!grammar_load_from_file(&p->grammar, grammar_file)) {
-        fprintf(stderr, "Error cargando gramática desde %s\n", grammar_file);
+        LOG_ERROR_MSG("parser", "Error cargando gramática desde %s", grammar_file);
         return 0;
     }
     
@@ -552,7 +554,7 @@ int parser_create_from_file(Parser* p, const char* grammar_file, const char* tab
     
     // Construir tabla LL(1)
     if (!build_ll1_table(&p->grammar, &p->first, &p->follow, &p->ll1)) {
-        fprintf(stderr, "Advertencia: la gramática no es LL(1)\n");
+        LOG_WARN_MSG("parser", "la gramática no es LL(1)");
     }
     
     // Guardar en cache si se especificó
@@ -570,14 +572,12 @@ int parser_create_predefined(Parser* p, const char* type, const char* table_cach
 {
     memset(p, 0, sizeof(Parser));
     
-    if (strcmp(type, "regex") == 0) {
-        grammar_init_regex(&p->grammar);
-    } else if (strcmp(type, "hulk") == 0) {
-        grammar_init_hulk(&p->grammar);
-    } else {
-        fprintf(stderr, "Tipo de gramática desconocido: %s\n", type);
+    const GrammarFactory *factory = grammar_factory_find(type);
+    if (!factory) {
+        LOG_ERROR_MSG("parser", "Tipo de gramática desconocido: %s", type);
         return 0;
     }
+    factory->init(&p->grammar);
     
     // Intentar cargar tabla desde cache
     if (table_cache && ll1_table_load(&p->ll1, &p->grammar, table_cache)) {
@@ -592,7 +592,7 @@ int parser_create_predefined(Parser* p, const char* type, const char* table_cach
     
     // Construir tabla LL(1)
     if (!build_ll1_table(&p->grammar, &p->first, &p->follow, &p->ll1)) {
-        fprintf(stderr, "Advertencia: la gramática no es LL(1)\n");
+        LOG_WARN_MSG("parser", "la gramática no es LL(1)");
     }
     
     // Guardar en cache

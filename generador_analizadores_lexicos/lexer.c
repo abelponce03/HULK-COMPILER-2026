@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include "../error_handler.h"
 
 void lexer_init(LexerContext *ctx, DFA *dfa, const char *input) {
     ctx->dfa   = dfa;
@@ -66,8 +67,8 @@ Token lexer_next_token(LexerContext *ctx) {
 
         if (last_accept_state == -1) {
             // Error léxico: emitir TOKEN_ERROR y avanzar 1 carácter
-            fprintf(stderr, "Error léxico [%d:%d] cerca de '%c'\n",
-                    ctx->line, ctx->col, ctx->input[ctx->pos]);
+            LOG_ERROR_MSG("lexer", "[%d:%d] cerca de '%c'",
+                          ctx->line, ctx->col, ctx->input[ctx->pos]);
             Token err;
             err.type   = TOKEN_ERROR;
             err.length = 1;

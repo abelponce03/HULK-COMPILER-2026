@@ -14,6 +14,7 @@ REGEX_LEXER_C = $(LEXER_DIR)/regex_lexer.c
 OBJS = main.o \
        hulk_tokens.o \
        hulk_compiler.o \
+       error_handler.o \
        $(LEXER_DIR)/ast.o \
        $(LEXER_DIR)/afd.o \
        $(LEXER_DIR)/lexer.o \

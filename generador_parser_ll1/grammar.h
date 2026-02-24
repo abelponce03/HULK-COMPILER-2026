@@ -93,4 +93,21 @@ void grammar_init_hulk(Grammar* g);
 // Inicializa la gramática de expresiones regulares
 void grammar_init_regex(Grammar* g);
 
+// ============== ABSTRACT FACTORY ==============
+// Encapsula la creación e inicialización de gramáticas distintas
+// bajo una interfaz uniforme.
+
+typedef struct {
+    const char* name;                            // nombre descriptivo
+    void (*init)(Grammar* g);                    // inicializa la gramática
+    int  (*load)(Grammar* g, const char* file);  // carga desde archivo (puede ser NULL)
+} GrammarFactory;
+
+// Factorías predefinidas
+extern const GrammarFactory grammar_factory_hulk;
+extern const GrammarFactory grammar_factory_regex;
+
+// Busca una factoría por nombre ("hulk", "regex").  Retorna NULL si no existe.
+const GrammarFactory* grammar_factory_find(const char* name);
+
 #endif

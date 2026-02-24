@@ -52,9 +52,16 @@ typedef struct
     int top;
 } ParserStack;
 
+// ============== ESTRATEGIA DE RECUPERACIÓN DE ERRORES ==============
+// Callback que el parser invoca al detectar un error sintáctico.
+// Parámetros: contexto del parser, mensaje descriptivo.
+// Retorna: 1 si se pudo recuperar (continuar), 0 si abortar.
+struct ParserContext_s;  // forward declaration
+typedef int (*ErrorRecoveryFn)(struct ParserContext_s *ctx, const char *msg);
+
 // ============== PARSER CONTEXT ==============
 
-typedef struct {
+typedef struct ParserContext_s {
     Grammar* grammar;
     LL1_Table* table;
     Follow_Table* follow;  // Para recuperación de errores (panic mode)
@@ -70,6 +77,9 @@ typedef struct {
     // Control de errores
     int error_count;
     int max_errors;  // Límite antes de abortar (0 = sin límite)
+    
+    // Estrategia de recuperación de errores (si NULL → panic mode por defecto)
+    ErrorRecoveryFn error_recovery;
 } ParserContext;
 
 // ============== FUNCIONES DEL PARSER ==============

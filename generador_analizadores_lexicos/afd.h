@@ -23,13 +23,22 @@ typedef struct {
     int     **next_state;   // tabla next_state[state][byte], 256 entradas
 } DFA;
 
+// ============== ESTRATEGIA DE PRIORIDAD DE TOKENS ==============
+// Callback para resolver conflictos cuando un estado DFA acepta múltiples tokens.
+// Recibe los dos token_id en conflicto y retorna el de mayor prioridad.
+typedef int (*TokenPriorityFn)(int token_a, int token_b);
+
+// Estrategia por defecto: menor token_id = mayor prioridad
+// (keywords antes que IDENT por convención del enum TokenType)
+int dfa_priority_min_id(int a, int b);
+
 // Funciones principales
 DFA *dfa_create(char *alphabet, int alphabet_size);
 void dfa_free(DFA *dfa);
-void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx);
-int  dfa_find_state(DFA *dfa, PositionSet *set);
-int  dfa_add_state(DFA *dfa, PositionSet *set);
-void dfa_print(DFA *dfa);
+
+// Construcción del DFA.  Si priority==NULL usa dfa_priority_min_id.
+void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx,
+               TokenPriorityFn priority);
 
 void dfa_build_table(DFA *dfa);
 

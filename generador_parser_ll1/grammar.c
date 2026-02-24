@@ -1,4 +1,5 @@
 #include "grammar.h"
+#include "../error_handler.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -171,7 +172,7 @@ int grammar_find_terminal(Grammar* g, const char* name) {
 int grammar_load_from_file(Grammar* g, const char* filename) {
     FILE* f = fopen(filename, "r");
     if (!f) {
-        fprintf(stderr, "Error: no se pudo abrir %s\n", filename);
+        LOG_ERROR_MSG("grammar", "no se pudo abrir %s", filename);
         return 0;
     }
     
@@ -189,7 +190,7 @@ int grammar_load_from_file(Grammar* g, const char* filename) {
         // Buscar ->
         char* arrow = strstr(trimmed, "->");
         if (!arrow) {
-            fprintf(stderr, "Error línea %d: falta '->'\n", line_num);
+            LOG_WARN_MSG("grammar", "línea %d: falta '->'", line_num);
             continue;
         }
         
@@ -516,7 +517,7 @@ static int get_hulk_token_id(const char* name) {
 int grammar_load_hulk(Grammar* g, const char* filename) {
     FILE* f = fopen(filename, "r");
     if (!f) {
-        fprintf(stderr, "Error: no se pudo abrir %s\n", filename);
+        LOG_ERROR_MSG("grammar", "no se pudo abrir %s", filename);
         return 0;
     }
     
@@ -524,7 +525,7 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
     size_t content_cap = 65536;
     char* full_content = calloc(content_cap, 1);
     if (!full_content) {
-        fprintf(stderr, "Error: sin memoria para buffer de gramática\n");
+        LOG_FATAL_MSG("grammar", "sin memoria para buffer de gramática");
         fclose(f);
         return 0;
     }
@@ -629,7 +630,7 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
                             if (is_terminal) {
                                 int t_id = get_hulk_token_id(token);
                                 if (t_id < 0) {
-                                    fprintf(stderr, "Advertencia: terminal '%s' no mapeado\n", token);
+                                    LOG_WARN_MSG("grammar", "terminal '%s' no mapeado", token);
                                     t_id = grammar_add_terminal(g, token, g->t_count + 100);
                                 } else {
                                     if (grammar_find_terminal(g, token) < 0) {
@@ -674,4 +675,33 @@ int grammar_load_hulk(Grammar* g, const char* filename) {
 void grammar_init_hulk(Grammar* g) {
     grammar_init(g, "hulk");
     // La gramática se cargará desde grammar.ll1 usando grammar_load_hulk()
+}
+
+// ============== ABSTRACT FACTORY ==============
+
+const GrammarFactory grammar_factory_hulk = {
+    .name = "hulk",
+    .init = grammar_init_hulk,
+    .load = grammar_load_hulk,
+};
+
+const GrammarFactory grammar_factory_regex = {
+    .name = "regex",
+    .init = grammar_init_regex,
+    .load = NULL,  // la gramática de regex se define en código, no carga archivo
+};
+
+static const GrammarFactory* factories[] = {
+    &grammar_factory_hulk,
+    &grammar_factory_regex,
+    NULL
+};
+
+const GrammarFactory* grammar_factory_find(const char* name) {
+    if (!name) return NULL;
+    for (int i = 0; factories[i]; i++) {
+        if (strcmp(factories[i]->name, name) == 0)
+            return factories[i];
+    }
+    return NULL;
 }
