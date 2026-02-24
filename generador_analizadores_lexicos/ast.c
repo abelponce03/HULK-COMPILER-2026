@@ -191,13 +191,10 @@ int get_next_position(ASTContext *ctx) {
 
 // Dispatch: llama al callback correspondiente al tipo del nodo
 static void visitor_dispatch(ASTNode *node, const ASTVisitor *v, void *data) {
-    static const int type_to_index[] = {0, 1, 2, 3, 4, 5};
-    // NODE_LEAF=0, NODE_CONCAT=1, NODE_OR=2, NODE_STAR=3, NODE_PLUS=4, NODE_QUESTION=5
     ASTVisitFn callbacks[] = {
         v->visit_leaf, v->visit_concat, v->visit_or,
         v->visit_star, v->visit_plus,   v->visit_question
     };
-    (void)type_to_index;
     ASTVisitFn fn = callbacks[node->type];
     if (fn) fn(node, data);
 }
@@ -347,36 +344,23 @@ void ast_free(ASTNode *node)
     (void)node;  // Los nodos viven en la arena del ASTContext
 }
 
-// --- ast_print (pre-orden) ---
+// --- ast_print (recursión directa — no usa Visitor porque la
+//     profundidad cambia en cada nivel de recursión) ---
 
-static void visit_print_leaf(ASTNode *n, void *data) {
-    int depth = *(int*)data;
-    for (int i = 0; i < depth; i++) printf("  ");
-    if (n->symbol == '#')
-        printf("LEAF(#, pos=%d)\n", n->pos);
-    else if (n->symbol >= 32 && n->symbol < 127)
-        printf("LEAF('%c', pos=%d)\n", n->symbol, n->pos);
-    else
-        printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)n->symbol, n->pos);
-}
-
-static void visit_print_internal(ASTNode *n, void *data) {
-    int *depth = (int*)data;
-    for (int i = 0; i < *depth; i++) printf("  ");
-    const char *names[] = {"LEAF","CONCAT","OR","STAR","PLUS","QUESTION"};
-    printf("%s\n", names[n->type]);
-    // Recurse children manually with depth+1
-    int child_depth = *depth + 1;
-    ast_print(n->left, child_depth);
-    ast_print(n->right, child_depth);
-}
-
-// ast_print uses manual recursion because depth changes per level
 void ast_print(ASTNode* node, int depth) {
     if (!node) return;
+    for (int i = 0; i < depth; i++) printf("  ");
     if (node->type == NODE_LEAF) {
-        visit_print_leaf(node, &depth);
+        if (node->symbol == '#')
+            printf("LEAF(#, pos=%d)\n", node->pos);
+        else if (node->symbol >= 32 && node->symbol < 127)
+            printf("LEAF('%c', pos=%d)\n", node->symbol, node->pos);
+        else
+            printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)node->symbol, node->pos);
     } else {
-        visit_print_internal(node, &depth);
+        const char *names[] = {"LEAF","CONCAT","OR","STAR","PLUS","QUESTION"};
+        printf("%s\n", names[node->type]);
+        ast_print(node->left, depth + 1);
+        ast_print(node->right, depth + 1);
     }
 }

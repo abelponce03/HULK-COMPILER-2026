@@ -21,6 +21,9 @@ OBJS = main.o \
        $(LEXER_DIR)/regex_parser.o \
        $(LEXER_DIR)/regex_lexer.o \
        $(PARSER_DIR)/grammar.o \
+       $(PARSER_DIR)/grammar_regex.o \
+       $(PARSER_DIR)/grammar_hulk.o \
+       $(PARSER_DIR)/ll1_table.o \
        $(PARSER_DIR)/parser.o \
        $(PARSER_DIR)/first_follow.o
 

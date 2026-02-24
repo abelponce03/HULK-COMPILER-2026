@@ -3,44 +3,8 @@
 
 #include "first_follow.h"
 #include "grammar.h"
+#include "ll1_table.h"
 #include <stdio.h>
-
-// ============== TABLA LL(1) ==============
-
-#define NO_PRODUCTION (-1)
-#define SYNC_ENTRY (-2)  // Para recuperación de errores
-
-typedef struct
-{
-    int** table;      // M[A,a] = production index o -1 si error
-    int nt_count;     // número de no terminales
-    int t_count;      // número de terminales (+1 para $)
-    int* t_map;       // mapeo terminal_id -> columna
-    int t_map_size;
-} LL1_Table;
-
-// Construye la tabla LL(1) a partir de la gramática, tabla FIRST y FOLLOW
-void ll1_table_init(LL1_Table* t, Grammar* g);
-
-// Libera memoria de la tabla LL(1)
-void ll1_table_free(LL1_Table* t);
-
-// Construcción de la tabla (retorna 1 si es LL(1), 0 si hay conflictos)
-int build_ll1_table(Grammar* g, First_Table* first_table, Follow_Table* follow_table, LL1_Table* ll1);
-
-// Imprime la tabla LL(1) (debugging)
-void ll1_table_print(LL1_Table* t, Grammar* g);
-
-// Exporta la tabla LL(1) a formato CSV
-int ll1_table_save_csv(LL1_Table* t, Grammar* g, const char* filename);
-
-// ============== SERIALIZACIÓN ==============
-
-// Guarda la tabla LL(1) en archivo binario
-int ll1_table_save(LL1_Table* t, Grammar* g, const char* filename);
-
-// Carga la tabla LL(1) desde archivo binario
-int ll1_table_load(LL1_Table* t, Grammar* g, const char* filename);
 
 // ============== STACK DEL PARSER ==============
 

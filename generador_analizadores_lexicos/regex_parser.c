@@ -19,7 +19,7 @@
 #include "regex_parser.h"
 #include "regex_tokens.h"
 #include "../generador_parser_ll1/grammar.h"
-#include "../generador_parser_ll1/parser.h"
+#include "../generador_parser_ll1/ll1_table.h"
 #include "../generador_parser_ll1/first_follow.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -505,12 +505,22 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count,
         // Agregar marcador de fin (#) y asociar token_id
         int end_pos = get_next_position(ctx);
         ASTNode* end_marker = ast_create_leaf(ctx, '#', end_pos);
+        if (!end_marker) {
+            LOG_ERROR_MSG("regex", "sin memoria creando end_marker para token %d",
+                          tokens[i].token_id);
+            continue;
+        }
         
         // Registrar qué token corresponde a esta posición
         ctx->pos_to_token[end_pos] = tokens[i].token_id;
         
         // regex#
         ASTNode* marked = ast_create_concat(ctx, ast, end_marker);
+        if (!marked) {
+            LOG_ERROR_MSG("regex", "sin memoria concatenando marcador para token %d",
+                          tokens[i].token_id);
+            continue;
+        }
         
         // Combinar con OR
         if (combined == NULL) {
