@@ -1,3 +1,21 @@
+# ============== Build artifacts ==============
 *.o
-generador_analizadores_lexicos/context_generador_analizadores_lexicos.txt
-generador_parser_ll1/context_generador_parser_ll1.txt
+*.a
+hulk_compiler
+
+# ============== Generated files ==============
+generador_analizadores_lexicos/regex_lexer.c
+*.ll1.cache
+
+# ============== Output (regenerated each build) ==============
+output/*.csv
+output/*.dot
+output/*.png
+
+# ============== IDE / OS ==============
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

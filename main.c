@@ -12,9 +12,6 @@ int main(int argc, char* argv[]) {
     printf("   HULK Compiler - Lexer + Parser LL(1)\n");
     printf("===========================================\n");
     
-    // Crear directorio de salida
-    system("mkdir -p output");
-    
     // Inicializar compilador (construye el DFA del lexer)
     HulkCompiler hc;
     if (!hulk_compiler_init(&hc)) {

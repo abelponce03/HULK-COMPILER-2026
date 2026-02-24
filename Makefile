@@ -6,6 +6,7 @@ TARGET = hulk_compiler
 # Directorios
 LEXER_DIR = generador_analizadores_lexicos
 PARSER_DIR = generador_parser_ll1
+OUTPUT_DIR = output
 
 # Archivo generado por flex
 REGEX_LEXER_C = $(LEXER_DIR)/regex_lexer.c
@@ -28,8 +29,12 @@ OBJS = main.o \
        $(PARSER_DIR)/first_follow.o
 
 # Regla principal
-$(TARGET): $(REGEX_LEXER_C) $(OBJS)
+$(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+
+# Crear directorio de salida
+$(OUTPUT_DIR):
+	mkdir -p $(OUTPUT_DIR)
 
 # Generar lexer de regex con flex
 $(REGEX_LEXER_C): $(LEXER_DIR)/regex_lexer.l
@@ -45,16 +50,17 @@ clean:
 	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o
 	rm -f $(REGEX_LEXER_C)
 	rm -f *.ll1.cache
+	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.dot $(OUTPUT_DIR)/*.png
 
-# Test rápido
+# Test rápido (entrada por defecto)
 test: $(TARGET)
 	./$(TARGET)
 
-# Test con archivo
+# Test con archivo .hulk
 test-file: $(TARGET)
 	./$(TARGET) test.hulk
 
-# Reconstruir todo
+# Reconstruir desde cero
 rebuild: clean $(TARGET)
 
-.PHONY: clean test test-file rebuild ff_obj
+.PHONY: clean test test-file rebuild

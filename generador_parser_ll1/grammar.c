@@ -1,27 +1,13 @@
 #include "grammar.h"
+#include "grammar_utils.h"
 #include "../error_handler.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-// ============== FUNCIONES AUXILIARES ==============
-
-static char* str_dup(const char* s) {
-    if (!s) return NULL;
-    size_t len = strlen(s);
-    char* copy = malloc(len + 1);
-    if (copy) strcpy(copy, s);
-    return copy;
-}
-
-static char* str_trim(char* str) {
-    while (isspace((unsigned char)*str)) str++;
-    if (*str == 0) return str;
-    char* end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
-    *(end + 1) = 0;
-    return str;
-}
+// str_dup y str_trim → grammar_utils.h
+#define str_dup   grammar_str_dup
+#define str_trim  grammar_str_trim
 
 // ============== INICIALIZACIÓN ==============
 
