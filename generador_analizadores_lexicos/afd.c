@@ -3,15 +3,6 @@
 #include <stdio.h>
 
 
-// Inicialización del mapa posición→token
-int pos_to_token[MAX_POSITIONS];
-
-void init_pos_to_token() 
-{
-    for (int i = 0; i < MAX_POSITIONS; i++)
-        pos_to_token[i] = -1;
-}
-
 // Crear un AFD vacío
 DFA *dfa_create(char *alphabet, int alphabet_size) 
 {
@@ -91,8 +82,8 @@ int dfa_add_state(DFA *dfa, PositionSet *set) {
 }
 
 // Algoritmo 3.36 (Dragon Book): Construcción directa de DFA desde AST
-// Precondición: leaf_at[] y followpos[] ya calculados
-void dfa_build(DFA *dfa, ASTNode *root) {
+// Precondición: ctx->leaf_at[] y ctx->followpos[] ya calculados
+void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx) {
     // Estado inicial = firstpos(root)
     PositionSet start = root->firstpos;
     dfa_add_state(dfa, &start);
@@ -107,6 +98,8 @@ void dfa_build(DFA *dfa, ASTNode *root) {
     worklist[0] = start;
 
     int front = 0;
+    int limit = ctx->max_position + 1;
+
     while (front < dfa->count) {
         PositionSet current = worklist[front];
         int s_id = front;
@@ -114,13 +107,13 @@ void dfa_build(DFA *dfa, ASTNode *root) {
         // Determinar aceptación: posición # con token asociado
         dfa->states[s_id].is_accept = 0;
         dfa->states[s_id].token_id = -1;
-        for (int p = 0; p < MAX_POSITIONS; p++) {
-            if (set_contains(&current, p) && pos_to_token[p] != -1) {
+        for (int p = 0; p < limit; p++) {
+            if (posset_contains(&current, p) && ctx->pos_to_token[p] != -1) {
                 dfa->states[s_id].is_accept = 1;
                 // Menor token_id = mayor prioridad (keywords antes que IDENT)
                 if (dfa->states[s_id].token_id == -1 ||
-                    pos_to_token[p] < dfa->states[s_id].token_id) {
-                    dfa->states[s_id].token_id = pos_to_token[p];
+                    ctx->pos_to_token[p] < dfa->states[s_id].token_id) {
+                    dfa->states[s_id].token_id = ctx->pos_to_token[p];
                 }
             }
         }
@@ -129,19 +122,19 @@ void dfa_build(DFA *dfa, ASTNode *root) {
         for (int a = 0; a < dfa->alphabet_size; a++) {
             char sym = dfa->alphabet[a];
             PositionSet next;
-            set_init(&next);
+            posset_init(&next);
 
             // U = ∪ followpos(p) para p ∈ current donde symbol(p) == sym
-            for (int p = 0; p < MAX_POSITIONS; p++) {
-                if (set_contains(&current, p)) {
-                    ASTNode *leaf = leaf_at[p];  // O(1) en vez de O(n)
+            for (int p = 0; p < limit; p++) {
+                if (posset_contains(&current, p)) {
+                    ASTNode *leaf = ctx->leaf_at[p];  // O(1) en vez de O(n)
                     if (leaf && leaf->symbol == sym) {
-                        set_union(&next, &next, &followpos[p]);
+                        posset_union(&next, &next, &ctx->followpos[p]);
                     }
                 }
             }
 
-            if (set_is_empty(&next)) continue;
+            if (posset_is_empty(&next)) continue;
 
             int to_id = dfa_find_state(dfa, &next);
             if (to_id == -1) {

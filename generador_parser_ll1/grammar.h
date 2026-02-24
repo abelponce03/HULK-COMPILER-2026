@@ -4,97 +4,24 @@
 #define NT_OFFSET 0
 #define T_OFFSET 128 //debe ser > max NonTerminal
 
-#include "../generador_analizadores_lexicos/lexer.h"
+#include "../generador_analizadores_lexicos/token_types.h"
 #include <stdio.h>
 
-// ============== NO TERMINALES PARA HULK ==============
-typedef enum 
-{
-    NT_PROGRAM,
-    NT_STMTLIST,
-    NT_TERMINATEDSTMT,
-    NT_STMT,
-    NT_FUNCTIONDEF,
-    NT_TYPEDEF,
-    NT_TYPEPARAMS,
-    NT_TYPEINHERITANCE,
-    NT_TYPEBASEARGS,
-    NT_TYPEBODY,
-    NT_TYPEMEMBER,
-    NT_TYPEMEMBERTAIL,
-    NT_TYPEMEMBERTAIL_PRIME,
-    NT_ATTRIBUTEDEF,
-    NT_METHODDEF,
-    NT_ARGIDLIST,
-    NT_ARGIDLISTTAIL,
-    NT_ARGID,
-    NT_FUNCTIONBODY,
-    NT_WHILESTMT,
-    NT_WHILEBODY,
-    NT_FORSTMT,
-    NT_FORBODY,
-    NT_BLOCKSTMT,
-    NT_EXPR,
-    NT_LETEXPR,
-    NT_LETBODY,
-    NT_VARBINDINGLIST,
-    NT_VARBINDINGLISTTAIL,
-    NT_VARBINDING,
-    NT_TYPEANNOTATION,
-    NT_IFEXPR,
-    NT_ELIFLIST,
-    NT_ELIFBRANCH,
-    NT_IFBODY,
-    NT_OREXPR,
-    NT_OREXPR_PRIME,
-    NT_ANDEXPR,
-    NT_ANDEXPR_PRIME,
-    NT_CMPEXPR,
-    NT_CMPEXPR_PRIME,
-    NT_CONCATEXPR,
-    NT_CONCATEXPR_PRIME,
-    NT_ADDEXPR,
-    NT_ADDEXPR_PRIME,
-    NT_TERM,
-    NT_TERM_PRIME,
-    NT_FACTOR,
-    NT_FACTOR_PRIME,
-    NT_POWER,
-    NT_UNARY,
-    NT_ASEXPR,
-    NT_PRIMARY,
-    NT_PRIMARYTAIL,
-    NT_ARGLIST,
-    NT_ARGLISTTAIL,
-    NT_COUNT  // Contador de no terminales HULK
-} NonTerminal;
-
-// ============== NO TERMINALES PARA REGEX ==============
-typedef enum {
-    RNT_REGEX = 0,      // regex -> concat (OR concat)*
-    RNT_CONCAT,         // concat -> repeat+
-    RNT_REPEAT,         // repeat -> atom postfix
-    RNT_POSTFIX,        // postfix -> STAR | PLUS | QUESTION | ε
-    RNT_ATOM,           // atom -> CHAR | LPAREN regex RPAREN | LBRACKET charclass RBRACKET | DOT
-    RNT_CHARCLASS,      // charclass -> CARET? charclass_items
-    RNT_CHARCLASS_ITEMS,// charclass_items -> charclass_item charclass_items | ε
-    RNT_CHARCLASS_ITEM, // charclass_item -> CHAR range_opt
-    RNT_RANGE_OPT,      // range_opt -> DASH CHAR | ε
-    RNT_COUNT           // Contador de no terminales Regex
-} RegexNonTerminal;
-
-// Definición de símbolos para producciones (terminal, no terminal)
+// Definición de símbolos para producciones y pilas de parsers
+// Unifica terminal, no-terminal, acción, epsilon y fin de pila
 typedef enum 
 {
     SYMBOL_TERMINAL,
     SYMBOL_NON_TERMINAL,
-    SYMBOL_EPSILON       // Representa producción vacía
+    SYMBOL_EPSILON,      // Producción vacía
+    SYMBOL_ACTION,       // Marcador de acción semántica (para parser de regex)
+    SYMBOL_END           // Marcador de fin de pila ($)
 } SymbolType;
 
 typedef struct 
 {
     SymbolType type;
-    int id; //TokenType o NonTerminal dependiendo de type
+    int id; // TokenType, NonTerminal ID, SemanticAction ID, o END_MARKER
 } GrammarSymbol;
 
 // Definición de una producción

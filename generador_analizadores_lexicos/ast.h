@@ -30,11 +30,11 @@ typedef struct
 } PositionSet;
 
 // Funciones para manipular conjuntos de posiciones
-void set_init(PositionSet *s);
-void set_add(PositionSet *s, int pos);
-void set_union(PositionSet *dest, PositionSet *a, PositionSet *b);
-int  set_contains(PositionSet *s, int pos);
-int  set_is_empty(PositionSet *s);
+void posset_init(PositionSet *s);
+void posset_add(PositionSet *s, int pos);
+void posset_union(PositionSet *dest, PositionSet *a, PositionSet *b);
+int  posset_contains(PositionSet *s, int pos);
+int  posset_is_empty(PositionSet *s);
 
 // Estructura para nodos de AST
 // Cada nodo del AST tendrá:
@@ -59,14 +59,24 @@ typedef struct ASTNode {
     PositionSet lastpos;
 } ASTNode;
 
-// Variable global followpos - declarada como extern
-extern PositionSet followpos[MAX_POSITIONS];
+// Contexto que agrupa todo el estado mutable del AST/DFA:
+//   - followpos[]:      resultado del cálculo de followpos
+//   - leaf_at[]:        índice posición → nodo hoja
+//   - pos_to_token[]:   mapa posición '#' → token_id
+//   - next_position:    contador de posiciones únicas
+//   - max_position:     mayor posición asignada (para acotar iteraciones)
+typedef struct {
+    PositionSet followpos[MAX_POSITIONS];
+    ASTNode*    leaf_at[MAX_POSITIONS];
+    int         pos_to_token[MAX_POSITIONS];
+    int         next_position;
+    int         max_position;   // = next_position - 1 tras construir AST
+} ASTContext;
 
-// Contador de posiciones (para asignar posiciones únicas a hojas)
-extern int next_position;
-
-// Índice directo posición → nodo hoja (construido por ast_build_leaf_index)
-extern ASTNode* leaf_at[MAX_POSITIONS];
+// Inicializa todos los campos de un ASTContext (followpos, leaf_at,
+// pos_to_token a -1, next_position a 1).  Reemplaza las tres llamadas
+// independientes init_pos_to_token + followpos_init_all + reset_position_counter.
+void ast_context_init(ASTContext *ctx);
 
 // Funciones de creación de nodos AST
 ASTNode* ast_create_leaf(char symbol, int pos);
@@ -77,27 +87,21 @@ ASTNode* ast_create_plus(ASTNode *child);
 ASTNode* ast_create_question(ASTNode *child);
 
 // Obtener siguiente posición única
-int get_next_position(void);
-
-// Reiniciar contador de posiciones
-void reset_position_counter(void);
+int get_next_position(ASTContext *ctx);
 
 // Función que recorre el AST post-orden, calcula y almacena:
 // nullable, firstpos, lastpos para cada nodo
 void ast_compute_functions(ASTNode *root);
 
-// Preparar followpos antes de calcular 
-void followpos_init_all(void);
-
-// Función para recorrer el AST y llenar followpos
-void ast_compute_followpos(ASTNode *root);
+// Inicializar followpos y calcular (usa ctx->followpos)
+void ast_compute_followpos(ASTNode *root, ASTContext *ctx);
 
 // Función que recorre el AST y devuelve el nodo hoja con la posición pos
 ASTNode* find_leaf_by_pos(ASTNode *root, int pos);
 
-// Construye el índice leaf_at[pos] → nodo hoja en O(n)
+// Construye el índice ctx->leaf_at[pos] → nodo hoja en O(n)
 // Debe llamarse después de construir el AST y antes de dfa_build()
-void ast_build_leaf_index(ASTNode *root);
+void ast_build_leaf_index(ASTNode *root, ASTContext *ctx);
 
 // Liberar memoria del AST
 void ast_free(ASTNode *node);

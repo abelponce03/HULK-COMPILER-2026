@@ -392,8 +392,8 @@ int parser_parse(ParserContext* ctx)
     
     // Inicializar stack: push $ y símbolo inicial
     stack_init(stack);
-    stack_push(stack, (StackSymbol){STACK_END, END_MARKER});
-    stack_push(stack, (StackSymbol){STACK_NON_TERMINAL, g->start_symbol});
+    stack_push(stack, (GrammarSymbol){SYMBOL_END, END_MARKER});
+    stack_push(stack, (GrammarSymbol){SYMBOL_NON_TERMINAL, g->start_symbol});
     
     // Obtener primer token
     ctx->lookahead = ctx->get_next_token(ctx->lexer_ctx);
@@ -405,10 +405,10 @@ int parser_parse(ParserContext* ctx)
             return 0;
         }
         
-        StackSymbol top = stack_peek(stack);
+        GrammarSymbol top = stack_peek(stack);
         
         // Caso: stack vacío (solo $)
-        if (top.type == STACK_END) {
+        if (top.type == SYMBOL_END) {
             if (ctx->lookahead.type == TOKEN_EOF) {
                 return ctx->error_count == 0; // Éxito
             } else {
@@ -420,7 +420,7 @@ int parser_parse(ParserContext* ctx)
         }
         
         // Caso: Terminal en el stack
-        if (top.type == STACK_TERMINAL) {
+        if (top.type == SYMBOL_TERMINAL) {
             if (top.id == (int)ctx->lookahead.type) {
                 // Match!
                 if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
@@ -440,7 +440,7 @@ int parser_parse(ParserContext* ctx)
             }
         }
         // Caso: No terminal en el stack
-        else if (top.type == STACK_NON_TERMINAL) {
+        else if (top.type == SYMBOL_NON_TERMINAL) {
             int row = top.id;
             int col;
             
@@ -516,9 +516,9 @@ int parser_parse(ParserContext* ctx)
                 GrammarSymbol s = prod->right[i];
                 
                 if (s.type == SYMBOL_TERMINAL) {
-                    stack_push(stack, (StackSymbol){STACK_TERMINAL, s.id});
+                    stack_push(stack, (GrammarSymbol){SYMBOL_TERMINAL, s.id});
                 } else if (s.type == SYMBOL_NON_TERMINAL) {
-                    stack_push(stack, (StackSymbol){STACK_NON_TERMINAL, s.id});
+                    stack_push(stack, (GrammarSymbol){SYMBOL_NON_TERMINAL, s.id});
                 }
                 // SYMBOL_EPSILON no se hace push
             }

@@ -10,26 +10,22 @@ PARSER_DIR = generador_parser_ll1
 # Archivo generado por flex
 REGEX_LEXER_C = $(LEXER_DIR)/regex_lexer.c
 
-# Objetos directamente
+# Objetos
 OBJS = main.o \
+       hulk_tokens.o \
+       hulk_compiler.o \
        $(LEXER_DIR)/ast.o \
        $(LEXER_DIR)/afd.o \
        $(LEXER_DIR)/lexer.o \
        $(LEXER_DIR)/regex_parser.o \
        $(LEXER_DIR)/regex_lexer.o \
        $(PARSER_DIR)/grammar.o \
-       $(PARSER_DIR)/parser.o
-
-# Compilación especial para first_&_follow.c
-FF_SRC = "$(PARSER_DIR)/first_&_follow.c"
-FF_OBJ = "$(PARSER_DIR)/first_&_follow.o"
+       $(PARSER_DIR)/parser.o \
+       $(PARSER_DIR)/first_follow.o
 
 # Regla principal
-$(TARGET): $(REGEX_LEXER_C) $(OBJS) ff_obj
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(PARSER_DIR)/first_\&_follow.o $(LDFLAGS)
-
-ff_obj:
-	$(CC) $(CFLAGS) -c $(FF_SRC) -o $(FF_OBJ)
+$(TARGET): $(REGEX_LEXER_C) $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
 
 # Generar lexer de regex con flex
 $(REGEX_LEXER_C): $(LEXER_DIR)/regex_lexer.l

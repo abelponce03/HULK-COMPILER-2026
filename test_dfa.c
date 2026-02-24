@@ -12,15 +12,16 @@ TokenRegex test_tokens[] = {
 int test_count = 3;
 
 int main() {
-    init_pos_to_token();
-    followpos_init_all();
-    reset_position_counter();
+    ASTContext *ctx = malloc(sizeof(ASTContext));
+    if (!ctx) { printf("Sin memoria\n"); return 1; }
+    ast_context_init(ctx);
     
-    ASTNode *ast = build_lexer_ast(test_tokens, test_count);
-    if (!ast) { printf("AST NULL\n"); return 1; }
+    ASTNode *ast = build_lexer_ast(test_tokens, test_count, ctx);
+    if (!ast) { printf("AST NULL\n"); free(ctx); return 1; }
     
     ast_compute_functions(ast);
-    ast_compute_followpos(ast);
+    ast_build_leaf_index(ast, ctx);
+    ast_compute_followpos(ast, ctx);
     
     char alphabet[128];
     int alphabet_size = 0;
@@ -29,7 +30,7 @@ int main() {
     alphabet[alphabet_size++] = '\n';
     
     DFA *dfa = dfa_create(alphabet, alphabet_size);
-    dfa_build(dfa, ast);
+    dfa_build(dfa, ast, ctx);
     printf("DFA: %d estados\n", dfa->count);
     
     dfa_build_table(dfa);

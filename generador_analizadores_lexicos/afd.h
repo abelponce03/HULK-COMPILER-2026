@@ -4,10 +4,6 @@
 #include "ast.h"
 #include <stdlib.h>
 
-// Tabla global para mapear posiciones de hoja (#) a token IDs.
-// Debe inicializarse desde donde construyas el AST para cada token.
-extern int pos_to_token[MAX_POSITIONS];
-
 
 // Un estado del AFD
 typedef struct {
@@ -28,10 +24,9 @@ typedef struct {
 } DFA;
 
 // Funciones principales
-void init_pos_to_token(void);
 DFA *dfa_create(char *alphabet, int alphabet_size);
 void dfa_free(DFA *dfa);
-void dfa_build(DFA *dfa, ASTNode *root);
+void dfa_build(DFA *dfa, ASTNode *root, ASTContext *ctx);
 int  dfa_find_state(DFA *dfa, PositionSet *set);
 int  dfa_add_state(DFA *dfa, PositionSet *set);
 void dfa_print(DFA *dfa);

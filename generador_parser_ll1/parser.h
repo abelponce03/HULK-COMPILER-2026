@@ -1,7 +1,7 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "first_&_follow.h"
+#include "first_follow.h"
 #include "grammar.h"
 #include <stdio.h>
 
@@ -44,24 +44,11 @@ int ll1_table_load(LL1_Table* t, Grammar* g, const char* filename);
 
 // ============== STACK DEL PARSER ==============
 
-typedef enum
-{
-    STACK_TERMINAL,
-    STACK_NON_TERMINAL,
-    STACK_END
-} StackSymbolType;
-
-typedef struct
-{
-    StackSymbolType type;
-    int id;  // TokenType o NonTerminal dependiendo de type
-} StackSymbol;
-
 #define STACK_MAX 2048
 
 typedef struct
 {
-    StackSymbol data[STACK_MAX];
+    GrammarSymbol data[STACK_MAX];
     int top;
 } ParserStack;
 
@@ -110,21 +97,21 @@ static inline int stack_empty(ParserStack* s) {
     return s->top == 0;
 }
 
-static inline void stack_push(ParserStack* s, StackSymbol sym) {
+static inline void stack_push(ParserStack* s, GrammarSymbol sym) {
     if (s->top < STACK_MAX)
         s->data[s->top++] = sym;
 }
 
-static inline StackSymbol stack_pop(ParserStack* s) {
+static inline GrammarSymbol stack_pop(ParserStack* s) {
     if (s->top > 0)
         return s->data[--s->top];
-    return (StackSymbol){STACK_END, END_MARKER};
+    return (GrammarSymbol){SYMBOL_END, END_MARKER};
 }
 
-static inline StackSymbol stack_peek(ParserStack* s) {
+static inline GrammarSymbol stack_peek(ParserStack* s) {
     if (s->top > 0)
         return s->data[s->top - 1];
-    return (StackSymbol){STACK_END, END_MARKER};
+    return (GrammarSymbol){SYMBOL_END, END_MARKER};
 }
 
 // ============== PARSER COMPLETO (TODO EN UNO) ==============

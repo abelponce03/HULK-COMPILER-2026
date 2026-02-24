@@ -18,7 +18,7 @@
 
 #include "regex_parser.h"
 #include "regex_tokens.h"
-#include "../generador_parser_ll1/first_&_follow.h"
+#include "../generador_parser_ll1/first_follow.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,19 +81,8 @@ typedef enum {
     ACT_NEGATE,          // (futuro) negación de clase de caracteres
 } SemanticAction;
 
-// ============== PILA DEL PARSER (3 tipos de símbolo) ==============
-
-typedef enum {
-    RSYM_TERMINAL,
-    RSYM_NON_TERMINAL,
-    RSYM_ACTION,
-    RSYM_END
-} RSymType;
-
-typedef struct {
-    RSymType type;
-    int id;
-} RSym;
+// Usa GrammarSymbol como símbolo unificado de la pila del parser
+// (SYMBOL_TERMINAL, SYMBOL_NON_TERMINAL, SYMBOL_ACTION, SYMBOL_END de grammar.h)
 
 #define RSTACK_MAX 2048
 #define SEM_STACK_MAX 512
@@ -163,128 +152,128 @@ static int ll1_lookup(int nt_id, int terminal_id) {
 // INVERSO (para que se procesen de izquierda a derecha), intercalando
 // marcadores de acción semántica donde corresponda.
 
-static void rpush(RSym* stack, int* top, RSymType type, int id) {
+static void rpush(GrammarSymbol* stack, int* top, SymbolType type, int id) {
     if (*top < RSTACK_MAX)
-        stack[(*top)++] = (RSym){type, id};
+        stack[(*top)++] = (GrammarSymbol){type, id};
 }
 
-static void push_production(int prod_id, RSym* stack, int* top) {
+static void push_production(int prod_id, GrammarSymbol* stack, int* top) {
     switch (prod_id) {
     // [0] Regex -> Concat ConcatTail
     case 0:
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_ConcatTail);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_ConcatTail);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Concat);
         break;
     // [1] ConcatTail -> OR Concat ConcatTail
     case 1:
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_ConcatTail);
-        rpush(stack, top, RSYM_ACTION, ACT_OR);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_OR);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_ConcatTail);
+        rpush(stack, top, SYMBOL_ACTION, ACT_OR);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Concat);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_OR);
         break;
     // [2] ConcatTail -> ε
     case 2:
         break;
     // [3] Concat -> Repeat Concat
     case 3:
-        rpush(stack, top, RSYM_ACTION, ACT_CONCAT);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Repeat);
+        rpush(stack, top, SYMBOL_ACTION, ACT_CONCAT);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Concat);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Repeat);
         break;
     // [4] Concat -> ε
     case 4:
-        rpush(stack, top, RSYM_ACTION, ACT_PUSH_NULL);
+        rpush(stack, top, SYMBOL_ACTION, ACT_PUSH_NULL);
         break;
     // [5] Repeat -> Atom Postfix
     case 5:
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Postfix);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Atom);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Postfix);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Atom);
         break;
     // [6] Postfix -> STAR
     case 6:
-        rpush(stack, top, RSYM_ACTION, ACT_STAR);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_STAR);
+        rpush(stack, top, SYMBOL_ACTION, ACT_STAR);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_STAR);
         break;
     // [7] Postfix -> PLUS
     case 7:
-        rpush(stack, top, RSYM_ACTION, ACT_PLUS_OP);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_PLUS);
+        rpush(stack, top, SYMBOL_ACTION, ACT_PLUS_OP);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_PLUS);
         break;
     // [8] Postfix -> QUESTION
     case 8:
-        rpush(stack, top, RSYM_ACTION, ACT_QUESTION_OP);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_QUESTION);
+        rpush(stack, top, SYMBOL_ACTION, ACT_QUESTION_OP);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_QUESTION);
         break;
     // [9] Postfix -> ε
     case 9:
         break;
     // [10] Atom -> CHAR
     case 10:
-        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
+        rpush(stack, top, SYMBOL_ACTION, ACT_LEAF);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_CHAR);
         break;
     // [11] Atom -> ESCAPE
     case 11:
-        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_ESCAPE);
+        rpush(stack, top, SYMBOL_ACTION, ACT_LEAF);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_ESCAPE);
         break;
     // [12] Atom -> LPAREN Regex RPAREN
     case 12:
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_RPAREN);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Regex);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_LPAREN);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_RPAREN);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_Regex);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_LPAREN);
         break;
     // [13] Atom -> LBRACKET CharClass RBRACKET
     case 13:
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_RBRACKET);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CharClass);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_LBRACKET);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_RBRACKET);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_CharClass);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_LBRACKET);
         break;
     // [14] Atom -> DOT
     case 14:
-        rpush(stack, top, RSYM_ACTION, ACT_DOT);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_DOT);
+        rpush(stack, top, SYMBOL_ACTION, ACT_DOT);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_DOT);
         break;
     // [15] CharClass -> CARET CCItems
     case 15:
-        rpush(stack, top, RSYM_ACTION, ACT_NEGATE);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CARET);
+        rpush(stack, top, SYMBOL_ACTION, ACT_NEGATE);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_CCItems);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_CARET);
         break;
     // [16] CharClass -> CCItems
     case 16:
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_CCItems);
         break;
     // [17] CCItems -> CCItem CCItems
     case 17:
-        rpush(stack, top, RSYM_ACTION, ACT_OR_OPT);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItem);
+        rpush(stack, top, SYMBOL_ACTION, ACT_OR_OPT);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_CCItems);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_CCItem);
         break;
     // [18] CCItems -> ε
     case 18:
-        rpush(stack, top, RSYM_ACTION, ACT_PUSH_NULL);
+        rpush(stack, top, SYMBOL_ACTION, ACT_PUSH_NULL);
         break;
     // [19] CCItem -> CHAR RangeOpt
     case 19:
-        rpush(stack, top, RSYM_NON_TERMINAL, RNT_RangeOpt);
-        rpush(stack, top, RSYM_ACTION, ACT_SAVE_RANGE_START);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
+        rpush(stack, top, SYMBOL_NON_TERMINAL, RNT_RangeOpt);
+        rpush(stack, top, SYMBOL_ACTION, ACT_SAVE_RANGE_START);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_CHAR);
         break;
     // [20] CCItem -> ESCAPE
     case 20:
-        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_ESCAPE);
+        rpush(stack, top, SYMBOL_ACTION, ACT_LEAF);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_ESCAPE);
         break;
     // [21] RangeOpt -> DASH CHAR
     case 21:
-        rpush(stack, top, RSYM_ACTION, ACT_RANGE);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
-        rpush(stack, top, RSYM_TERMINAL, REGEX_T_DASH);
+        rpush(stack, top, SYMBOL_ACTION, ACT_RANGE);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_CHAR);
+        rpush(stack, top, SYMBOL_TERMINAL, REGEX_T_DASH);
         break;
     // [22] RangeOpt -> ε (solo carácter individual)
     case 22:
-        rpush(stack, top, RSYM_ACTION, ACT_LEAF_RANGE_START);
+        rpush(stack, top, SYMBOL_ACTION, ACT_LEAF_RANGE_START);
         break;
     default:
         fprintf(stderr, "Error regex: producción desconocida %d\n", prod_id);
@@ -295,17 +284,18 @@ static void push_production(int prod_id, RSym* stack, int* top) {
 // ============== EJECUCIÓN DE ACCIONES SEMÁNTICAS ==============
 
 static void exec_action(int act, ASTNode** sem, int* sem_top,
-                        char saved_char, char range_start_char) {
+                        char saved_char, char range_start_char,
+                        ASTContext *ctx) {
     switch (act) {
     case ACT_LEAF:
         if (*sem_top < SEM_STACK_MAX)
-            sem[(*sem_top)++] = ast_create_leaf(saved_char, get_next_position());
+            sem[(*sem_top)++] = ast_create_leaf(saved_char, get_next_position(ctx));
         break;
 
     case ACT_DOT: {
         ASTNode* result = NULL;
         for (int c = 32; c < 127; c++) {
-            ASTNode* leaf = ast_create_leaf((char)c, get_next_position());
+            ASTNode* leaf = ast_create_leaf((char)c, get_next_position(ctx));
             result = result ? ast_create_or(result, leaf) : leaf;
         }
         if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
@@ -363,13 +353,13 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 
     case ACT_LEAF_RANGE_START:
         if (*sem_top < SEM_STACK_MAX)
-            sem[(*sem_top)++] = ast_create_leaf(range_start_char, get_next_position());
+            sem[(*sem_top)++] = ast_create_leaf(range_start_char, get_next_position(ctx));
         break;
 
     case ACT_RANGE: {
         ASTNode* result = NULL;
         for (char c = range_start_char; c <= saved_char; c++) {
-            ASTNode* leaf = ast_create_leaf(c, get_next_position());
+            ASTNode* leaf = ast_create_leaf(c, get_next_position(ctx));
             result = result ? ast_create_or(result, leaf) : leaf;
         }
         if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
@@ -388,13 +378,13 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 // Analizador predictivo basado en pila (Algoritmo 4.34, Dragon Book)
 // con acciones semánticas para construir el AST.
 
-ASTNode* regex_parse(const char* regex_str) {
+ASTNode* regex_parse(const char* regex_str, ASTContext *ctx) {
     if (!regex_str || !regex_str[0]) return NULL;
 
     regex_parser_init();
 
     // Pila del parser
-    RSym pstack[RSTACK_MAX];
+    GrammarSymbol pstack[RSTACK_MAX];
     int ptop = 0;
 
     // Pila semántica
@@ -406,8 +396,8 @@ ASTNode* regex_parse(const char* regex_str) {
     char range_start_char = 0;
 
     // Inicializar pila: $ y símbolo inicial (Regex)
-    pstack[ptop++] = (RSym){RSYM_END, 0};
-    pstack[ptop++] = (RSym){RSYM_NON_TERMINAL, RNT_Regex};
+    pstack[ptop++] = (GrammarSymbol){SYMBOL_END, 0};
+    pstack[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, RNT_Regex};
 
     // Iniciar lexer flex y obtener primer token
     regex_lexer_set_string(regex_str);
@@ -416,17 +406,19 @@ ASTNode* regex_parse(const char* regex_str) {
     int error = 0;
 
     while (ptop > 0 && !error) {
-        RSym top = pstack[--ptop];
+        GrammarSymbol top = pstack[--ptop];
 
         switch (top.type) {
-        case RSYM_END:
+        case SYMBOL_EPSILON:
+            break; // no debería ocurrir
+        case SYMBOL_END:
             if (current_token_type != REGEX_T_EOF) {
                 fprintf(stderr, "Error regex: entrada extra después del parse\n");
                 error = 1;
             }
             goto done;
 
-        case RSYM_TERMINAL:
+        case SYMBOL_TERMINAL:
             if (top.id == current_token_type) {
                 saved_char = current_char_value;
                 regex_advance();
@@ -437,7 +429,7 @@ ASTNode* regex_parse(const char* regex_str) {
             }
             break;
 
-        case RSYM_NON_TERMINAL: {
+        case SYMBOL_NON_TERMINAL: {
             int prod = ll1_lookup(top.id, current_token_type);
             if (prod == NO_PRODUCTION) {
                 fprintf(stderr, "Error regex: sin producción para NT=%d, token=%d\n",
@@ -449,12 +441,12 @@ ASTNode* regex_parse(const char* regex_str) {
             break;
         }
 
-        case RSYM_ACTION:
+        case SYMBOL_ACTION:
             if (top.id == ACT_SAVE_RANGE_START) {
                 // Caso especial: actualizar variable local, no la pila semántica
                 range_start_char = saved_char;
             } else {
-                exec_action(top.id, sem, &sem_top, saved_char, range_start_char);
+                exec_action(top.id, sem, &sem_top, saved_char, range_start_char, ctx);
             }
             break;
         }
@@ -474,7 +466,7 @@ done:
 
 // ============== CONSTRUCCIÓN DEL AST DEL LEXER ==============
 
-ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count) {
+ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count, ASTContext *ctx) {
     if (!tokens || token_count <= 0) {
         return NULL;
     }
@@ -482,7 +474,7 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count) {
     ASTNode* combined = NULL;
     
     for (int i = 0; i < token_count; i++) {
-        ASTNode* ast = regex_parse(tokens[i].regex);
+        ASTNode* ast = regex_parse(tokens[i].regex, ctx);
         
         if (ast == NULL) {
             fprintf(stderr, "Error parseando regex para token %d: '%s'\n", 
@@ -491,11 +483,11 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count) {
         }
         
         // Agregar marcador de fin (#) y asociar token_id
-        int end_pos = get_next_position();
+        int end_pos = get_next_position(ctx);
         ASTNode* end_marker = ast_create_leaf('#', end_pos);
         
         // Registrar qué token corresponde a esta posición
-        pos_to_token[end_pos] = tokens[i].token_id;
+        ctx->pos_to_token[end_pos] = tokens[i].token_id;
         
         // regex#
         ASTNode* marked = ast_create_concat(ast, end_marker);
