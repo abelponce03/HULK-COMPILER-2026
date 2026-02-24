@@ -421,7 +421,7 @@ int parser_parse(ParserContext* ctx)
         
         // Caso: Terminal en el stack
         if (top.type == STACK_TERMINAL) {
-            if (top.id == ctx->lookahead.type) {
+            if (top.id == (int)ctx->lookahead.type) {
                 // Match!
                 if (ctx->lookahead.lexeme) free(ctx->lookahead.lexeme);
                 stack_pop(stack);

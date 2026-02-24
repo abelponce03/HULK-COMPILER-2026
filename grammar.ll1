@@ -13,6 +13,8 @@ TypeMemberTail -> TypeAnnotation TypeMemberTail' | LPAREN ArgIdList RPAREN TypeA
 TypeMemberTail' -> SEMICOLON | ASSIGN Expr SEMICOLON
 AttributeDef -> IDENT ASSIGN Expr SEMICOLON
 MethodDef    -> IDENT LPAREN ArgIdList RPAREN FunctionBody
+# MethodBody tiene la misma definición que FunctionBody.
+# Se mantiene como NT separado para claridad semántica dentro de TypeMemberTail.
 MethodBody   -> ARROW Expr SEMICOLON | BlockStmt
 ArgIdList    -> ArgId ArgIdListTail | ε
 ArgIdListTail-> COMMA ArgId ArgIdListTail | ε

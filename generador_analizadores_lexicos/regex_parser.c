@@ -1,13 +1,19 @@
 /*
- * Parser de expresiones regulares usando el generador LL(1)
- * 
- * Este archivo implementa:
- * 1. Un wrapper para conectar el lexer flex con el parser LL(1)
- * 2. Acciones semánticas para construir el AST durante el parsing
- * 3. La función principal regex_parse() que integra todo
- * 
- * IMPORTANTE: Este parser usa verdaderamente el parser LL(1) genérico,
- * con acciones semánticas que se ejecutan al aplicar cada producción.
+ * Parser de expresiones regulares — Analizador Predictivo Basado en Pila
+ * (Table-Driven LL(1) Parser, Algoritmo 4.34, Dragon Book)
+ *
+ * Usa la tabla LL(1) generada por el generador de parsers para dirigir
+ * el análisis sintáctico. Acciones semánticas integradas en la pila del
+ * parser construyen el AST durante el análisis.
+ *
+ * Componentes:
+ *  1. Pila del parser: símbolos terminales, no-terminales y marcadores de acción
+ *  2. Pila semántica: nodos ASTNode* para construir el árbol
+ *  3. Tabla LL(1): determina qué producción aplicar para cada (NT, terminal)
+ *  4. Acciones: se ejecutan cuando un marcador ACT_xxx es extraído de la pila
+ *
+ * Las producciones y sus acciones están acopladas a grammar_init_regex().
+ * Si se modifica la gramática, se deben actualizar las acciones en push_production().
  */
 
 #include "regex_parser.h"
@@ -25,78 +31,86 @@ static Follow_Table regex_follow;
 static LL1_Table regex_ll1;
 static int regex_parser_initialized = 0;
 
-// Pila semántica para construir el AST
-#define SEMANTIC_STACK_SIZE 1024
-static ASTNode* semantic_stack[SEMANTIC_STACK_SIZE];
-static int semantic_top = 0;
-
-// Pila de caracteres para hojas
-#define CHAR_STACK_SIZE 256
-static char char_stack[CHAR_STACK_SIZE];
-static int char_top = 0;
-
-// Token actual para el parser LL(1)
+// Token actual (lookahead)
 static int current_token_type;
 static char current_char_value;
 
-// ============== PILA SEMÁNTICA (para uso futuro) ==============
+// ============== ACCIONES SEMÁNTICAS ==============
+//
+// Marcadores de acción que se insertan en la pila del parser.
+// Cuando se extraen, modifican la pila semántica para construir el AST.
+//
+// Correspondencia con producciones de grammar_init_regex():
+// [0]  Regex     -> Concat ConcatTail
+// [1]  ConcatTail-> OR Concat ConcatTail   → ACT_OR
+// [2]  ConcatTail-> ε
+// [3]  Concat    -> Repeat Concat           → ACT_CONCAT
+// [4]  Concat    -> ε                       → ACT_PUSH_NULL
+// [5]  Repeat    -> Atom Postfix
+// [6]  Postfix   -> STAR                    → ACT_STAR
+// [7]  Postfix   -> PLUS                    → ACT_PLUS_OP
+// [8]  Postfix   -> QUESTION                → ACT_QUESTION_OP
+// [9]  Postfix   -> ε
+// [10] Atom      -> CHAR                    → ACT_LEAF
+// [11] Atom      -> ESCAPE                  → ACT_LEAF
+// [12] Atom      -> LPAREN Regex RPAREN
+// [13] Atom      -> LBRACKET CharClass RBRACKET
+// [14] Atom      -> DOT                     → ACT_DOT
+// [15] CharClass -> CARET CCItems           → ACT_NEGATE
+// [16] CharClass -> CCItems
+// [17] CCItems   -> CCItem CCItems          → ACT_OR_OPT
+// [18] CCItems   -> ε                       → ACT_PUSH_NULL
+// [19] CCItem    -> CHAR RangeOpt           → ACT_SAVE_RANGE_START
+// [20] CCItem    -> ESCAPE                  → ACT_LEAF
+// [21] RangeOpt  -> DASH CHAR               → ACT_RANGE
+// [22] RangeOpt  -> ε                       → ACT_LEAF_RANGE_START
 
-__attribute__((unused))
-static void sem_push(ASTNode* node) {
-    if (semantic_top < SEMANTIC_STACK_SIZE) {
-        semantic_stack[semantic_top++] = node;
-    }
-}
+typedef enum {
+    ACT_LEAF,            // Crea leaf(saved_char, next_pos), push
+    ACT_DOT,             // Crea OR de printables (32..126), push
+    ACT_STAR,            // Pop nodo, push star(nodo)
+    ACT_PLUS_OP,         // Pop nodo, push plus(nodo)
+    ACT_QUESTION_OP,     // Pop nodo, push question(nodo)
+    ACT_OR,              // Pop right, pop left, push or(left, right)
+    ACT_CONCAT,          // Pop rest, pop item: si rest==NULL push item, sino concat
+    ACT_PUSH_NULL,       // Push NULL al sem_stack
+    ACT_OR_OPT,          // Pop rest, pop item: si rest==NULL push item, sino or
+    ACT_SAVE_RANGE_START,// Guarda saved_char en range_start_char (sin tocar sem_stack)
+    ACT_LEAF_RANGE_START,// Crea leaf(range_start_char, next_pos), push
+    ACT_RANGE,           // Crea OR chain range_start_char..saved_char, push
+    ACT_NEGATE,          // (futuro) negación de clase de caracteres
+} SemanticAction;
 
-__attribute__((unused))
-static ASTNode* sem_pop(void) {
-    if (semantic_top > 0)
-        return semantic_stack[--semantic_top];
-    return NULL;
-}
+// ============== PILA DEL PARSER (3 tipos de símbolo) ==============
 
-__attribute__((unused))
-static void char_push(char c) {
-    if (char_top < CHAR_STACK_SIZE)
-        char_stack[char_top++] = c;
-}
+typedef enum {
+    RSYM_TERMINAL,
+    RSYM_NON_TERMINAL,
+    RSYM_ACTION,
+    RSYM_END
+} RSymType;
 
-__attribute__((unused))
-static char char_pop(void) {
-    if (char_top > 0)
-        return char_stack[--char_top];
-    return 0;
-}
+typedef struct {
+    RSymType type;
+    int id;
+} RSym;
+
+#define RSTACK_MAX 2048
+#define SEM_STACK_MAX 512
+
+// IDs de no-terminales (deben coincidir con grammar_init_regex())
+enum {
+    RNT_Regex = 0, RNT_Concat = 1, RNT_ConcatTail = 2, RNT_Repeat = 3,
+    RNT_Postfix = 4, RNT_Atom = 5, RNT_CharClass = 6, RNT_CCItems = 7,
+    RNT_CCItem = 8, RNT_RangeOpt = 9
+};
 
 // ============== WRAPPER PARA EL LEXER FLEX ==============
 
-// Adapter para conectar flex con el parser LL(1)
-static Token regex_get_token_wrapper(void* ctx) {
-    (void)ctx;
-    
-    Token tok;
+static void regex_advance(void) {
     int type = regex_lex();
-    
     current_token_type = type;
     current_char_value = regex_char_value;
-    
-    if (type == REGEX_T_EOF) {
-        tok.type = TOKEN_EOF;
-        tok.lexeme = NULL;
-        tok.length = 0;
-        tok.line = 0;
-        tok.col = 0;
-    } else {
-        tok.type = type;
-        tok.lexeme = malloc(2);
-        tok.lexeme[0] = regex_char_value;
-        tok.lexeme[1] = '\0';
-        tok.length = 1;
-        tok.line = 0;
-        tok.col = 0;
-    }
-    
-    return tok;
 }
 
 // ============== INICIALIZACIÓN ==============
@@ -130,342 +144,332 @@ void regex_parser_cleanup(void) {
     }
 }
 
-// ============== ACCIONES SEMÁNTICAS ==============
+// ============== CONSULTA TABLA LL(1) ==============
 
-/*
- * Las acciones semánticas se ejecutan después de aplicar cada producción.
- * El production_id identifica qué producción se aplicó.
- * 
- * Producciones de grammar_init_regex():
- * [0] Regex -> Concat ConcatTail        => combinar con ConcatTail si existe
- * [1] ConcatTail -> OR Concat ConcatTail => push OR node
- * [2] ConcatTail -> ε                    => nop
- * [3] Concat -> Repeat Concat            => concat si hay dos
- * [4] Concat -> ε                        => push NULL
- * [5] Repeat -> Atom Postfix             => aplicar postfix si existe
- * [6] Postfix -> STAR                    => marcar como star
- * [7] Postfix -> PLUS                    => marcar como plus  
- * [8] Postfix -> QUESTION                => marcar como question
- * [9] Postfix -> ε                       => nop
- * [10] Atom -> CHAR                      => push leaf
- * [11] Atom -> ESCAPE                    => push leaf (escaped)
- * [12] Atom -> LPAREN Regex RPAREN       => nop (regex ya está en stack)
- * [13] Atom -> LBRACKET CharClass RBRACKET => nop (charclass ya está en stack)
- * [14] Atom -> DOT                       => push dot (all chars)
- * [15] CharClass -> CARET CCItems        => marcar negado
- * [16] CharClass -> CCItems              => nop
- * [17] CCItems -> CCItem CCItems         => concat items
- * [18] CCItems -> ε                      => push NULL
- * [19] CCItem -> CHAR RangeOpt           => push char o range
- * [20] CCItem -> ESCAPE                  => push escaped char
- * [21] RangeOpt -> DASH CHAR             => marcar como range
- * [22] RangeOpt -> ε                     => nop
- */
-
-// ============== PARSER LL(1) CON CONSTRUCCIÓN DE AST ==============
-
-/*
- * Este parser implementa el Algoritmo 4.34 del libro del dragón
- * usando acciones semánticas para construir el AST.
- * 
- * El problema es que las acciones semánticas deben ejecutarse
- * después de REDUCIR (no en LL(1) tradicional que es predictivo).
- * 
- * Para resolver esto, usamos un enfoque de dos pasadas o
- * modificamos el parser para ejecutar acciones al final de cada producción.
- * 
- * Para simplificar, vamos a usar un parser descendente recursivo
- * guiado por la tabla LL(1) (equivalente semánticamente).
- */
-
-// Forward declarations
-static ASTNode* parse_regex_ll1(void);
-static ASTNode* parse_concat_tail_ll1(ASTNode* left);
-static ASTNode* parse_concat_ll1(void);
-static ASTNode* parse_repeat_ll1(void);
-static ASTNode* parse_postfix_ll1(ASTNode* atom);
-static ASTNode* parse_atom_ll1(void);
-static ASTNode* parse_charclass_ll1(void);
-static ASTNode* parse_ccitems_ll1(void);
-static ASTNode* parse_ccitem_ll1(void);
-static ASTNode* parse_rangeopt_ll1(char start_char);
-
-// Obtener siguiente token desde flex
-static void advance_ll1(void) {
-    Token tok = regex_get_token_wrapper(NULL);
-    if (tok.lexeme) free(tok.lexeme);
-}
-
-// Verificar token actual
-static int check_ll1(int expected) {
-    return current_token_type == expected;
-}
-
-// Consumir token esperado
-static int match_ll1(int expected) {
-    if (check_ll1(expected)) {
-        advance_ll1();
-        return 1;
-    }
-    fprintf(stderr, "Error: se esperaba token %d, se encontró %d\n", expected, current_token_type);
-    return 0;
-}
-
-// Consultar tabla LL(1) para determinar qué producción usar
 static int ll1_lookup(int nt_id, int terminal_id) {
     int col = -1;
-    
-    // NOTA: Solo comparar con REGEX_T_EOF (-1), NO con TOKEN_EOF (0)
-    // porque TOKEN_EOF == 0 == REGEX_T_CHAR
+    // REGEX_T_EOF == -1, no confundir con TOKEN_EOF == 0 == REGEX_T_CHAR
     if (terminal_id == REGEX_T_EOF) {
         col = regex_grammar.t_count; // columna $
-    } else {
-        // Usar el mapeo t_map de la tabla LL(1)
-        if (terminal_id >= 0 && terminal_id < regex_ll1.t_map_size) {
-            col = regex_ll1.t_map[terminal_id];
-        }
+    } else if (terminal_id >= 0 && terminal_id < regex_ll1.t_map_size) {
+        col = regex_ll1.t_map[terminal_id];
     }
-    
-    if (col < 0) {
-        return NO_PRODUCTION;
-    }
-    
-    int prod = regex_ll1.table[nt_id][col];
-    return prod;
+    return (col < 0) ? NO_PRODUCTION : regex_ll1.table[nt_id][col];
 }
 
-// Regex -> Concat ConcatTail
-static ASTNode* parse_regex_ll1(void) {
-    ASTNode* concat_result = parse_concat_ll1();
-    return parse_concat_tail_ll1(concat_result);
+// ============== PUSH DE PRODUCCIONES ==============
+//
+// Para cada producción, se empujan los símbolos del lado derecho en orden
+// INVERSO (para que se procesen de izquierda a derecha), intercalando
+// marcadores de acción semántica donde corresponda.
+
+static void rpush(RSym* stack, int* top, RSymType type, int id) {
+    if (*top < RSTACK_MAX)
+        stack[(*top)++] = (RSym){type, id};
 }
 
-// ConcatTail -> OR Concat ConcatTail | ε
-static ASTNode* parse_concat_tail_ll1(ASTNode* left) {
-    // Consultar tabla LL(1) para NT_ConcatTail (id=2)
-    int prod = ll1_lookup(2, current_token_type);
-    
-    if (prod == 1) { // ConcatTail -> OR Concat ConcatTail
-        match_ll1(REGEX_T_OR); // consumir '|'
-        ASTNode* right = parse_concat_ll1();
-        ASTNode* or_node = ast_create_or(left, right);
-        return parse_concat_tail_ll1(or_node);
+static void push_production(int prod_id, RSym* stack, int* top) {
+    switch (prod_id) {
+    // [0] Regex -> Concat ConcatTail
+    case 0:
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_ConcatTail);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
+        break;
+    // [1] ConcatTail -> OR Concat ConcatTail
+    case 1:
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_ConcatTail);
+        rpush(stack, top, RSYM_ACTION, ACT_OR);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_OR);
+        break;
+    // [2] ConcatTail -> ε
+    case 2:
+        break;
+    // [3] Concat -> Repeat Concat
+    case 3:
+        rpush(stack, top, RSYM_ACTION, ACT_CONCAT);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Concat);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Repeat);
+        break;
+    // [4] Concat -> ε
+    case 4:
+        rpush(stack, top, RSYM_ACTION, ACT_PUSH_NULL);
+        break;
+    // [5] Repeat -> Atom Postfix
+    case 5:
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Postfix);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Atom);
+        break;
+    // [6] Postfix -> STAR
+    case 6:
+        rpush(stack, top, RSYM_ACTION, ACT_STAR);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_STAR);
+        break;
+    // [7] Postfix -> PLUS
+    case 7:
+        rpush(stack, top, RSYM_ACTION, ACT_PLUS_OP);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_PLUS);
+        break;
+    // [8] Postfix -> QUESTION
+    case 8:
+        rpush(stack, top, RSYM_ACTION, ACT_QUESTION_OP);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_QUESTION);
+        break;
+    // [9] Postfix -> ε
+    case 9:
+        break;
+    // [10] Atom -> CHAR
+    case 10:
+        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
+        break;
+    // [11] Atom -> ESCAPE
+    case 11:
+        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_ESCAPE);
+        break;
+    // [12] Atom -> LPAREN Regex RPAREN
+    case 12:
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_RPAREN);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_Regex);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_LPAREN);
+        break;
+    // [13] Atom -> LBRACKET CharClass RBRACKET
+    case 13:
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_RBRACKET);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CharClass);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_LBRACKET);
+        break;
+    // [14] Atom -> DOT
+    case 14:
+        rpush(stack, top, RSYM_ACTION, ACT_DOT);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_DOT);
+        break;
+    // [15] CharClass -> CARET CCItems
+    case 15:
+        rpush(stack, top, RSYM_ACTION, ACT_NEGATE);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CARET);
+        break;
+    // [16] CharClass -> CCItems
+    case 16:
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
+        break;
+    // [17] CCItems -> CCItem CCItems
+    case 17:
+        rpush(stack, top, RSYM_ACTION, ACT_OR_OPT);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItems);
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_CCItem);
+        break;
+    // [18] CCItems -> ε
+    case 18:
+        rpush(stack, top, RSYM_ACTION, ACT_PUSH_NULL);
+        break;
+    // [19] CCItem -> CHAR RangeOpt
+    case 19:
+        rpush(stack, top, RSYM_NON_TERMINAL, RNT_RangeOpt);
+        rpush(stack, top, RSYM_ACTION, ACT_SAVE_RANGE_START);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
+        break;
+    // [20] CCItem -> ESCAPE
+    case 20:
+        rpush(stack, top, RSYM_ACTION, ACT_LEAF);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_ESCAPE);
+        break;
+    // [21] RangeOpt -> DASH CHAR
+    case 21:
+        rpush(stack, top, RSYM_ACTION, ACT_RANGE);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_CHAR);
+        rpush(stack, top, RSYM_TERMINAL, REGEX_T_DASH);
+        break;
+    // [22] RangeOpt -> ε (solo carácter individual)
+    case 22:
+        rpush(stack, top, RSYM_ACTION, ACT_LEAF_RANGE_START);
+        break;
+    default:
+        fprintf(stderr, "Error regex: producción desconocida %d\n", prod_id);
+        break;
     }
-    // prod == 2 o epsilon: retornar left sin cambios
-    return left;
 }
 
-// Concat -> Repeat Concat | ε
-static ASTNode* parse_concat_ll1(void) {
-    // Consultar tabla LL(1) para NT_Concat (id=1)
-    int prod = ll1_lookup(1, current_token_type);
-    
-    if (prod == 3) { // Concat -> Repeat Concat
-        ASTNode* repeat_result = parse_repeat_ll1();
-        ASTNode* concat_rest = parse_concat_ll1();
-        
-        if (concat_rest == NULL) {
-            return repeat_result;
-        }
-        return ast_create_concat(repeat_result, concat_rest);
-    }
-    // prod == 4 o epsilon
-    return NULL;
-}
+// ============== EJECUCIÓN DE ACCIONES SEMÁNTICAS ==============
 
-// Repeat -> Atom Postfix
-static ASTNode* parse_repeat_ll1(void) {
-    ASTNode* atom_result = parse_atom_ll1();
-    return parse_postfix_ll1(atom_result);
-}
+static void exec_action(int act, ASTNode** sem, int* sem_top,
+                        char saved_char, char range_start_char) {
+    switch (act) {
+    case ACT_LEAF:
+        if (*sem_top < SEM_STACK_MAX)
+            sem[(*sem_top)++] = ast_create_leaf(saved_char, get_next_position());
+        break;
 
-// Postfix -> STAR | PLUS | QUESTION | ε
-static ASTNode* parse_postfix_ll1(ASTNode* atom) {
-    // Consultar tabla LL(1) para NT_Postfix (id=4)
-    int prod = ll1_lookup(4, current_token_type);
-    
-    if (prod == 6) { // Postfix -> STAR
-        match_ll1(REGEX_T_STAR);
-        return ast_create_star(atom);
-    }
-    if (prod == 7) { // Postfix -> PLUS
-        match_ll1(REGEX_T_PLUS);
-        return ast_create_plus(atom);
-    }
-    if (prod == 8) { // Postfix -> QUESTION
-        match_ll1(REGEX_T_QUESTION);
-        return ast_create_question(atom);
-    }
-    // prod == 9 o epsilon
-    return atom;
-}
-
-// Atom -> CHAR | ESCAPE | LPAREN Regex RPAREN | LBRACKET CharClass RBRACKET | DOT
-static ASTNode* parse_atom_ll1(void) {
-    // Consultar tabla LL(1) para NT_Atom (id=5)
-    int prod = ll1_lookup(5, current_token_type);
-    
-    if (prod == 10) { // Atom -> CHAR
-        char c = current_char_value;
-        match_ll1(REGEX_T_CHAR);
-        return ast_create_leaf(c, get_next_position());
-    }
-    
-    if (prod == 11) { // Atom -> ESCAPE
-        char c = current_char_value;
-        match_ll1(REGEX_T_ESCAPE);
-        return ast_create_leaf(c, get_next_position());
-    }
-    
-    if (prod == 12) { // Atom -> LPAREN Regex RPAREN
-        match_ll1(REGEX_T_LPAREN);
-        ASTNode* inner = parse_regex_ll1();
-        match_ll1(REGEX_T_RPAREN);
-        return inner;
-    }
-    
-    if (prod == 13) { // Atom -> LBRACKET CharClass RBRACKET
-        match_ll1(REGEX_T_LBRACKET);
-        ASTNode* cc = parse_charclass_ll1();
-        match_ll1(REGEX_T_RBRACKET);
-        return cc;
-    }
-    
-    if (prod == 14) { // Atom -> DOT
-        match_ll1(REGEX_T_DOT);
-        // DOT = cualquier carácter ASCII imprimible excepto newline
+    case ACT_DOT: {
         ASTNode* result = NULL;
         for (int c = 32; c < 127; c++) {
             ASTNode* leaf = ast_create_leaf((char)c, get_next_position());
-            if (result == NULL) {
-                result = leaf;
-            } else {
-                result = ast_create_or(result, leaf);
-            }
+            result = result ? ast_create_or(result, leaf) : leaf;
         }
-        return result;
+        if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
+        break;
     }
-    
-    fprintf(stderr, "Error: átomo inválido, token=%d, prod=%d\n", current_token_type, prod);
-    return NULL;
-}
 
-// CharClass -> CARET CCItems | CCItems
-static ASTNode* parse_charclass_ll1(void) {
-    // Consultar tabla LL(1) para NT_CharClass (id=6)
-    int prod = ll1_lookup(6, current_token_type);
-    
-    int negated = 0;
-    if (prod == 15) { // CharClass -> CARET CCItems
-        match_ll1(REGEX_T_CARET);
-        negated = 1;
-    }
-    // prod == 16 o es CCItems directamente
-    
-    ASTNode* items = parse_ccitems_ll1();
-    
-    if (negated && items) {
-        // TODO: implementar negación de clase de caracteres
-        // Por ahora solo advertimos
-        fprintf(stderr, "Advertencia: clases negadas [^...] no soportadas completamente\n");
-    }
-    
-    return items;
-}
+    case ACT_STAR:
+        if (*sem_top > 0)
+            sem[*sem_top - 1] = ast_create_star(sem[*sem_top - 1]);
+        break;
 
-// CCItems -> CCItem CCItems | ε
-static ASTNode* parse_ccitems_ll1(void) {
-    // Consultar tabla LL(1) para NT_CCItems (id=7)
-    int prod = ll1_lookup(7, current_token_type);
-    
-    if (prod == 17) { // CCItems -> CCItem CCItems
-        ASTNode* item = parse_ccitem_ll1();
-        ASTNode* rest = parse_ccitems_ll1();
-        
-        if (rest == NULL) {
-            return item;
-        }
-        return ast_create_or(item, rest);
-    }
-    // prod == 18 o epsilon
-    return NULL;
-}
+    case ACT_PLUS_OP:
+        if (*sem_top > 0)
+            sem[*sem_top - 1] = ast_create_plus(sem[*sem_top - 1]);
+        break;
 
-// CCItem -> CHAR RangeOpt | ESCAPE
-static ASTNode* parse_ccitem_ll1(void) {
-    // Consultar tabla LL(1) para NT_CCItem (id=8)
-    int prod = ll1_lookup(8, current_token_type);
-    
-    if (prod == 19) { // CCItem -> CHAR RangeOpt
-        char start_char = current_char_value;
-        match_ll1(REGEX_T_CHAR);
-        return parse_rangeopt_ll1(start_char);
-    }
-    
-    if (prod == 20) { // CCItem -> ESCAPE
-        char c = current_char_value;
-        match_ll1(REGEX_T_ESCAPE);
-        return ast_create_leaf(c, get_next_position());
-    }
-    
-    fprintf(stderr, "Error: item de clase inválido, token=%d\n", current_token_type);
-    return NULL;
-}
+    case ACT_QUESTION_OP:
+        if (*sem_top > 0)
+            sem[*sem_top - 1] = ast_create_question(sem[*sem_top - 1]);
+        break;
 
-// RangeOpt -> DASH CHAR | ε
-static ASTNode* parse_rangeopt_ll1(char start_char) {
-    // Consultar tabla LL(1) para NT_RangeOpt (id=9)
-    int prod = ll1_lookup(9, current_token_type);
-    
-    if (prod == 21) { // RangeOpt -> DASH CHAR
-        match_ll1(REGEX_T_DASH);
-        char end_char = current_char_value;
-        match_ll1(REGEX_T_CHAR);
-        
-        // Crear OR de todos los caracteres en el rango [start_char, end_char]
+    case ACT_OR: {
+        ASTNode* right = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        ASTNode* left  = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        if (*sem_top < SEM_STACK_MAX)
+            sem[(*sem_top)++] = ast_create_or(left, right);
+        break;
+    }
+
+    case ACT_CONCAT: {
+        ASTNode* rest = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        ASTNode* item = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        if (*sem_top < SEM_STACK_MAX)
+            sem[(*sem_top)++] = (rest == NULL) ? item
+                                               : ast_create_concat(item, rest);
+        break;
+    }
+
+    case ACT_PUSH_NULL:
+        if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = NULL;
+        break;
+
+    case ACT_OR_OPT: {
+        ASTNode* rest = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        ASTNode* item = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+        if (*sem_top < SEM_STACK_MAX)
+            sem[(*sem_top)++] = (rest == NULL) ? item
+                                               : ast_create_or(item, rest);
+        break;
+    }
+
+    case ACT_SAVE_RANGE_START:
+        // Manejo especial: no se usa exec_action para esto
+        break;
+
+    case ACT_LEAF_RANGE_START:
+        if (*sem_top < SEM_STACK_MAX)
+            sem[(*sem_top)++] = ast_create_leaf(range_start_char, get_next_position());
+        break;
+
+    case ACT_RANGE: {
         ASTNode* result = NULL;
-        for (char c = start_char; c <= end_char; c++) {
+        for (char c = range_start_char; c <= saved_char; c++) {
             ASTNode* leaf = ast_create_leaf(c, get_next_position());
-            if (result == NULL) {
-                result = leaf;
-            } else {
-                result = ast_create_or(result, leaf);
-            }
+            result = result ? ast_create_or(result, leaf) : leaf;
         }
-        return result;
+        if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
+        break;
     }
-    
-    // prod == 22 o epsilon: solo el carácter individual
-    return ast_create_leaf(start_char, get_next_position());
+
+    case ACT_NEGATE:
+        // TODO: implementar negación de clase de caracteres
+        fprintf(stderr, "Advertencia: clases negadas [^...] no soportadas completamente\n");
+        break;
+    }
 }
 
 // ============== FUNCIÓN PRINCIPAL ==============
+//
+// Analizador predictivo basado en pila (Algoritmo 4.34, Dragon Book)
+// con acciones semánticas para construir el AST.
 
 ASTNode* regex_parse(const char* regex_str) {
-    if (!regex_str || !regex_str[0]) {
+    if (!regex_str || !regex_str[0]) return NULL;
+
+    regex_parser_init();
+
+    // Pila del parser
+    RSym pstack[RSTACK_MAX];
+    int ptop = 0;
+
+    // Pila semántica
+    ASTNode* sem[SEM_STACK_MAX];
+    int sem_top = 0;
+
+    // Valores auxiliares para terminales
+    char saved_char = 0;
+    char range_start_char = 0;
+
+    // Inicializar pila: $ y símbolo inicial (Regex)
+    pstack[ptop++] = (RSym){RSYM_END, 0};
+    pstack[ptop++] = (RSym){RSYM_NON_TERMINAL, RNT_Regex};
+
+    // Iniciar lexer flex y obtener primer token
+    regex_lexer_set_string(regex_str);
+    regex_advance();
+
+    int error = 0;
+
+    while (ptop > 0 && !error) {
+        RSym top = pstack[--ptop];
+
+        switch (top.type) {
+        case RSYM_END:
+            if (current_token_type != REGEX_T_EOF) {
+                fprintf(stderr, "Error regex: entrada extra después del parse\n");
+                error = 1;
+            }
+            goto done;
+
+        case RSYM_TERMINAL:
+            if (top.id == current_token_type) {
+                saved_char = current_char_value;
+                regex_advance();
+            } else {
+                fprintf(stderr, "Error regex: se esperaba token %d, se encontró %d\n",
+                        top.id, current_token_type);
+                error = 1;
+            }
+            break;
+
+        case RSYM_NON_TERMINAL: {
+            int prod = ll1_lookup(top.id, current_token_type);
+            if (prod == NO_PRODUCTION) {
+                fprintf(stderr, "Error regex: sin producción para NT=%d, token=%d\n",
+                        top.id, current_token_type);
+                error = 1;
+            } else {
+                push_production(prod, pstack, &ptop);
+            }
+            break;
+        }
+
+        case RSYM_ACTION:
+            if (top.id == ACT_SAVE_RANGE_START) {
+                // Caso especial: actualizar variable local, no la pila semántica
+                range_start_char = saved_char;
+            } else {
+                exec_action(top.id, sem, &sem_top, saved_char, range_start_char);
+            }
+            break;
+        }
+    }
+
+done:
+    regex_lexer_cleanup();
+
+    if (error) {
+        for (int i = 0; i < sem_top; i++)
+            if (sem[i]) ast_free(sem[i]);
         return NULL;
     }
-    
-    // Inicializar parser LL(1) si no está listo
-    regex_parser_init();
-    
-    // Resetear pilas
-    semantic_top = 0;
-    char_top = 0;
-    
-    // Inicializar lexer flex con la cadena
-    regex_lexer_set_string(regex_str);
-    
-    // Obtener primer token
-    advance_ll1();
-    
-    // Parsear usando el parser guiado por tabla LL(1)
-    ASTNode* ast = parse_regex_ll1();
-    
-    // Limpiar lexer
-    regex_lexer_cleanup();
-    
-    return ast;
+
+    return (sem_top > 0) ? sem[--sem_top] : NULL;
 }
 
 // ============== CONSTRUCCIÓN DEL AST DEL LEXER ==============
