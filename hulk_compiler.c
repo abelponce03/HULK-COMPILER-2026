@@ -30,11 +30,19 @@ static DFA* build_hulk_lexer(void) {
     }
     ast_context_init(ctx);
     
+    RegexParserContext *rctx = regex_parser_create();
+    if (!rctx) {
+        fprintf(stderr, "Error: sin memoria para RegexParserContext\n");
+        free(ctx);
+        return NULL;
+    }
+    
     printf("Construyendo AST del lexer...\n");
-    ASTNode *ast = build_lexer_ast(hulk_tokens, hulk_token_count, ctx);
+    ASTNode *ast = build_lexer_ast(hulk_tokens, hulk_token_count, ctx, rctx);
     
     if (!ast) {
         printf("Error: no se pudo construir el AST\n");
+        regex_parser_destroy(rctx);
         free(ctx);
         return NULL;
     }
@@ -65,6 +73,7 @@ static DFA* build_hulk_lexer(void) {
     dfa_save_csv(dfa, "output/lexer_dfa.csv", token_names);
     
     ast_free(ast);
+    regex_parser_destroy(rctx);
     free(ctx);
     
     return dfa;
@@ -111,77 +120,32 @@ void hulk_compiler_test_lexer(HulkCompiler *hc, const char *input) {
     printf("\n========== FIN TEST LEXER ==========\n");
 }
 
-void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
-                               const char *grammar_file) {
-    printf("\n========== TEST PARSER SINTÁCTICO ==========\n");
-    
-    // 1. Cargar y preparar gramática
+// ============== SETUP INTERNO DEL PARSER ==============
+
+// Carga gramática, calcula FIRST/FOLLOW y construye tabla LL(1).
+// Retorna 1 si la gramática es LL(1), 0 si hay conflictos, -1 si error.
+static int build_parser_tables(const char *grammar_file,
+                               Grammar *grammar, First_Table *first,
+                               Follow_Table *follow, LL1_Table *ll1) {
     printf("\n--- Cargando gramática desde %s ---\n", grammar_file);
     
-    Grammar grammar;
-    grammar_init_hulk(&grammar);
+    grammar_init_hulk(grammar);
     
-    if (!grammar_load_hulk(&grammar, grammar_file)) {
+    if (!grammar_load_hulk(grammar, grammar_file)) {
         fprintf(stderr, "Error: no se pudo cargar la gramática\n");
-        return;
+        return -1;
     }
     
-    grammar_print(&grammar);
+    grammar_print(grammar);
     
-    // 2. Calcular FIRST y FOLLOW
     printf("\n--- Calculando FIRST y FOLLOW ---\n");
+    compute_first_sets(grammar, first);
+    compute_follow_sets(grammar, first, follow);
+    print_first_sets(grammar, first);
+    print_follow_sets(grammar, follow);
     
-    First_Table first;
-    Follow_Table follow;
-    
-    compute_first_sets(&grammar, &first);
-    compute_follow_sets(&grammar, &first, &follow);
-    
-    // Imprimir FIRST y FOLLOW
-    printf("\nConjuntos FIRST:\n");
-    for (int i = 0; i < grammar.nt_count; i++) {
-        printf("  FIRST(%s) = { ", grammar.nt_names[i]);
-        for (int j = 0; j < first.first[i].count; j++) {
-            int t = first.first[i].elements[j];
-            const char* tname = "?";
-            for (int k = 0; k < grammar.t_count; k++) {
-                if (grammar.terminals[k] == t) {
-                    tname = grammar.t_names[k];
-                    break;
-                }
-            }
-            printf("%s ", tname);
-        }
-        if (first.first[i].has_epsilon) printf("ε ");
-        printf("}\n");
-    }
-    
-    printf("\nConjuntos FOLLOW:\n");
-    for (int i = 0; i < grammar.nt_count; i++) {
-        printf("  FOLLOW(%s) = { ", grammar.nt_names[i]);
-        for (int j = 0; j < follow.follow[i].count; j++) {
-            int t = follow.follow[i].elements[j];
-            if (t == END_MARKER) {
-                printf("$ ");
-            } else {
-                const char* tname = "?";
-                for (int k = 0; k < grammar.t_count; k++) {
-                    if (grammar.terminals[k] == t) {
-                        tname = grammar.t_names[k];
-                        break;
-                    }
-                }
-                printf("%s ", tname);
-            }
-        }
-        printf("}\n");
-    }
-    
-    // 3. Construir tabla LL(1)
     printf("\n--- Construyendo tabla LL(1) ---\n");
-    
-    LL1_Table ll1;
-    int is_ll1 = build_ll1_table(&grammar, &first, &follow, &ll1);
+    int is_ll1 = build_ll1_table(grammar, first, follow, ll1);
     
     if (!is_ll1) {
         fprintf(stderr, "ADVERTENCIA: La gramática NO es LL(1). Hay conflictos.\n");
@@ -189,21 +153,25 @@ void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
         printf("La gramática es LL(1) ✓\n");
     }
     
-    // Guardar tabla en CSV
-    ll1_table_save_csv(&ll1, &grammar, "output/hulk_ll1_table.csv");
-    
-    // 4. Inicializar parser
+    ll1_table_save_csv(ll1, grammar, "output/hulk_ll1_table.csv");
+    return is_ll1;
+}
+
+// Ejecuta el análisis sintáctico sobre la entrada.
+// Retorna 1 si el parse fue exitoso, 0 si hubo errores.
+static int run_parse(HulkCompiler *hc, const char *input,
+                     Grammar *grammar, LL1_Table *ll1,
+                     Follow_Table *follow) {
     printf("\n--- Analizando entrada ---\n");
     printf("INPUT: %s\n", input);
     
     ParserContext pctx;
-    parser_init(&pctx, &grammar, &ll1, &follow);
+    parser_init(&pctx, grammar, ll1, follow);
     
     LexerContext lctx;
     lexer_init(&lctx, hc->dfa, input);
     parser_set_lexer(&pctx, parser_get_token, &lctx);
     
-    // 5. Ejecutar parsing
     int result = parser_parse(&pctx);
     
     if (result) {
@@ -211,6 +179,23 @@ void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
     } else {
         printf("\n✗ ERRORES EN EL ANÁLISIS SINTÁCTICO (%d errores)\n", pctx.error_count);
     }
+    
+    return result;
+}
+
+void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
+                               const char *grammar_file) {
+    printf("\n========== TEST PARSER SINTÁCTICO ==========\n");
+    
+    Grammar grammar;
+    First_Table first;
+    Follow_Table follow;
+    LL1_Table ll1;
+    
+    int status = build_parser_tables(grammar_file, &grammar, &first, &follow, &ll1);
+    if (status < 0) return;
+    
+    run_parse(hc, input, &grammar, &ll1, &follow);
     
     // Limpiar
     ll1_table_free(&ll1);

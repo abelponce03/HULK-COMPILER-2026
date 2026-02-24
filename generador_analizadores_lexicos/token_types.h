@@ -84,4 +84,12 @@ typedef struct {
     int        col;    // 1-based
 } Token;
 
+// ============== DEFINICIÓN TOKEN-REGEX ==============
+// Par (token_id, regex) usado para construir el lexer DFA.
+
+typedef struct {
+    int token_id;
+    const char* regex;
+} TokenRegex;
+
 #endif /* TOKEN_TYPES_H */

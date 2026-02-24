@@ -32,7 +32,6 @@ int  dfa_add_state(DFA *dfa, PositionSet *set);
 void dfa_print(DFA *dfa);
 
 void dfa_build_table(DFA *dfa);
-void dfa_simulate(DFA *dfa, const char *input);
 
 // Exportación para visualización
 int dfa_save_dot(DFA *dfa, const char *filename, const char** token_names);

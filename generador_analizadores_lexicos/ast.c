@@ -295,19 +295,7 @@ void ast_compute_followpos(ASTNode *node, ASTContext *ctx)
 }
 
 
-// Función que recorre el AST para devolver el nodo hoja con la posición pos
-ASTNode* find_leaf_by_pos(ASTNode *root, int pos) {
-    if (root == NULL) return NULL;
-
-    if (root->type == NODE_LEAF && root->pos == pos)
-        return root;
-
-    ASTNode *found = find_leaf_by_pos(root->left, pos);
-    if (found) return found;
-    return find_leaf_by_pos(root->right, pos);
-}
-
-// --- Índice directo posición → hoja (reemplaza find_leaf_by_pos) ---
+// --- Índice directo posición → hoja ---
 
 static void leaf_index_fill(ASTNode *node, ASTContext *ctx) {
     if (!node) return;
@@ -330,4 +318,44 @@ void ast_free(ASTNode *node)
     ast_free(node->left);
     ast_free(node->right);
     free(node);
+}
+
+// Imprime el AST de forma indentada (debugging)
+void ast_print(ASTNode* node, int depth) {
+    if (!node) return;
+    
+    for (int i = 0; i < depth; i++) printf("  ");
+    
+    switch (node->type) {
+        case NODE_LEAF:
+            if (node->symbol == '#')
+                printf("LEAF(#, pos=%d)\n", node->pos);
+            else if (node->symbol >= 32 && node->symbol < 127)
+                printf("LEAF('%c', pos=%d)\n", node->symbol, node->pos);
+            else
+                printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)node->symbol, node->pos);
+            break;
+        case NODE_CONCAT:
+            printf("CONCAT\n");
+            ast_print(node->left, depth + 1);
+            ast_print(node->right, depth + 1);
+            break;
+        case NODE_OR:
+            printf("OR\n");
+            ast_print(node->left, depth + 1);
+            ast_print(node->right, depth + 1);
+            break;
+        case NODE_STAR:
+            printf("STAR\n");
+            ast_print(node->left, depth + 1);
+            break;
+        case NODE_PLUS:
+            printf("PLUS\n");
+            ast_print(node->left, depth + 1);
+            break;
+        case NODE_QUESTION:
+            printf("QUESTION\n");
+            ast_print(node->left, depth + 1);
+            break;
+    }
 }

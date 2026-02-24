@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
 
 // Tipo de nodo en el AST
@@ -96,14 +95,14 @@ void ast_compute_functions(ASTNode *root);
 // Inicializar followpos y calcular (usa ctx->followpos)
 void ast_compute_followpos(ASTNode *root, ASTContext *ctx);
 
-// Función que recorre el AST y devuelve el nodo hoja con la posición pos
-ASTNode* find_leaf_by_pos(ASTNode *root, int pos);
-
 // Construye el índice ctx->leaf_at[pos] → nodo hoja en O(n)
 // Debe llamarse después de construir el AST y antes de dfa_build()
 void ast_build_leaf_index(ASTNode *root, ASTContext *ctx);
 
 // Liberar memoria del AST
 void ast_free(ASTNode *node);
+
+// Imprime el AST de forma indentada (debugging)
+void ast_print(ASTNode* node, int depth);
 
 #endif // AST_H

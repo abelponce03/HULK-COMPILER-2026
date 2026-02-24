@@ -47,7 +47,7 @@ void dfa_free(DFA *dfa) {
 }
 
 // Comparar dos conjuntos de posiciones
-int positions_equal(PositionSet *a, PositionSet *b) {
+static int positions_equal(PositionSet *a, PositionSet *b) {
     return memcmp(a->bits, b->bits, sizeof(a->bits)) == 0;
 }
 
@@ -197,36 +197,6 @@ void dfa_build_table(DFA *dfa) {
                 dfa->next_state[s][sym] = tid;
             }
         }
-    }
-}
-
-void dfa_simulate(DFA *dfa, const char *input) {
-    if (dfa->next_state == NULL) {
-        dfa_build_table(dfa);
-    }
-
-    int estado = 0;     // estado inicial
-    int pos = 0;
-    
-    while (input[pos]) {
-        unsigned char c = input[pos];
-        int sig = dfa->next_state[estado][c];
-
-        if (sig == -1) {
-            // transicion inválida
-            printf("Error lexico en '%c' (pos %d)\n", c, pos);
-            return;
-        }
-
-        estado = sig;
-        pos++;
-    }
-
-    if (dfa->states[estado].is_accept) {
-        printf("Cadena aceptada como token %d\n",
-               dfa->states[estado].token_id);
-    } else {
-        printf("Cadena NO aceptada\n");
     }
 }
 

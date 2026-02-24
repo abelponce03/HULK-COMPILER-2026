@@ -18,22 +18,26 @@
 
 #include "regex_parser.h"
 #include "regex_tokens.h"
+#include "../generador_parser_ll1/grammar.h"
+#include "../generador_parser_ll1/parser.h"
 #include "../generador_parser_ll1/first_follow.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// ============== ESTADO GLOBAL DEL PARSER ==============
+// ============== CONTEXTO OPACO DEL PARSER ==============
+//
+// Encapsula la gramática de regex, las tablas FIRST/FOLLOW y la tabla LL(1).
+// Reemplaza las 7 variables estáticas anteriores, haciendo el módulo
+// reentrante y eliminando estado global.
 
-static Grammar regex_grammar;
-static First_Table regex_first;
-static Follow_Table regex_follow;
-static LL1_Table regex_ll1;
-static int regex_parser_initialized = 0;
-
-// Token actual (lookahead)
-static int current_token_type;
-static char current_char_value;
+struct RegexParserContext {
+    Grammar grammar;
+    First_Table first;
+    Follow_Table follow;
+    LL1_Table ll1;
+    int initialized;
+};
 
 // ============== ACCIONES SEMÁNTICAS ==============
 //
@@ -96,54 +100,63 @@ enum {
 
 // ============== WRAPPER PARA EL LEXER FLEX ==============
 
-static void regex_advance(void) {
+static void regex_advance(int *token_type, char *char_value) {
     int type = regex_lex();
-    current_token_type = type;
-    current_char_value = regex_char_value;
+    *token_type = type;
+    *char_value = regex_char_value;
 }
 
-// ============== INICIALIZACIÓN ==============
+// ============== CREACIÓN Y DESTRUCCIÓN ==============
 
-void regex_parser_init(void) {
-    if (regex_parser_initialized) return;
+RegexParserContext* regex_parser_create(void) {
+    RegexParserContext *rctx = malloc(sizeof(RegexParserContext));
+    if (!rctx) return NULL;
+    rctx->initialized = 0;
+    return rctx;
+}
+
+// Inicialización lazy: construye gramática + tablas la primera vez
+static void regex_parser_ensure_init(RegexParserContext *rctx) {
+    if (rctx->initialized) return;
     
     // Inicializar gramática de regex
-    grammar_init_regex(&regex_grammar);
+    grammar_init_regex(&rctx->grammar);
     
     // Calcular FIRST y FOLLOW
-    compute_first_sets(&regex_grammar, &regex_first);
-    compute_follow_sets(&regex_grammar, &regex_first, &regex_follow);
+    compute_first_sets(&rctx->grammar, &rctx->first);
+    compute_follow_sets(&rctx->grammar, &rctx->first, &rctx->follow);
     
     // Construir tabla LL(1)
-    if (!build_ll1_table(&regex_grammar, &regex_first, &regex_follow, &regex_ll1)) {
+    if (!build_ll1_table(&rctx->grammar, &rctx->first, &rctx->follow, &rctx->ll1)) {
         fprintf(stderr, "Advertencia: la gramática de regex tiene conflictos LL(1)\n");
     }
     
     // Exportar tabla LL(1) de regex a CSV
-    ll1_table_save_csv(&regex_ll1, &regex_grammar, "output/regex_ll1_table.csv");
+    ll1_table_save_csv(&rctx->ll1, &rctx->grammar, "output/regex_ll1_table.csv");
     
-    regex_parser_initialized = 1;
+    rctx->initialized = 1;
 }
 
-void regex_parser_cleanup(void) {
-    if (regex_parser_initialized) {
-        grammar_free(&regex_grammar);
-        ll1_table_free(&regex_ll1);
-        regex_parser_initialized = 0;
+void regex_parser_destroy(RegexParserContext *rctx) {
+    if (!rctx) return;
+    if (rctx->initialized) {
+        grammar_free(&rctx->grammar);
+        ll1_table_free(&rctx->ll1);
     }
+    free(rctx);
 }
 
 // ============== CONSULTA TABLA LL(1) ==============
 
-static int ll1_lookup(int nt_id, int terminal_id) {
+static int ll1_lookup(RegexParserContext *rctx, int nt_id, int terminal_id) {
     int col = -1;
     // REGEX_T_EOF == -1, no confundir con TOKEN_EOF == 0 == REGEX_T_CHAR
     if (terminal_id == REGEX_T_EOF) {
-        col = regex_grammar.t_count; // columna $
-    } else if (terminal_id >= 0 && terminal_id < regex_ll1.t_map_size) {
-        col = regex_ll1.t_map[terminal_id];
+        col = rctx->grammar.t_count; // columna $
+    } else if (terminal_id >= 0 && terminal_id < rctx->ll1.t_map_size) {
+        col = rctx->ll1.t_map[terminal_id];
     }
-    return (col < 0) ? NO_PRODUCTION : regex_ll1.table[nt_id][col];
+    return (col < 0) ? NO_PRODUCTION : rctx->ll1.table[nt_id][col];
 }
 
 // ============== PUSH DE PRODUCCIONES ==============
@@ -378,10 +391,11 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
 // Analizador predictivo basado en pila (Algoritmo 4.34, Dragon Book)
 // con acciones semánticas para construir el AST.
 
-ASTNode* regex_parse(const char* regex_str, ASTContext *ctx) {
+ASTNode* regex_parse(const char* regex_str, ASTContext *ctx,
+                     RegexParserContext *rctx) {
     if (!regex_str || !regex_str[0]) return NULL;
 
-    regex_parser_init();
+    regex_parser_ensure_init(rctx);
 
     // Pila del parser
     GrammarSymbol pstack[RSTACK_MAX];
@@ -395,13 +409,17 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx) {
     char saved_char = 0;
     char range_start_char = 0;
 
+    // Lookahead local (ya no es estado estático)
+    int current_token_type;
+    char current_char_value;
+
     // Inicializar pila: $ y símbolo inicial (Regex)
     pstack[ptop++] = (GrammarSymbol){SYMBOL_END, 0};
     pstack[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, RNT_Regex};
 
     // Iniciar lexer flex y obtener primer token
     regex_lexer_set_string(regex_str);
-    regex_advance();
+    regex_advance(&current_token_type, &current_char_value);
 
     int error = 0;
 
@@ -421,7 +439,7 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx) {
         case SYMBOL_TERMINAL:
             if (top.id == current_token_type) {
                 saved_char = current_char_value;
-                regex_advance();
+                regex_advance(&current_token_type, &current_char_value);
             } else {
                 fprintf(stderr, "Error regex: se esperaba token %d, se encontró %d\n",
                         top.id, current_token_type);
@@ -430,7 +448,7 @@ ASTNode* regex_parse(const char* regex_str, ASTContext *ctx) {
             break;
 
         case SYMBOL_NON_TERMINAL: {
-            int prod = ll1_lookup(top.id, current_token_type);
+            int prod = ll1_lookup(rctx, top.id, current_token_type);
             if (prod == NO_PRODUCTION) {
                 fprintf(stderr, "Error regex: sin producción para NT=%d, token=%d\n",
                         top.id, current_token_type);
@@ -466,7 +484,8 @@ done:
 
 // ============== CONSTRUCCIÓN DEL AST DEL LEXER ==============
 
-ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count, ASTContext *ctx) {
+ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count,
+                         ASTContext *ctx, RegexParserContext *rctx) {
     if (!tokens || token_count <= 0) {
         return NULL;
     }
@@ -474,7 +493,7 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count, ASTContext *ctx) {
     ASTNode* combined = NULL;
     
     for (int i = 0; i < token_count; i++) {
-        ASTNode* ast = regex_parse(tokens[i].regex, ctx);
+        ASTNode* ast = regex_parse(tokens[i].regex, ctx, rctx);
         
         if (ast == NULL) {
             fprintf(stderr, "Error parseando regex para token %d: '%s'\n", 
@@ -501,45 +520,4 @@ ASTNode* build_lexer_ast(TokenRegex* tokens, int token_count, ASTContext *ctx) {
     }
     
     return combined;
-}
-
-// ============== DEBUGGING ==============
-
-void ast_print(ASTNode* node, int depth) {
-    if (!node) return;
-    
-    for (int i = 0; i < depth; i++) printf("  ");
-    
-    switch (node->type) {
-        case NODE_LEAF:
-            if (node->symbol == '#')
-                printf("LEAF(#, pos=%d)\n", node->pos);
-            else if (node->symbol >= 32 && node->symbol < 127)
-                printf("LEAF('%c', pos=%d)\n", node->symbol, node->pos);
-            else
-                printf("LEAF(0x%02x, pos=%d)\n", (unsigned char)node->symbol, node->pos);
-            break;
-        case NODE_CONCAT:
-            printf("CONCAT\n");
-            ast_print(node->left, depth + 1);
-            ast_print(node->right, depth + 1);
-            break;
-        case NODE_OR:
-            printf("OR\n");
-            ast_print(node->left, depth + 1);
-            ast_print(node->right, depth + 1);
-            break;
-        case NODE_STAR:
-            printf("STAR\n");
-            ast_print(node->left, depth + 1);
-            break;
-        case NODE_PLUS:
-            printf("PLUS\n");
-            ast_print(node->left, depth + 1);
-            break;
-        case NODE_QUESTION:
-            printf("QUESTION\n");
-            ast_print(node->left, depth + 1);
-            break;
-    }
 }
