@@ -1,0 +1,33 @@
+name: CI — Build & Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar dependencias (flex, gcc)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex gcc make
+
+      - name: Compilar proyecto
+        run: make
+
+      - name: Compilar tests
+        run: make test-build
+
+      - name: Ejecutar tests unitarios
+        run: make test-all
+
+      - name: Test de integración (compilar test.hulk)
+        run: ./hulk_compiler test.hulk

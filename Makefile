@@ -7,28 +7,36 @@ TARGET = hulk_compiler
 LEXER_DIR = generador_analizadores_lexicos
 PARSER_DIR = generador_parser_ll1
 OUTPUT_DIR = output
+TEST_DIR = tests
 
 # Archivo generado por flex
 REGEX_LEXER_C = $(LEXER_DIR)/regex_lexer.c
 
-# Objetos
-OBJS = main.o \
-       hulk_tokens.o \
-       hulk_compiler.o \
-       error_handler.o \
-       $(LEXER_DIR)/ast.o \
-       $(LEXER_DIR)/afd.o \
-       $(LEXER_DIR)/lexer.o \
-       $(LEXER_DIR)/regex_parser.o \
-       $(LEXER_DIR)/regex_lexer.o \
-       $(PARSER_DIR)/grammar.o \
-       $(PARSER_DIR)/grammar_regex.o \
-       $(PARSER_DIR)/grammar_hulk.o \
-       $(PARSER_DIR)/ll1_table.o \
-       $(PARSER_DIR)/parser.o \
-       $(PARSER_DIR)/first_follow.o
+# Objetos del proyecto (sin main.o para poder linkear tests)
+LIB_OBJS = hulk_tokens.o \
+            hulk_compiler.o \
+            error_handler.o \
+            $(LEXER_DIR)/ast.o \
+            $(LEXER_DIR)/afd.o \
+            $(LEXER_DIR)/lexer.o \
+            $(LEXER_DIR)/regex_parser.o \
+            $(LEXER_DIR)/regex_lexer.o \
+            $(PARSER_DIR)/grammar.o \
+            $(PARSER_DIR)/grammar_regex.o \
+            $(PARSER_DIR)/grammar_hulk.o \
+            $(PARSER_DIR)/ll1_table.o \
+            $(PARSER_DIR)/parser.o \
+            $(PARSER_DIR)/first_follow.o
 
-# Regla principal
+OBJS = main.o $(LIB_OBJS)
+
+# Binarios de tests
+TEST_LEXER  = $(TEST_DIR)/test_lexer
+TEST_PARSER = $(TEST_DIR)/test_parser
+TEST_AST    = $(TEST_DIR)/test_ast
+TEST_BINS   = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST)
+
+# ============== Regla principal ==============
 $(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
 
@@ -44,14 +52,46 @@ $(REGEX_LEXER_C): $(LEXER_DIR)/regex_lexer.l
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Limpiar
-clean:
-	rm -f $(OBJS) $(TARGET)
-	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o
-	rm -f $(REGEX_LEXER_C)
-	rm -f *.ll1.cache
-	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.dot $(OUTPUT_DIR)/*.png
+# ============== Tests unitarios ==============
+# Compilar todos los tests
+test-build: $(REGEX_LEXER_C) $(LIB_OBJS) $(TEST_BINS)
 
+$(TEST_LEXER): $(TEST_DIR)/test_lexer.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
+
+$(TEST_PARSER): $(TEST_DIR)/test_parser.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
+
+$(TEST_AST): $(TEST_DIR)/test_ast.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
+
+# Ejecutar todos los tests
+test-all: test-build
+	@echo ""
+	@echo "═══════════════════════════════════════"
+	@echo "  Ejecutando todos los tests..."
+	@echo "═══════════════════════════════════════"
+	@fail=0; \
+	for t in $(TEST_BINS); do \
+		$$t || fail=1; \
+	done; \
+	if [ $$fail -eq 1 ]; then \
+		echo "\n❌ Algunos tests fallaron"; exit 1; \
+	else \
+		echo "\n✅ Todos los tests pasaron"; \
+	fi
+
+# Ejecutar tests individuales
+test-lexer: $(TEST_LEXER)
+	./$(TEST_LEXER)
+
+test-parser: $(TEST_PARSER)
+	./$(TEST_PARSER)
+
+test-ast: $(TEST_AST)
+	./$(TEST_AST)
+
+# ============== Otros targets ==============
 # Test rápido (entrada por defecto)
 test: $(TARGET)
 	./$(TARGET)
@@ -60,7 +100,16 @@ test: $(TARGET)
 test-file: $(TARGET)
 	./$(TARGET) test.hulk
 
+# Limpiar
+clean:
+	rm -f $(OBJS) $(TARGET)
+	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o
+	rm -f $(REGEX_LEXER_C)
+	rm -f *.ll1.cache
+	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.dot $(OUTPUT_DIR)/*.png
+	rm -f $(TEST_BINS)
+
 # Reconstruir desde cero
 rebuild: clean $(TARGET)
 
-.PHONY: clean test test-file rebuild
+.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast

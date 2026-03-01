@@ -2,6 +2,9 @@
 *.o
 *.a
 hulk_compiler
+tests/test_lexer
+tests/test_parser
+tests/test_ast
 
 # ============== Generated files ==============
 generador_analizadores_lexicos/regex_lexer.c
