@@ -126,6 +126,72 @@ TEST(parse_string_concat) {
     ASSERT(parse_ok("\"hello\" @@ \"world\";"));
 }
 
+// ============== TESTS: DECORATORS ==============
+
+TEST(decor_single_function) {
+    ASSERT(parse_ok(
+        "decor log "
+        "function factorial(n: Number): Number => "
+        "if (n == 0) 1 else n * factorial(n - 1);"));
+}
+
+TEST(decor_parametrized) {
+    ASSERT(parse_ok(
+        "decor memoize(100) "
+        "function fib(n: Number): Number => "
+        "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
+}
+
+TEST(decor_comma_list) {
+    // Multiple decorators with comma: decor a, b(args)
+    ASSERT(parse_ok(
+        "decor log, memoize(100) "
+        "function fib(n: Number): Number => "
+        "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
+}
+
+TEST(decor_stacked) {
+    // Stacked decor lines
+    ASSERT(parse_ok(
+        "decor log "
+        "decor memoize(100) "
+        "function fib(n: Number): Number => "
+        "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
+}
+
+TEST(decor_on_type) {
+    ASSERT(parse_ok(
+        "decor serializable "
+        "type Point(x: Number, y: Number) {"
+        "  sum(): Number => self.x + self.y;"
+        "}"));
+}
+
+TEST(decor_multi_arg) {
+    // Decorator with multiple arguments (currying)
+    ASSERT(parse_ok(
+        "decor retry(3, 500) "
+        "function connect(): Number => 42;"));
+}
+
+TEST(decor_with_undecorated) {
+    // Mix of decorated and undecorated functions
+    ASSERT(parse_ok(
+        "function plain(): Number => 1; "
+        "decor log "
+        "function decorated(): Number => 2;"));
+}
+
+TEST(error_decor_no_target) {
+    // decor without function/type → error
+    ASSERT_GT(parse_errors("decor log 5 + 3;"), 0);
+}
+
+TEST(error_decor_missing_ident) {
+    // decor without identifier → error
+    ASSERT_GT(parse_errors("decor function f(): Number => 1;"), 0);
+}
+
 // ============== TESTS: SYNTAX ERRORS ==============
 
 TEST(error_missing_semicolon) {
@@ -159,6 +225,17 @@ int main(void) {
     RUN_TEST(parse_method_call);
     RUN_TEST(parse_nested_let);
     RUN_TEST(parse_string_concat);
+
+    TEST_SUITE("Decorators (decor keyword)");
+    RUN_TEST(decor_single_function);
+    RUN_TEST(decor_parametrized);
+    RUN_TEST(decor_comma_list);
+    RUN_TEST(decor_stacked);
+    RUN_TEST(decor_on_type);
+    RUN_TEST(decor_multi_arg);
+    RUN_TEST(decor_with_undecorated);
+    RUN_TEST(error_decor_no_target);
+    RUN_TEST(error_decor_missing_ident);
 
     TEST_SUITE("Edge Cases");
     RUN_TEST(parse_empty_input);

@@ -35,6 +35,7 @@ typedef enum {
     TOKEN_BASE,
     TOKEN_AS,
     TOKEN_IS,
+    TOKEN_DECOR,
 
     // Operadores y símbolos
     TOKEN_SEMICOLON,

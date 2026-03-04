@@ -42,6 +42,7 @@ static TokenMapping hulk_terminal_map[] = {
     { "BASE", TOKEN_BASE },
     { "AS", TOKEN_AS },
     { "IS", TOKEN_IS },
+    { "DECOR", TOKEN_DECOR },
     
     // Símbolos y operadores
     { "SEMICOLON", TOKEN_SEMICOLON },

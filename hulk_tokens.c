@@ -28,6 +28,7 @@ TokenRegex hulk_tokens[] = {
     { TOKEN_BASE,       "base" },
     { TOKEN_AS,         "as" },
     { TOKEN_IS,         "is" },
+    { TOKEN_DECOR,      "decor" },
     
     // ===== OPERADORES MULTI-CARÁCTER (antes de simples) =====
     { TOKEN_ARROW,          "=>" },
@@ -80,7 +81,7 @@ int hulk_token_count = sizeof(hulk_tokens) / sizeof(hulk_tokens[0]);
 const char* token_names[] = {
     "EOF", "WS", "COMMENT",
     "FUNCTION", "TYPE", "INHERITS", "WHILE", "FOR", "IN", "IF", "ELIF", "ELSE",
-    "LET", "TRUE", "FALSE", "NEW", "SELF", "BASE", "AS", "IS",
+    "LET", "TRUE", "FALSE", "NEW", "SELF", "BASE", "AS", "IS", "DECOR",
     "SEMICOLON", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "COMMA", "COLON", "DOT",
     "ASSIGN", "ASSIGN_DESTRUCT", "PLUS", "MINUS", "MULT", "DIV", "MOD", "POW",
     "LT", "GT", "LE", "GE", "EQ", "NEQ", "OR", "AND", "CONCAT", "CONCAT_WS", "ARROW",

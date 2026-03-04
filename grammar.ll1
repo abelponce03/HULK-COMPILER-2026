@@ -1,9 +1,20 @@
 Program      -> TopLevel Program | ε
-TopLevel     -> FunctionDef | TypeDef | TerminatedStmt
+TopLevel     -> FunctionDef | TypeDef | TerminatedStmt | DecorBlock
 TerminatedStmt -> Stmt SEMICOLON
 Stmt         -> Expr | WhileStmt | ForStmt | BlockStmt
 FunctionDef  -> FUNCTION IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
 TypeDef      -> TYPE IDENT TypeParams TypeInheritance LBRACE TypeBody RBRACE
+# ============== Decoradores ==============
+# decor log, memoize(100)
+# function fib(n: Number): Number => ...
+# Azúcar sintáctico para composición de funciones de orden superior.
+# Se aplican de derecha a izquierda: decor a, b  function f => f = a(b(f))
+DecorBlock     -> DECOR DecorItems DecorNext
+DecorNext      -> DECOR DecorItems DecorNext | FunctionDef | TypeDef
+DecorItems     -> DecorItem DecorItemsTail
+DecorItemsTail -> COMMA DecorItem DecorItemsTail | ε
+DecorItem      -> IDENT DecorArgs
+DecorArgs      -> LPAREN ArgList RPAREN | ε
 TypeParams   -> LPAREN ArgIdList RPAREN | ε
 TypeInheritance -> INHERITS IDENT TypeBaseArgs | ε
 TypeBaseArgs -> LPAREN ArgList RPAREN | ε

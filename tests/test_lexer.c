@@ -111,6 +111,21 @@ TEST(keyword_self_base_is_as) {
     free_tokens(t, n);
 }
 
+TEST(keyword_decor) {
+    int n; Token *t = tokenize("decor", &n);
+    ASSERT_EQ(TOKEN_DECOR, t[0].type);
+    ASSERT_STR_EQ("decor", t[0].lexeme);
+    free_tokens(t, n);
+}
+
+TEST(decor_not_identifier) {
+    // "decoration" starts with "decor" but is an identifier
+    int n; Token *t = tokenize("decoration", &n);
+    ASSERT_EQ(TOKEN_IDENT, t[0].type);
+    ASSERT_STR_EQ("decoration", t[0].lexeme);
+    free_tokens(t, n);
+}
+
 // ============== TESTS: IDENTIFIERS ==============
 
 TEST(simple_identifier) {
@@ -321,6 +336,8 @@ int main(void) {
     RUN_TEST(keyword_type_inherits_new);
     RUN_TEST(keyword_true_false);
     RUN_TEST(keyword_self_base_is_as);
+    RUN_TEST(keyword_decor);
+    RUN_TEST(decor_not_identifier);
 
     TEST_SUITE("Identifiers");
     RUN_TEST(simple_identifier);
