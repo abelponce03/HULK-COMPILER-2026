@@ -22,3 +22,6 @@ output/*.png
 *.swo
 *~
 .DS_Store
+
+
+contexto_para_analisis_semantico
