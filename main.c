@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "hulk_compiler.h"
+#include "hulk_ast/hulk_ast.h"
+#include "hulk_ast/hulk_ast_printer.h"
 #include "error_handler.h"
 
 // ============== MAIN ==============
@@ -46,6 +48,16 @@ int main(int argc, char* argv[]) {
     // Ejecutar análisis
     hulk_compiler_test_lexer(&hc, input);
     hulk_compiler_test_parser(&hc, input, grammar_file);
+
+    // Construir AST
+    printf("\n========== CONSTRUCCIÓN DEL AST ==========\n");
+    HulkASTContext ast_ctx;
+    HulkNode *ast = hulk_compiler_build_ast(&hc, input, &ast_ctx);
+    if (ast) {
+        hulk_ast_print(ast, stdout);
+        hulk_ast_context_free(&ast_ctx);
+    }
+    printf("========== FIN AST ==========\n");
     
     // Limpiar
     if (free_input) free(input);

@@ -18,6 +18,7 @@ LIB_OBJS = hulk_tokens.o \
             hulk_compiler.o \
             $(HULK_AST_DIR)/hulk_ast.o \
             $(HULK_AST_DIR)/hulk_ast_printer.o \
+            $(HULK_AST_DIR)/hulk_ast_builder.o \
             error_handler.o \
             $(LEXER_DIR)/ast.o \
             $(LEXER_DIR)/afd.o \
@@ -34,11 +35,12 @@ LIB_OBJS = hulk_tokens.o \
 OBJS = main.o $(LIB_OBJS)
 
 # Binarios de tests
-TEST_LEXER    = $(TEST_DIR)/test_lexer
-TEST_PARSER   = $(TEST_DIR)/test_parser
-TEST_AST      = $(TEST_DIR)/test_ast
-TEST_HULK_AST = $(TEST_DIR)/test_hulk_ast
-TEST_BINS     = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST)
+TEST_LEXER       = $(TEST_DIR)/test_lexer
+TEST_PARSER      = $(TEST_DIR)/test_parser
+TEST_AST         = $(TEST_DIR)/test_ast
+TEST_HULK_AST    = $(TEST_DIR)/test_hulk_ast
+TEST_AST_BUILDER = $(TEST_DIR)/test_ast_builder
+TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER)
 
 # ============== Regla principal ==============
 $(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
@@ -72,6 +74,9 @@ $(TEST_AST): $(TEST_DIR)/test_ast.c $(LIB_OBJS)
 $(TEST_HULK_AST): $(TEST_DIR)/test_hulk_ast.c $(LIB_OBJS)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
 
+$(TEST_AST_BUILDER): $(TEST_DIR)/test_ast_builder.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
+
 # Ejecutar todos los tests
 test-all: test-build
 	@echo ""
@@ -101,6 +106,9 @@ test-ast: $(TEST_AST)
 test-hulk-ast: $(TEST_HULK_AST)
 	./$(TEST_HULK_AST)
 
+test-ast-builder: $(TEST_AST_BUILDER)
+	./$(TEST_AST_BUILDER)
+
 # ============== Otros targets ==============
 # Test rápido (entrada por defecto)
 test: $(TARGET)
@@ -122,4 +130,4 @@ clean:
 # Reconstruir desde cero
 rebuild: clean $(TARGET)
 
-.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast
+.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder

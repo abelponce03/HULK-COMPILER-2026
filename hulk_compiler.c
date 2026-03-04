@@ -14,6 +14,8 @@
 #include "generador_parser_ll1/parser.h"
 #include "generador_parser_ll1/grammar.h"
 #include "generador_parser_ll1/first_follow.h"
+#include "hulk_ast/hulk_ast_builder.h"
+#include "hulk_ast/hulk_ast_printer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -254,4 +256,23 @@ void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
     grammar_free(&grammar);
     
     printf("\n========== FIN TEST PARSER ==========\n");
+}
+
+// ============== CONSTRUCCIÓN DEL AST ==============
+
+HulkNode* hulk_compiler_build_ast(HulkCompiler *hc, const char *input,
+                                   HulkASTContext *out_ctx) {
+    if (!hc || !hc->dfa || !input || !out_ctx) return NULL;
+
+    hulk_ast_context_init(out_ctx);
+    HulkNode *ast = hulk_build_ast(out_ctx, hc->dfa, input);
+
+    if (ast) {
+        printf("\n✓ AST construido exitosamente\n");
+    } else {
+        printf("\n✗ Error construyendo AST\n");
+        hulk_ast_context_free(out_ctx);
+    }
+
+    return ast;
 }

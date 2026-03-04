@@ -2,6 +2,7 @@
 #define HULK_COMPILER_H
 
 #include "generador_analizadores_lexicos/afd.h"
+#include "hulk_ast/hulk_ast.h"
 
 // Fachada del compilador HULK.
 // Encapsula el DFA del lexer y ofrece las operaciones de alto nivel.
@@ -22,5 +23,11 @@ void hulk_compiler_test_lexer(HulkCompiler *hc, const char *input);
 // Ejecuta el parser LL(1) sobre la entrada usando grammar_file.
 void hulk_compiler_test_parser(HulkCompiler *hc, const char *input,
                                const char *grammar_file);
+
+// Construye el AST a partir del código fuente.
+// Retorna ProgramNode* o NULL si hay errores.
+// El caller debe liberar el contexto con hulk_ast_context_free.
+HulkNode* hulk_compiler_build_ast(HulkCompiler *hc, const char *input,
+                                   HulkASTContext *out_ctx);
 
 #endif // HULK_COMPILER_H
