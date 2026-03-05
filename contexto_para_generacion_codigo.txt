@@ -1,0 +1,2706 @@
+Generación de código
+La fase final en nuestro modelo del compilador es el generador de código. Recibe como entrada la
+representación intermedia que produce el front-end del compilador, junto con la información rele-
+vante de la tabla de símbolos, y produce como salida un programa de destino equivalente en forma
+semántica, como se muestra en la figura 8.1.
+Los requerimientos impuestos sobre un generador de código son estrictos. El programa
+destino debe preservar el significado semántico del programa fuente y ser de alta calidad; es
+decir, debe hacer un uso efectivo de los recursos disponibles de la máquina destino. Además, el
+generador de código en sí debe ejecutarse con eficiencia.
+El reto es que, en sentido matemático, el problema de generar un programa destino óptimo
+para un programa fuente dado no se puede determinar; muchos de los subproblemas que surgen
+en la generación de código, como la repartición de registros, son indecidibles en sentido compu-
+tacional. En la práctica, debemos conformarnos con las técnicas heurísticas que generan un
+buen código, aunque no necesariamente óptimo. Por fortuna, la heurística ha madurado tanto
+que un generador de código diseñado con cuidado puede producir código que es varias veces
+más rápido que el código producido por uno simple.
+Los compiladores que requieren producir programas de destino eficientes incluyen una fase
+de optimización antes de la generación de código. El optimizador asigna la representación inter-
+media a otra representación intermedia desde la cual puede generarse código más eficiente. En
+general, las fases de optimización y generación de código de un compilador, a las que con fre-
+cuencia se les conoce como el back-end, pueden realizar varias pasadas sobre la representación
+intermedia antes de generar el programa destino. En el capítulo 9 se describe la optimización de
+código con detalle. Las técnicas que presentamos en este capítulo pueden usarse sin importar
+que haya o no una fase de optimización antes de la generación de código.
+programa
+fuente
+código
+intermedio
+Optimizador
+código
+de código
+intermedio
+Generador
+de código
+Figura 8.1: Posición del generador de código
+505
+programa
+destino506
+Capítulo 8. Generación de código
+Un generador de código tiene tres tareas principales: selección de instrucciones, repartición
+y asignación de registros, y ordenamiento de instrucciones. La importancia de estas tareas se
+describe en la sección 8.1. La selección de instrucciones implica la selección de instrucciones apro-
+piadas de la máquina destino para implementar las instrucciones de la representación intermedia.
+La repartición y asignación de registros implica decidir qué valores mantener en qué registros. El
+ordenamiento de instrucciones implica decidir en qué orden se va a programar su ejecución.
+Este capítulo presenta algoritmos que los generadores de código pueden usar para traducir la
+representación intermedia en una secuencia de instrucciones del lenguaje destino para las máqui-
+nas con registros simples. Ilustraremos estos algoritmos mediante el uso del modelo de la máquina
+de la sección 8.2. El capítulo 10 trata acerca del problema de la generación de código para las
+máquinas complejas modernas, que soportan mucho paralelismo dentro de una sola instrucción.
+Después de hablar sobre las grandes cuestiones relacionadas con el diseño de un generador
+de código, mostraremos el tipo de código destino que debe generar un compilador para dar
+soporte a las abstracciones expresadas en un lenguaje fuente ordinario. En la sección 8.3 des-
+cribiremos las implementaciones de la asignación y la asignación de pila de las áreas de datos, y
+mostraremos cómo los nombres en la representación intermedia pueden convertirse en direccio-
+nes en el código destino.
+Muchos generadores de código particionan las instrucciones de representación intermedia en
+“bloques básicos”, los cuales consisten en secuencias de instrucciones que siempre se ejecutan
+en conjunto. El particionamiento de la representación intermedia en bloques básicos es el tema
+de la sección 8.4. La siguiente sección presenta las transformaciones locales simples que pueden
+usarse para convertir los bloques básicos en bloques básicos modificados, a partir de los cuales
+se puede generar un código más eficiente. Estas transformaciones son una forma rudimentaria de
+la optimización de código, aunque no trataremos la teoría más profunda de la optimización de có-
+digo sino hasta el capítulo 9. Un ejemplo de una transformación local útil es el descubrimien-
+to de las subexpresiones comunes al nivel del código intermedio, y la sustitución resultante de las
+operaciones aritméticas por operaciones de copia más simples.
+La sección 8.6 presenta un algoritmo de generación de código simple, el cual genera código
+para cada instrucción en turno, manteniendo los operandos en registros el mayor tiempo posi-
+ble. La salida de este tipo de generador de código puede mejorarse con facilidad mediante las
+técnicas de optimización de mirilla (peephole), como las que veremos en la sección 8.7.
+Las secciones restantes exploran la selección de instrucciones y la repartición de registros.
+8.1
+Cuestiones sobre el diseño de un generador de código
+Aunque los detalles dependen de las características específicas de la representación intermedia,
+el lenguaje destino y el sistema en tiempo de ejecución, las tareas como la selección de instruc-
+ciones, la repartición y asignación de registros, y el ordenamiento de instrucciones se encuentran
+en el diseño de casi todos los generadores de código.
+El criterio más importante para un generador de código es que debe producir código correc-
+to. La precisión de este código es muy relevante, debido al número de casos especiales que podría
+enfrentar un generador de código. Dada la importancia en la precisión del código, diseñar un
+generador de código de manera que pueda implementarse, probarse y mantenerse con facilidad
+es una meta primordial de diseño.8.1 Cuestiones sobre el diseño de un generador de código
+8.1.1
+507
+Entrada del generador de código
+La entrada del generador de código es la representación intermedia del programa fuente produ-
+cido por la interfaz de usuario, junto con la información en la tabla de símbolos que se utiliza
+para determinar las direcciones en tiempo de ejecución de los objetos de datos denotados por
+los nombres en la representación intermedia.
+Entre las diversas opciones para la representación intermedia se encuentran las represen-
+taciones de tres direcciones, como los cuádruplos, tripletas, tripletas indirectos; las representa-
+ciones de máquinas virtuales como bytecodes y código máquina apilado; las representaciones
+lineales como la notación postfija; y las representaciones gráficas, como los árboles sintácti-
+cos y los GDAs. Muchos de los algoritmos en este capítulo se formulan en términos de las
+representaciones consideradas en el capítulo 6: código de tres direcciones, árboles y GDAs.
+Sin embargo, las técnicas que veremos pueden aplicarse también a las demás representaciones
+intermedias.
+En este capítulo vamos a suponer que la interfaz de usuario ha explorado, realizado el
+análisis sintáctico y traducido el programa fuente en una representación intermedia de un ni-
+vel relativamente bajo, para que los valores de los nombres que aparecen en la representación
+intermedia puedan representarse mediante cantidades que la máquina destino pueda manipular
+en forma directa, como los números enteros y de punto flotante. También supondremos que se
+han detectado todos los errores sintácticos y semánticos estáticos, que se ha llevado a cabo la
+comprobación de tipos necesaria, y que se han insertado operadores de conversión de tipos en
+todos los lugares necesarios. Así, el generador de código puede proceder en base a la suposición
+de que su entrada está libre de estos tipos de errores.
+8.1.2
+El programa destino
+La arquitectura del conjunto de instrucciones de la máquina destino tiene un impacto conside-
+rable en la dificultad de construir un buen generador de código que produzca código máquina
+de alta calidad. Las arquitecturas más comunes de las máquinas de destino son RISC (reduced
+instruction set computer), CISC (complex instruction set computer) y basadas en pilas.
+Por lo general, una máquina RISC tiene muchos registros, instrucciones de tres direc-
+ciones, modos de direccionamiento simple y una arquitectura del conjunto de instrucciones
+relativamente sencilla. En contraste, una máquina CISC, por lo general, tiene menos registros,
+instrucciones de dos direcciones, una variedad de modos de direccionamiento, varias clases de
+registros, instrucciones de longitud variable e instrucciones con efectos adicionales.
+En una máquina basada en pila, las operaciones se realizan metiendo operandos en una pila,
+y después llevando a cabo las operaciones con los operandos en la parte superior de la pila. Para
+lograr un alto rendimiento, la parte superior de la pila se mantiene, por lo general, en los regis-
+tros. Estas máquinas desaparecieron casi por completo, ya que se creía que la organización de la
+pila era demasiado limitante y requería demasiadas operaciones de intercambio y copiado.
+No obstante, las arquitecturas basadas en pila revivieron con la introducción de la Máquina
+virtual de Java (JVM). Ésta es un intérprete de software para bytecodes de Java, un lenguaje
+intermedio producido por los compiladores de Java. El intérprete proporciona compatibilidad
+de software a través de varias plataformas, un importante factor en el éxito de Java.508
+Capítulo 8. Generación de código
+Para superar el castigo sobre el alto rendimiento de la interpretación, que puede estar en el
+orden de un factor de 10, se crearon los compiladores Java just-in-time (JIT). Estos compila-
+dores JIT traducen los códigos de byte en tiempo de ejecución al conjunto de instrucciones de
+hardware nativo de la máquina de destino. Otro método para mejorar el rendimiento de Java
+es construir un compilador que compile directamente en las instrucciones de máquina de la
+máquina destino, pasando por alto los bytecodes de Java por completo.
+Producir un programa en lenguaje máquina absoluto como salida tiene la ventaja de que pue-
+de colocarse en una ubicación fija en la memoria, y ejecutarse de inmediato. Los programas pueden
+compilarse y ejecutarse con rapidez.
+Producir un programa en lenguaje máquina reubicable (que a menudo se le conoce como
+módulo objeto) como salida permite que los subprogramas se compilen por separado. Un con-
+junto de módulos objeto reubicables puede enlazarse y cargarse para que lo ejecute un cargador
+de enlace. Aunque debemos sufrir la sobrecarga adicional de enlazar y cargar si producimos
+módulos objeto reubicables, obtenemos mucha flexibilidad al poder compilar las subrutinas por
+separado y llamar a otros programas (compilados con anterioridad) desde un módulo objeto. Si
+la máquina destino no maneja la reubicación de manera automática, el compilador debe propor-
+cionar información de reubicación explícita al cargador para enlazar los módulos del programa
+que se compilaron por separado.
+Producir un programa en lenguaje ensamblador como salida facilita de alguna manera el
+proceso de la generación de código. Podemos generar instrucciones simbólicas y utilizar las fa-
+cilidades de las macros del ensamblador para ayudar en la generación de código. El precio que
+se paga es el paso de ensamblado después de la generación de código.
+En este capítulo utilizaremos una computadora tipo RISC muy simple como nuestra máqui-
+na destino. Le agregaremos algunos modos de direccionamiento tipo CISC, para poder hablar
+también sobre las técnicas de generación de código para las máquinas CISC. Por cuestión de
+legibilidad, usaremos código ensamblador como el lenguaje destino. Siempre y cuando puedan
+calcularse direcciones a partir de desplazamientos y que la demás información se almacene en
+la tabla de símbolos, el generador de código puede producir direcciones reubicables o absolutas
+para los nombres, con la misma facilidad que las direcciones simbólicas.
+8.1.3
+Selección de instrucciones
+El generador de código debe asignar el programa de representación intermedia a una secuen-
+cia de código que la máquina de destino pueda ejecutar. La complejidad de realizar esta asig-
+nación se determina mediante factores como:
+• El nivel de la representación intermedia.
+• La naturaleza de la arquitectura del conjunto de instrucciones.
+• La calidad deseada del código generado.
+Si la representación intermedia es de alto nivel, el generador de código puede traducir cada ins-
+trucción de este tipo en una secuencia de instrucciones de máquina, usando plantillas de código.
+Sin embargo, tal generación de código instrucción por instrucción produce a menudo código de
+baja calidad, que requiere de más optimización. Si la representación intermedia refleja algunos8.1 Cuestiones sobre el diseño de un generador de código
+509
+de los detalles de bajo nivel de la máquina subyacente, entonces el generador de código puede
+usar esta información para generar secuencias de código más eficientes.
+La naturaleza del conjunto de instrucciones de la máquina destino tiene un fuerte efecto
+sobre la dificultad de la selección de instrucciones. Por ejemplo, la uniformidad y precisión
+del conjunto de instrucciones son factores importantes. Si la máquina destino no soporta cada
+tipo de datos de manera uniforme, entonces cada excepción a la regla general requiere de un
+manejo especial. Por ejemplo, en ciertas máquinas las operaciones de punto flotante se realizan
+mediante registros separados.
+Las velocidades de las instrucciones y las características específicas de las máquinas son
+otros factores importantes. Si no nos preocupa la eficiencia del programa destino, la selección de
+instrucciones es un proceso simple. Para cada tipo de instrucción de tres direcciones, podemos
+diseñar un esqueleto de código que defina el código destino a generar para esa construcción. Por
+ejemplo, toda instrucción de tres direcciones de la forma x = y + z, en donde x, y y z se asignan
+en forma estática, puede traducirse en la siguiente secuencia de código:
+LD R0, y
+ADD R0, R0, z
+ST x, R0
+// R0 = y
+// R0 = R0 + z
+// x = R0
+(carga y en el registro R0)
+(suma z a R0)
+(almacena R0 en x)
+A menudo, esta estrategia produce operaciones de carga y almacenamiento redundantes.
+Por ejemplo, la siguiente secuencia de instrucciones de tres direcciones:
+a = b + c
+d = a + e
+se traduciría en el siguiente código:
+LD R0, b
+ADD R0, R0, c
+ST a, R0
+LD R0, a
+ADD R0, R0, e
+ST d, R0
+// R0 = b
+// R0 = R0 + c
+// a = R0
+// R0 = a
+// R0 = R0 + e
+// d = R0
+Aquí, la cuarta instrucción es redundante, ya que carga un valor que acaba de almacenarse,
+y de igual forma la tercera, si no se utiliza la a más adelante.
+Por lo general, la calidad del código generado se determina en base a su velocidad y tamaño.
+En la mayoría de las máquinas se puede implementar un programa representación intermedia
+mediante muchas secuencias de código distintas, con diferencias considerables en cuanto al ren-
+dimiento de las distintas implementaciones. Así, una traducción simple del código intermedio
+puede producir un código de destino correcto, pero demasiado ineficiente.
+Por ejemplo, si la máquina de destino tiene una instrucción de “incremento” (INC), entonces
+la instrucción de tres direcciones a = a + 1 puede implementarse con más eficiencia mediante la
+instrucción individual INC a, en vez de hacerlo mediante una secuencia más obvia para cargar
+a en un registro, sumar uno al registro y después almacenar el resultado de vuelta en a:510
+Capítulo 8. Generación de código
+LD R0, a
+ADD R0, R0, #1
+ST a, R0
+// R0 = a
+// R0 = R0 + 1
+// a = R0
+Debemos saber qué tan eficientes son las instrucciones para poder diseñar buenas secuen-
+cias de código pero, por desgracia, a menudo esta información es difícil de obtener. Para decidir
+qué secuencia de código máquina es mejor para una construcción de tres direcciones dada, tal
+vez también sea necesario tener un conocimiento acerca del contexto en el que aparece esa
+construcción.
+En la sección 8.9 veremos que la selección de instrucciones puede modelarse como un
+proceso de búsqueda de coincidencias con un patrón tipo árbol, en donde representamos a la
+representación intermedia y a las instrucciones de máquina como árboles. Después tratamos de
+“revestir” el árbol de la representación intermedia con un conjunto de subárboles que corres-
+pondan a las instrucciones de máquina. Si asociamos un costo a cada subárbol de instrucciones
+de máquina, podemos usar la programación dinámica para generar secuencias de código ópti-
+mas. En la sección 8.11 hablaremos sobre la programación dinámica.
+8.1.4
+Asignación de registros
+Un problema clave en la generación de código es decidir qué valores guardar en qué registros.
+Los registros son la unidad computacional más veloz en la máquina destino pero, por lo general,
+no tenemos suficientes como para contener todos los valores. Los valores que no se guardan en
+registros deben residir en la memoria. Las instrucciones que involucran operandos de registros
+son invariablemente más cortas y rápidas que las que involucran el uso de operandos en la
+memoria, por lo que la utilización eficiente de los registros es muy importante.
+A menudo, el uso de los registros se divide en dos subproblemas:
+1. Repartición de registros, durante la cual seleccionamos el conjunto de variables que resi-
+dirán en los registros, en cada punto del programa.
+2. Asignación de registros, durante la cual elegimos el registro específico en el que residirá
+una variable.
+Es difícil encontrar una asignación óptima de registros a variables, incluso en las máquinas
+con un solo registro. En sentido matemático, el problema es NP-completo. El problema se com-
+plica aún más debido a que el hardware y el sistema operativo de la máquina destino pueden
+requerir que se sigan ciertas convenciones de uso de registros.
+Ejemplo 8.1: Ciertas máquinas requieren pares de registros (un registro con numeración par
+y el siguiente con numeración impar) para ciertos operandos y resultados. Por ejemplo, en al-
+gunas máquinas la multiplicación y la división de enteros implican el uso de pares de registros.
+La instrucción de multiplicación es de la siguiente forma:
+M x, y
+en donde x, el multiplicando, es el registro par de un par de registros par/impar y y, el multi-
+plicador, es el registro impar. El producto ocupa todo el par de registros par/impar completo.
+La instrucción de división es de la siguiente forma:8.1 Cuestiones sobre el diseño de un generador de código
+511
+D x, y
+en donde el dividendo ocupa un par de registros par/impar cuyo registro par es x; el divisor es y.
+Después de la división, el registro par contiene el residuo y el registro impar el cociente.
+Ahora, considere las dos secuencias de código de tres direcciones en la figura 8.2, en donde la
+única diferencia entre (a) y (b) es el operador en la segunda instrucción. Las secuencias de código
+ensamblador más cortas para (a) y (b) se muestran en la figura 8.3.
+Figura 8.2: Dos secuencias de código de tres direcciones
+Figura 8.3: Secuencias de código máquina óptimas
+Ri representa al registro i. SRDA significa Aritmética doble de desplazamiento a la derecha y
+SRDA R0,32 desplaza el dividendo en R1 y borra R0, para que todos los bits sean iguales a su
+bit de signo. L, ST y A significan cargar, almacenar y sumar, respectivamente. Observe que la
+elección óptima para el registro en el que se va a cargar a depende de lo que pasará en última
+instancia a t.
+2
+En la sección 8.8 veremos estrategias para la repartición y asignación de registros. La sec-
+ción 8.10 muestra que para ciertas clases de máquinas podemos construir secuencias de código
+que evalúen expresiones, usando la menor cantidad posible de registros.
+8.1.5
+Orden de evaluación
+El orden en el que se realizan los cálculos puede afectar la eficiencia del código destino. Como
+veremos, ciertos órdenes de los cálculos requieren menos registros que otros para contener re-
+sultados inmediatos. Sin embargo, el proceso de elegir el mejor orden en el caso general es un
+problema NP-completo difícil. Al principio, debemos evitar el problema mediante la generación512
+Capítulo 8. Generación de código
+de código para las instrucciones de tres direcciones, en el orden en el que el generador de código
+intermedio las produjo. En el capítulo 10 estudiaremos la programación del código para las má-
+quinas con canalizaciones, que pueden ejecutar varias operaciones en un solo ciclo del reloj.
+8.2
+El lenguaje destino
+Un requisito previo para diseñar un buen generador de código es estar familiarizado con la
+máquina destino y su conjunto de instrucciones. Por desgracia, en una explicación general
+sobre la generación de código no es posible describir una máquina destino con suficiente
+detalle como para generar un buen código para un lenguaje completo en esa máquina. En
+este capítulo vamos a usar código ensamblador como lenguaje destino para una compu-
+tadora simple que representa a muchas máquinas con registros. Sin embargo, las técnicas de ge-
+neración que presentaremos en este capítulo pueden usarse en muchas otras clases de máquinas
+también.
+8.2.1
+Un modelo simple de máquina destino
+Nuestra computadora destino modela una máquina de tres direcciones con operaciones de
+carga y almacenamiento, operaciones de cálculo, operaciones de salto y saltos condicionales.
+La computadora subyacente es una máquina con direccionamiento por bytes y n registros de
+propósito general, R0, R1,..., Rn − 1. Un lenguaje ensamblador completo tendría muchas ins-
+trucciones. Para evitar ocultar los conceptos en una avalancha de detalles, vamos a usar un
+conjunto bastante limitado de instrucciones, y supondremos que todos los operandos son ente-
+ros. La mayoría de las instrucciones consisten en un operador, seguido de un destino, seguido
+de una lista de operandos de origen. Puede ir una etiqueta después de una instrucción. Vamos
+a suponer que existen los siguientes tipos de instrucciones:
+• Operaciones de carga: La instrucción LD dst, dir carga el valor que hay en la ubicación dir
+y lo coloca en la ubicación dst. Esta instrucción denota la asignación dst = dir. La forma
+más común de esta instrucción es LD r, x, que carga el valor que hay en la ubicación x y
+lo coloca en el registro r. Una instrucción de la forma LD r 1, r 2 es una copia de registro a
+registro, en la cual se copia el contenido del registro r 2 al registro r 1.
+• Operaciones de almacenamiento: La instrucción ST x, r almacena el valor que hay en el
+registro r y lo coloca en la ubicación x. Esta instrucción denota la asignación x = r.
+• Operaciones de cálculo de la forma OP dst, orig 1, orig 2, en donde OP es un operador como
+ADD o SUB, y dst, orig 1 y orig 2 son ubicaciones, no necesariamente distintas. El efecto de
+esta instrucción de máquina es aplicar la operación representada por OP a los valores en
+las ubicaciones orig 1 y orig 2, y colocar el resultado de esta operación en la ubicación dst.
+Por ejemplo, SUB r 1, r 2, r 3 calcula r 1 = r 2 − r 3. Cualquier valor que haya estado almace-
+nado en r 1 se pierde, pero si r 1 es r 2 o r 3, el valor anterior se lee primero. Los operadores
+unarios que sólo reciben un operando no tienen orig 2.8.2 El lenguaje destino
+513
+• Saltos incondicionales: La instrucción BR L provoca que el control se bifurque hacia la
+instrucción de máquina con la etiqueta L. (BR significa bifurcación.)
+• Saltos condicionales de la forma Bcond r, L, en donde r es un registro, L una etiqueta y
+cond representa a cualquiera de las evaluaciones comunes sobre los valores del registro r.
+Por ejemplo, BLTZ r, L produce un salto a la etiqueta L si el valor en el registro r es menor
+que cero, y permite que el control pase a la siguiente instrucción de máquina si no es así.
+Vamos a suponer que nuestra máquina destino tiene una variedad de modos de direccio-
+namiento:
+• En las instrucciones, una ubicación puede ser el nombre de una variable x que haga refe-
+rencia a la ubicación de memoria que está reservada para x (es decir, el valor l de x ).
+• Una ubicación también puede ser una dirección indexada de la forma a (r ), en donde a
+es una variable y r un registro. La ubicación de memoria denotada por a (r ) se calcula
+tomando el valor l de a y sumándolo al valor en el registro r. Por ejemplo, la instrucción
+LD R1,a(R2) tiene el efecto de establecer R1 = contenido (a + contenido (R2)), en donde
+contenido (x ) denota el contenido del registro o la ubicación de memoria representada
+por x. Este modo de direccionamiento es útil para acceder a los arreglos, en donde a es
+la dirección base del arreglo (es decir, la dirección del primer elemento) y r contiene el
+número de bytes después de esa dirección que deseamos avanzar para llegar a uno de los
+elementos del arreglo a.
+• Una ubicación de memoria puede ser un entero indexado por un registro. Por ejemplo,
+LD R1, 100(R2) tiene el efecto de establecer R1 = contenido (100 + contenido (R2)); es
+decir, carga en R1 el valor que hay en la ubicación de memoria que se obtiene al sumar
+100 al contenido del registro R2. Esta característica es útil para seguir apuntadores, como
+veremos en el ejemplo que viene a continuación.
+• También permitimos dos modos de direccionamiento indirecto: *r significa que la ubi-
+cación de memoria que se encuentra en la ubicación representada por el contenido del
+registro r, y *100(r ) indica la ubicación de memoria que se encuentra en la ubicación que
+se obtiene al sumar 100 al contenido de r. Por ejemplo, LD R1, *100(R2) tiene el efecto
+de establecer R1 = contenido (contenido (100 + contenido (R2))); es decir, carga en R1 el
+valor que hay en la ubicación de memoria almacenada en la ubicación de memoria que se
+obtiene al sumar 100 al contenido del registro R2.
+• Por último, permitimos un modo de direccionamiento constante inmediato. La constante
+lleva el prefijo #. La instrucción LD R1, #100 carga el entero 100 en el registro R1, y ADD
+R1,R1,#100 carga el entero 100 en el registro R1.
+Los comentarios al final de las instrucciones van precedidos por //.
+Ejemplo 8.2: La instrucción de tres direcciones x = y − z puede implementarse mediante
+las siguientes instrucciones de máquina:514
+Capítulo 8. Generación de código
+LD R1, y
+LD R2, z
+SUB R1, R1, R2
+ST x, R1
+// R1 = y
+// R2 = z
+// R1 = R1 − R2
+// x = R1
+Tal vez podamos hacerlo mejor. Una de las metas de un buen algoritmo de generación de
+código es evitar el uso de estas cuatro instrucciones, siempre que sea posible. Por ejemplo, y
+y z podrían calcularse en un registro, para así evitar el (los) paso (s) con LD. De igual forma,
+podríamos evitar almacenar x si su valor se utiliza dentro del conjunto de registros y no se
+necesita posteriormente.
+Suponga que a es un arreglo cuyos elementos son valores de 8 bytes, tal vez números reales.
+Suponga además que los elementos de a se indexan empezando en 0. Podemos ejecutar la ins-
+trucción de tres direcciones b = a[i] mediante las siguientes instrucciones de máquina:
+LD R1, i
+MUL R1, R1, 8
+LD R2, a(R1)
+ST b, R2
+// R1 = i
+// R1 = R1 * 8
+// R2 = contenido(a + contenido(R1))
+// b = R2
+Es decir, el segundo paso calcula 8i, y el tercer paso coloca en el registro R2 el valor en el i-ési-
+mo elemento de a; el que se encuentra en la ubicación que está 8i bytes después de la dirección
+base del arreglo a.
+De manera similar, la asignación en el arreglo a, representada por la instrucción de tres direc-
+ciones a[j] = c, se implementa mediante:
+LD R1, c
+LD R2, j
+MUL R2, R2, 8
+ST a(R2), R1
+// R1 = c
+// R2 = j
+// R2 = R2 * 8
+// contenido(a + contenido(R2)) = R1
+Para implementar una indirección simple de un apuntador, como la instrucción de tres
+direcciones x = *p, podemos usar instrucciones de máquina como:
+LD
+LD
+ST
+R1, p
+R2, 0(R1)
+x, R2
+// R1 = p
+// R2 = contenido(0 + contenido(R1))
+// x = R2
+La asignación a través de un apuntador *p = y se implementa de manera similar en código
+máquina, mediante:
+LD
+LD
+ST
+R1, p
+R2, y
+0(R1), R2
+// R1 = p
+// R2 = y
+// contenido(0 + contenido(R1)) = R2515
+8.2 El lenguaje destino
+Por último, considere una instrucción de tres direcciones de salto condicional como:
+if x < y goto L
+El equivalente en código máquina sería algo como:
+LD
+R1, x
+LD
+R2, y
+SUB R1, R1, R2
+BLTZ R1, M
+// R1 = x
+// R2 = y
+// R1 = R1 − R2
+// if R1 < 0 salta a M
+Aquí, M es la etiqueta que representa a la primera instrucción de máquina generada a partir de
+la instrucción de tres direcciones que tiene la etiqueta L. Al igual que para cualquier instrucción
+de tres direcciones, esperamos poder ahorrarnos algunas de estas instrucciones de máquina, de-
+bido a que las operaciones necesarias ya se encuentran en los registros, o porque el resultado
+no debe almacenarse.
+2
+8.2.2
+Costos del programa y las instrucciones
+A menudo asociamos un costo con la compilación y la ejecución de un programa. Dependiendo
+del aspecto del programa que nos interese optimizar, algunas medidas de costos comunes son
+la longitud del tiempo de compilación y el tamaño, el tiempo de ejecución y el consumo de
+energía del programa de destino.
+La determinación del costo actual de compilar y ejecutar un programa es un problema com-
+plejo. Buscar un programa destino óptimo para un programa fuente dado es un problema indeci-
+dible, y muchos de los subproblemas involucrados son NP-hard. Como hemos indicado antes, en
+la generación de código debemos a menudo contentarnos con las técnicas de heurística que pro-
+ducen buenos programas destino, pero que no necesariamente son óptimos.
+Durante el resto de este capítulo, vamos a suponer que cada instrucción en lenguaje destino
+tiene un costo asociado. Por simplicidad, consideraremos que el costo de una instrucción será
+de uno más los costos asociados con los modos de direccionamiento de los operandos. Este costo
+corresponde a la longitud en palabras de la instrucción. Los modos de direccionamiento que
+implican el uso de registros tienen un costo adicional de cero, mientras que los que implican el
+uso de una ubicación de memoria o constante tienen un costo adicional de uno, ya que dichos
+operandos tienen que almacenarse en las palabras que van después de la instrucción. He aquí
+algunos ejemplos:
+• La instrucción LD R0, R1 copia el contenido del registro R1 al registro R0. Esta instruc-
+ción tiene un costo de uno, ya que no se requieren palabras adicionales de memoria.
+• La instrucción LD R0, M carga el contenido de la ubicación de memoria M al registro R0.
+El costo es de dos, ya que la dirección de la ubicación de memoria M está en la palabra
+que va después de la instrucción.
+• La instrucción LD R1, *100(R2) carga al registro R1 el valor proporcionado por conteni-
+do (contenido (100 + contenido (R2))). El costo es de tres, debido a que la constante 100
+se almacena en la palabra que va después de la instrucción.516
+Capítulo 8. Generación de código
+En este capítulo vamos a suponer que el costo de un programa en lenguaje destino, dada
+cierta entrada, es la suma de los costos de las instrucciones individuales que se ejecutan cuando
+el programa se ejecuta sobre esa entrada. Los buenos algoritmos de generación de código bus-
+can disminuir al mínimo la suma de los costos de las instrucciones ejecutadas por el programa
+destino que se genera sobre las entradas ordinarias. Más adelante veremos que en algunos casos,
+podemos realmente generar código óptimo para las expresiones en ciertas clases de máquinas
+de registro.
+8.2.3
+Ejercicios para la sección 8.2
+Ejercicio 8.2.1: Genere el código para las siguientes instrucciones de tres direcciones, supo-
+niendo que todas las variables se almacenan en ubicaciones de memoria.
+a) x = 1
+b) x = a
+c) x = a + 1
+d) x = a + b
+e) Las siguientes dos instrucciones:
+x = b * c
+y = a + x
+Ejercicio 8.2.2: Genere el código para las siguientes instrucciones de tres direcciones, su-
+poniendo que a y b son arreglos cuyos elementos son valores de 4 bytes.
+a) La siguiente secuencia de cuatro instrucciones:
+x = a[i]
+y = b[j]
+a[i] = y
+b[j] = x
+b) La siguiente secuencia de tres instrucciones:
+x = a[i]
+y = b[i]
+z = x * y
+c) La siguiente secuencia de tres direcciones:
+x = a[i]
+y = b[x]
+a[i] = y8.2 El lenguaje destino
+517
+Ejercicio 8.2.3: Genere el código para la siguiente secuencia de tres direcciones, suponiendo
+que p y q se encuentran en ubicaciones de memoria:
+Ejercicio 8.2.4: Genere el código para la siguiente secuencia, suponiendo que x, y y z se en-
+cuentran en ubicaciones de memoria:
+Ejercicio 8.2.5: Genere el código para la siguiente secuencia, suponiendo que n está en una
+ubicación de memoria:
+Ejercicio 8.2.6: Determine los costos de las siguientes secuencias de instrucciones:518
+8.3
+Capítulo 8. Generación de código
+Direcciones en el código destino
+En esta sección le mostraremos cómo pueden convertirse los nombres en la representación inter-
+media en direcciones en el código destino, analizando la generación de código para las llamadas
+simples a procedimientos y sus retornos, mediante el uso de la asignación estática y de pila. En
+la sección 7.1 describimos la forma en que cada programa se ejecuta en su propio espacio de
+direcciones lógicas, que se particionaba en cuatro áreas de código y cuatro de datos:
+1. Un área de Código determinada en forma estática, la cual contiene el código destino eje-
+cutable. El tamaño del código destino se puede determinar en tiempo de compilación.
+2. Un área de datos Estática determinada en forma estática, para contener constantes glo-
+bales y demás datos que genera el compilador. El tamaño de las constantes globales y de
+los datos del compilador también puede determinarse en tiempo de compilación.
+3. Un área Montículo administrada en forma dinámica, para contener objetos de datos que
+se asignan y se liberan durante la ejecución del programa. El tamaño del Montículo no
+puede determinarse en tiempo de compilación.
+4. Un área Pila administrada en forma dinámica, para contener los registros de activación
+a medida que se crean y se destruyen, durante las llamadas a los procedimientos y sus
+retornos. Al igual que el Montículo, el tamaño de la Pila no puede determinarse en tiem-
+po de compilación.
+8.3.1
+Asignación estática
+Para ilustrar la generación de código para las llamadas y retornos simplificados de procedimien-
+tos, vamos a enfocarnos en las siguientes instrucciones de tres direcciones:
+• call receptor
+• return
+• halt
+• action, que es un receptáculo para otras instrucciones de tres direcciones.
+El tamaño y la distribución de los registros de activación se determinan mediante el generador
+de código, a través de la información de los nombres almacenados en la tabla de símbolos. Prime-
+ro vamos a ilustrar cómo almacenar la dirección de retorno en un registro de activación durante8.3 Direcciones en el código destino
+519
+la llamada a un procedimiento, y cómo devolverle el control después de la llamada. Por conve-
+niencia, asumiremos que la primera ubicación en la activación contiene la dirección de retorno.
+Primero vamos a considerar el código necesario para implementar el caso más simple, la asig-
+nación estática. Aquí, una instrucción call receptor en el código intermedio puede implementarse
+mediante una secuencia de dos instrucciones de máquina destino:
+ST
+BR
+receptor.areaEstatica, #aqui + 20
+receptor.areaCodigo
+La instrucción ST guarda la dirección de retorno al principio del registro de activación para
+receptor, y la instrucción BR transfiere el control al código de destino para el procedimiento recep-
+tor al que se llamó. El atributo antes de receptor.areaEstatica es una constante que proporciona
+la dirección del inicio del registro de activación para receptor, y el atributo receptor.areaCodigo es
+una constante que se refiere a la dirección de la primera instrucción del procedimiento receptor al
+que se llamó en el área Código de la memoria en tiempo de ejecución.
+El operando #aqui + 20 en la instrucción ST es la dirección de retorno literal; es la dirección
+de la instrucción que sigue después de la instrucción BR. Suponemos que #aqui es la dirección de la
+instrucción actual, y que las tres constantes más las dos instrucciones en la secuencia de llama-
+da tienen una longitud de 5 palabras, o 20 bytes.
+El código para un procedimiento termina con un retorno al procedimiento que hizo la
+llamada, sólo que el primer procedimiento no tiene emisor, por lo que su instrucción final es
+HALT, la cual devuelve el control al sistema operativo. Una instrucción return receptor puede
+implementarse mediante una instrucción simple de salto:
+BR
+*receptor.areaEstatica
+la cual transfiere el control a la dirección guardada al principio del registro de activación para
+receptor.
+Ejemplo 8.3: Suponga que tenemos el siguiente código de tres direcciones:
+// código para c
+action 1
+call p
+action 2
+halt
+// código para p
+action 3
+return
+La figura 8.4 muestra el programa destino para este código de tres direcciones. Usamos la
+seudoinstrucción ACTION para representar la secuencia de instrucciones de máquina que van a
+ejecutar la instrucción action, que representa el código de tres direcciones que no es relevante
+para esta discusión. Empezamos de manera arbitraria el código para el procedimiento c en la
+dirección 100, y para el procedimiento p en la dirección 200. Suponemos que cada instrucción
+ACTION requiere 20 bytes. Además, suponemos que los registros de activación para estos proce-
+dimientos se asignación de manera estática en las ubicaciones 300 y 364, respectivamente.
+Las instrucciones que empiezan en la dirección 100 implementan a las siguientes instrucciones:520
+Capítulo 8. Generación de código
+action 1; call p; action 2; halt
+del primer procedimiento c. Por lo tanto, la ejecución empieza con la instrucción ACTION 1 en
+la dirección 100. La instrucción ST en la dirección 120 guarda la dirección de retorno 140 en el
+campo de estado de la máquina, que es la primera palabra en el registro de activación de p. La
+instrucción BR en la dirección 132 transfiere el control a la primera instrucción en el código de
+destino del procedimiento p que se llamó.
+100:
+120:
+132:
+140:
+160:ACTION 1
+ST 364, #140
+BR 200
+ACTION 2
+HALT
+...
+200:
+220:ACTION 3
+BR *364
+...
+300:
+304:
+...
+364:
+368:
+// código para c
+// código para action 1
+// guarda la dirección de retorno 140 en la ubicación 364
+// llama a p
+// regresa al sistema operativo
+// código para p
+// regresa a la dirección guardada en la ubicación 364
+// 300-363 contienen el registro de activación para c
+// dirección de retorno
+// datos locales para c
+// 364-451 contienen el registro de activación para p
+// dirección de retorno
+// datos locales para p
+Figura 8.4: Código destino para la asignación estática
+Después de ejecutar ACTION3, se ejecuta la instrucción de salto en la ubicación 220. Como
+la ubicación 140 se guardó en la dirección 364 mediante la secuencia de llamada anterior, *364
+representa 140 cuando se ejecuta la instrucción BR en la dirección 220. Por lo tanto, cuando
+termina el procedimiento p, el control regresa a la dirección 140 y se reanuda la ejecución del
+procedimiento c.
+2
+8.3.2
+Asignación de pila
+La asignación estática se puede convertir en asignación de pila mediante el uso de direcciones
+relativas para el almacenamiento en los registros de activación. Sin embargo, en la asignación
+de pila la posición de un registro de activación para un procedimiento no se conoce sino hasta
+el tiempo de ejecución. Por lo general, esta posición se almacena en un registro, por lo que se
+puede acceder a las palabras en el registro de activación como desplazamientos a partir del
+valor en este registro. El modo de direccionamiento indexado para nuestra máquina destino es
+conveniente para este fin.
+Las direcciones relativas en un registro de activación pueden tomarse como desplazamientos
+a partir de cualquier posición conocida en el registro de activación, como vimos en el capítulo 7.521
+8.3 Direcciones en el código destino
+Por conveniencia, vamos a usar desplazamientos positivos, manteniendo en un registro SP un
+apuntador al inicio del registro de activación en la parte superior de la pila. Cuando ocurre una
+llamada a un procedimiento, el procedimiento que llama incrementa a SP y transfiere el control
+al procedimiento al que llamó. Una vez que el control regresa al emisor, decrementamos SP, con
+lo cual se desasigna el registro de activación del procedimiento al que se llamó.
+El código para el primer procedimiento inicializa la pila, estableciendo SP al inicio del área
+de la pila en la memoria:
+LD
+SP, #inicioPila
+código para el primer procedimiento
+HALT
+// inicializa la pila
+// termina la ejecución
+La secuencia de la llamada a un procedimiento incrementa a SP, guarda la dirección de retorno
+y transfiere el control al procedimiento al que se llamó:
+ADD
+ST
+BR
+SP, SP, #emisor.tamRegistro
+*SP, #aqui + 16
+receptor.areaCodigo
+// incrementa el apuntador de la pila
+// guarda la dirección de retorno
+// regresa al emisor
+El operando #emisor.tamRegistro representa el tamaño de un registro de activación, por lo
+que la instrucción ADD hace que SP apunte al siguiente registro de activación. El operando #aqui
++ 16 en la instrucción ST es la dirección de la instrucción que va después de BR; se guarda en
+la dirección a la que apunta SP.
+La secuencia de retorno consiste en dos partes. El procedimiento al que se llamó transfiere
+el control a la dirección de retorno, usando lo siguiente:
+BR
+*0(SP)
+// regresa al emisor
+La razón de usar *0(SP) en la instrucción BR es que necesitamos dos niveles de indirección:
+0(SP) es la dirección de la primera palabra en el registro de activación, y *0(SP) es la dirección
+de retorno que está guardada ahí.
+La segunda parte de la secuencia de retorno está en el emisor, el cual decrementa a SP, con
+lo cual SP se restaura a su valor anterior. Es decir, después de la resta SP apunta al inicio del
+registro de activación del emisor:
+SUB
+SP, SP, #emisor.tamRegistro
+// decrementa el apuntador de la pila
+El capítulo 7 contiene una explicación más amplia sobre las secuencias de las llamadas y las
+concesiones que se deben hacer en la división de la labor entre el procedimiento que llama y el
+procedimiento al que se llamó.
+Ejemplo 8.4: El programa en la figura 8.5 es una abstracción del programa quicksort del ca-
+pítulo anterior. El procedimiento q es recursivo, por lo que puede haber más de una activación
+de q viva al mismo tiempo.
+Suponga que los tamaños de los registros de activación para los procedimientos m, p y q se han
+determinado como mtam, ptam y qtam, respectivamente. La primera palabra en cada registro de522
+Capítulo 8. Generación de código
+// código para m
+action 1
+call q
+action 2
+halt
+// código para p
+action 3
+return
+// código para q
+action 4
+call p
+action 5
+call q
+action 6
+call q
+return
+Figura 8.5: Código para el ejemplo 8.4
+activación guardará una dirección de retorno. Suponemos en forma arbitraria que el código para
+estos procedimientos empieza en las direcciones 100, 200 y 300, respectivamente, y que la pila em-
+pieza en la dirección 600. El programa destino se muestra en la figura 8.6.
+Vamos a suponer que ACTION4 contiene un salto condicional a la dirección 456 de la se-
+cuencia de retorno de q; de no ser así, el procedimiento recursivo q se condena a llamarse a sí
+mismo por siempre.
+Si mtam, ptam y qtam son 20, 40 y 60, respectivamente, la primera instrucción en la dirección
+100 inicializa SP a 600, la dirección inicial de la pila. SP contiene 620 justo antes que el control
+se transfiera de m a q, ya que mtam es 20. Más adelante, cuando q llama a p, la instrucción en
+la dirección 320 incrementa SP a 680, en donde empieza el registro de activación para p; SP se
+regresa a 620 después de que el control regresa a q. Si las dos siguientes llamadas de q regresan
+de inmediato, el valor máximo de SP durante esta ejecución es de 680. Sin embargo, observe
+que la última ubicación de la pila que se utiliza es 739, ya que el registro de activación de q que
+empieza en la ubicación 680 se extiende 60 bytes. 2
+8.3.3
+Direcciones para los nombres en tiempo de ejecución
+La estrategia de asignación de almacenamiento y la distribución de los datos locales en un
+registro de activación para un procedimiento son los que determinan cómo se accede al alma-
+cenamiento para los nombres. En el capítulo 6, asumimos que un nombre en una instrucción
+de tres direcciones es en realidad un apuntador a una entrada en la tabla de símbolos para ese
+nombre. Este método tiene una ventaja considerable; hace que el compilador sea más portable,
+ya que el front-end no tiene que modificarse, ni siquiera cuando el compilador se mueve a una
+máquina distinta, en donde se requiere una organización distinta en tiempo de ejecución. Por
+otro lado, la acción de generar la secuencia específica de pasos de acceso mientras se genera el
+código intermedio puede representar una ventaja considerable en un compilador optimizador,523
+8.3 Direcciones en el código destino
+100:
+108:
+128:
+136:
+144:
+152:
+160:
+180:LD SP, #600
+ACTION 1
+ADD SP, SP, #mtam
+ST *SP, #152
+BR 300
+SUB SP, SP, #mtam
+ACTION 2
+HALT
+...
+200:
+220:ACTION 3
+BR *0(SP)
+...
+300:
+320:
+328:
+336:
+344:
+352:
+372:
+380:
+388:
+396:
+404:
+424:
+432:
+440:
+448:
+456:ACTION 4
+ADD SP, SP, #qtam
+ST *SP, #344
+BR 200
+SUB SP, SP, #qtam
+ACTION 5
+ADD SP, SP #qtam
+BR *SP, #396
+BR 300
+SUB SP, SP, #qtam
+ACTION 6
+ADD SP, SP, #qtam
+ST *SP, #440
+BR 300
+SUB SP, SP, #qtam
+BR *0(SP)
+...
+// código para m
+// inicializa la pila
+// código para action 1
+// empieza la secuencia de llamadas
+// mete la dirección de retorno
+// llama a q
+// restaura SP
+// código para p
+600:
+// regresa
+// código para q
+// contiene un salto condicional a 456
+// mete la dirección de retorno
+// llama a p
+// mete la dirección de retorno
+// llama a q
+// mete la dirección de retorno
+// llama a q
+// regresa
+// la pila empieza aquí
+Figura 8.6: Código destino para la asignación de pila524
+Capítulo 8. Generación de código
+ya que permite al optimizador aprovechar los detalles que no vería en la instrucción simple de
+tres direcciones.
+En cualquier caso, los nombres deben sustituirse en algún momento dado por código para
+acceder a las ubicaciones de almacenamiento. Por ende, consideramos ciertas elaboraciones de
+la instrucción de copia simple de tres direcciones x = 0. Después de procesar las declaraciones
+en un procedimiento, suponga que la entrada en la tabla de símbolos para x contiene una direc-
+ción relativa 12 para x. Consideremos el caso en el que x se encuentra en un área asignación en
+forma estática, que empieza en la dirección estatica. Entonces, la verdadera dirección en tiem-
+po de ejecución de x es estatica + 12. Aunque el compilador puede determinar en un momento
+dado el valor de estatica + 12 en tiempo de compilación, tal vez no se conozca la posición del
+área estática al generar el código intermedio para acceder al nombre. En ese caso, tiene sentido
+generar un código de tres direcciones para “calcular” estatica + 12, con el entendimiento de que
+este cálculo se llevará a cabo durante la fase de generación de código, o quizá por medio del
+cargador, antes de que se ejecute el programa. Así, la asignación x = 0 se traduce en:
+estatica[12] = 0
+Si el área estática empieza en la dirección 100, el código de destino para esta instrucción es:
+LD 112, #0
+8.3.4
+Ejercicios para la sección 8.3
+Ejercicio 8.3.1: Genere el código para las siguientes instrucciones de tres direcciones, supo-
+niendo la asignación de pila en donde el registro SP apunta a la parte superior de la pila.
+call p
+call q
+return
+call r
+return
+return
+Ejercicio 8.3.2: Genere el código para las siguientes instrucciones de tres direcciones, asu-
+miendo la asignación de pila en donde el registro SP apunta a la parte superior de la pila.
+a) x = 1
+b) x = a
+c) x = a + 1
+d) x = a + b
+e) Las siguientes dos instrucciones:
+x = b * c
+y = a + x8.4 Bloques básicos y grafos de flujo
+525
+Ejercicio 8.3.3: Genere el código para las siguientes instrucciones de tres direcciones, asu-
+miendo de nuevo la asignación de pila y asumiendo que a y b son arreglos, cuyos elementos son
+valores de 4 bytes.
+a) La siguiente secuencia de cuatro instrucciones:
+x = a[i]
+y = b[j]
+a[i] = y
+b[j] = x
+b) La siguiente secuencia de tres instrucciones:
+x = a[i]
+y = b[i]
+z = x * y
+c) La siguiente secuencia de tres instrucciones:
+x = a[i]
+y = b[x]
+a[i] = y
+8.4
+Bloques básicos y grafos de flujo
+En esta sección presentaremos una representación gráfica del código intermedio, útil para
+hablar sobre la generación de código, incluso si el grafo no se construye en forma explícita
+mediante un algoritmo de generación de código. La generación de código se beneficia del con-
+texto. Podemos realizar un mejor trabajo de asignar los registros si sabemos cómo se definen
+y utilizan los valores, como veremos en la sección 8.8. Podemos realizar un mejor trabajo de
+seleccionar instrucciones si analizamos las secuencias de las instrucciones de tres direcciones,
+como veremos en la sección 8.9.
+La representación se construye de la siguiente forma:
+1. Se particiona el código intermedio en bloques básicos, los cuales son secuencias máximas
+de instrucciones consecutivas de tres direcciones, con las siguientes propiedades:
+(a) El flujo de control sólo puede entrar en el bloque básico a través de la primera ins-
+trucción en el bloque. Es decir, no hay saltos hacia la parte media del bloque.
+(b) El control saldrá del bloque sin detenerse o bifurcarse, excepto tal vez en la última
+instrucción en el bloque.
+2. Los bloques básicos se convierten en los nodos de un grafo de flujo, cuyas flechas indican
+qué bloques pueden ir después de otros.526
+Capítulo 8. Generación de código
+El efecto de las interrupciones
+La noción de que el control, una vez que llega al inicio de un bloque básico, continuará
+sin duda hasta el final, requiere un poco de consideración. Existen muchas razones por
+las que una interrupción, que no se refleje en forma explícita en el código, podría hacer
+que el control saliera del bloque, tal vez para nunca regresar. Por ejemplo, una instruc-
+ción como x = y/z parece no afectar el flujo de control, pero si z es 0, en realidad podría
+hacer que el programa abortara su ejecución.
+No debemos preocuparnos por esas posibilidades. La razón se describe a continuación.
+El propósito de construir bloques básicos es para optimizar el código. En general, cuando
+ocurre una interrupción, ésta se maneja y el control regresa a la instrucción que produjo
+la interrupción, como si el control nunca se hubiera desviado, o el programa se detiene
+con un error. En este último caso, no importa cómo hayamos optimizado el código, aun
+cuando esto dependiera de que el control llegara al final del bloque básico, ya que de
+todas formas el programa no produjo su resultado esperado.
+Desde el capítulo 9 empezaremos a hablar sobre las transformaciones en los grafos de flujo
+que convierten el código original intermedio en código intermedio “optimizado”, a partir del
+cual se puede generar un mejor código destino. El código intermedio “optimizado” se convierte
+en código de máquina usando las técnicas de generación código que se describen en este capí-
+tulo.
+8.4.1
+Bloques básicos
+Nuestra primera tarea es particionar una secuencia de instrucciones de tres direcciones en bloques
+básicos. Empezamos un nuevo bloque básico con la primera instrucción y seguimos agregando ins-
+trucciones hasta llegar a un salto, un salto condicional o una etiqueta en la siguiente instrucción.
+En la ausencia de saltos y etiquetas, el control procede en forma secuencial, de una instrucción a
+la siguiente. Esta idea se formaliza en el siguiente algoritmo.
+Algoritmo 8.5: Particionar instrucciones de tres direcciones en bloques básicos.
+ENTRADA: Una secuencia de instrucciones de tres direcciones.
+SALIDA: Una lista de los bloques básicos para la secuencia en la que cada instrucción se asig-
+na exactamente a un bloque básico.
+MÉTODO: En primer lugar, determinamos las instrucciones en el código intermedio que son
+líderes; es decir, las primeras instrucciones en algún bloque básico. La instrucción que va justo
+después del programa intermedio no se incluye como líder. Las reglas para buscar líderes son:
+1. La primera instrucción de tres direcciones en el código intermedio es líder.527
+8.4 Bloques básicos y grafos de flujo
+2. Cualquier instrucción que sea el destino de un salto condicional o incondicional es líder.
+3. Cualquier instrucción que siga justo después de un salto condicional o incondicional es
+líder.
+Así, para cada instrucción líder, su bloque básico consiste en sí misma y en todas las instruc-
+ciones hasta, pero sin incluir a la siguiente instrucción líder o el final del programa interme-
+dio. 2
+Figura 8.7: Código intermedio para establecer una matriz de 10 × 10 a una matriz de identidad
+Ejemplo 8.6: El código intermedio en la figura 8.7 convierte una matriz de 10 × 10 a en una
+matriz de identidad. Aunque no importa de dónde proviene este código, podría ser la traduc-
+ción del seudocódigo de la figura 8.8. Para generar el código intermedio, hemos asumido que los
+elementos del arreglo con valores reales ocupan 8 bytes cada uno, y que la matriz a se almacena
+en forma de orden por filas.
+for i de 1 a 10 do
+for j de 1 a 10 do
+a [i, j ] = 0.0;
+for i de 1 a 10 do
+a [i, j ] = 1.0;
+Figura 8.8: Código fuente para la figura 8.7528
+Capítulo 8. Generación de código
+En primer lugar, la instrucción 1 es líder según la regla (1) del Algoritmo 8.5. Para encontrar
+las otras instrucciones líderes, primero debemos encontrar los saltos. En este ejemplo hay tres
+saltos, todos condicionales, en las instrucciones 9, 11 y 17. Según la regla (2), los destinos de
+estos saltos son instrucciones líderes; éstas vienen siendo las instrucciones 3, 2 y 13, respecti-
+vamente. Ahora, según la regla (3), cada instrucción que va después de un salto es líder; éstas
+son las instrucciones 10 y 12. Observe que no hay ninguna instrucción después de la 17 en este
+código, pero si hubiera más código, la instrucción 18 sería también líder.
+Concluimos que las instrucciones líderes son 1, 2, 3, 10, 12 y 13. El bloque básico de cada
+líder contiene todas las instrucciones a partir de esa instrucción líder, y hasta justo antes de
+la siguiente instrucción líder. Por ende, el bloque básico de 1 sólo contiene la instrucción 1,
+para la instrucción líder 2 el bloque sólo contiene la instrucción 2. Sin embargo, la instrucción
+líder 3 tiene un bloque básico que consiste en las instrucciones de la 3 a la 9, inclusive. El
+bloque de la instrucción 10 consiste en las instrucciones 10 y 11; el bloque de la instrucción 12
+sólo contiene a la instrucción 12, y el bloque de la instrucción 13 contiene las instrucciones de
+la 13 a la 17.
+2
+8.4.2
+Información de siguiente uso
+Es esencial saber cuándo se usará el valor de una variable para generar buen código. Si el valor
+de una variable que se encuentra en un registro nunca se utilizará más adelante, entonces ese
+registro puede asignarse a otra variable.
+El uso de un nombre en una instrucción de tres direcciones se define a continuación. Supon-
+ga que la instrucción de tres direcciones i asigna un valor a x. Si la instrucción j tiene a x como
+operando, y el control puede fluir de la instrucción i hacia j a través de una ruta que no tiene
+instrucciones en las que intervenga x, entonces decimos que la instrucción j utiliza el valor de x
+calculado en la instrucción i. Además, decimos que x está viva en la instrucción i.
+Deseamos determinar para la instrucción de tres direcciones x = y + z cuáles van a ser los
+siguientes usos de x, y y z. Por el momento, no nos preocuparemos por los usos fuera del bloque
+básico que contiene esta instrucción de tres direcciones.
+Nuestro algoritmo para determinar la información sobre la vida y el siguiente uso realiza
+una pasada invertida sobre cada bloque básico. Almacenamos la información en la tabla de
+símbolos. Podemos explorar con facilidad un flujo de instrucciones de tres direcciones para
+encontrar el final de los bloques básicos, como en el Algoritmo 8.5. Ya que los procedimientos
+pueden tener efectos adicionales, asumimos por conveniencia que cada llamada a un proce-
+dimiento empieza un nuevo bloque básico.
+Algoritmo 8.7: Determinar la información sobre la vida y el uso siguiente para cada instruc-
+ción en un bloque básico.
+ENTRADA: Un bloque básico B de instrucciones de tres direcciones. Suponemos que, al prin-
+cipio, la tabla de símbolos muestra que todas las variables no temporales en B están vivas al
+salir.
+SALIDA: En cada instrucción i: x = y + z en B, adjuntamos a i la información sobre la vida
+y el siguiente uso de x, y y z.8.4 Bloques básicos y grafos de flujo
+529
+MÉTODO: Empezamos en la última instrucción en B, y exploramos en forma invertida hasta
+el inicio de B. En cada instrucción i : x = y + z en B, hacemos lo siguiente:
+1. Adjuntar a la instrucción i la información que se encuentra en ese momento en la tabla
+de símbolos, en relación con el siguiente uso y la vida de x, y y z.
+2. En la tabla de símbolos, establecer x a “no viva” y “sin siguiente uso”.
+3. En la tabla de símbolos, establecer y y z a “viva” y los siguientes usos de y y z a i.
+Aquí hemos usado a + como un símbolo que representa a cualquier operador. Si la instrucción
+de tres direcciones i es de la forma x = + y o x = y, los pasos son los mismos, sólo que igno-
+ramos z. Observe que el orden de los pasos (2) y (3) no puede intercambiarse, ya que x podría
+ser y o z.
+2
+8.4.3
+Grafos de flujo
+Una vez que un programa de código intermedio se particiona en bloques básicos, representamos
+el flujo de control entre ellos mediante un grafo de flujo. Los nodos del grafo de flujo son los
+nodos básicos. Hay una flecha del bloque B al bloque C sí, y sólo si es posible que la primera
+instrucción en el bloque C vaya justo después de la última instrucción en el bloque B. Hay dos
+formas en las que podría justificarse dicha flecha:
+• Hay un salto condicional o incondicional desde el final de B hasta el inicio de C.
+• C sigue justo después de B en el orden original de las instrucciones de tres direcciones, y
+B no termina en un salto incondicional.
+Decimos que B es un predecesor de C, y que C es un sucesor de B.
+A menudo agregamos dos nodos, conocidos como entrada y salida, los cuales no correspon-
+den a instrucciones intermedias ejecutables. Hay una flecha que va desde la entrada hasta el
+primer nodo ejecutable del grafo de flujo; es decir, al bloque básico que surge de la primera ins-
+trucción del código intermedio. Hay una flecha que va a la salida desde cualquier bloque básico
+que contenga una instrucción, que pudiera ser la última instrucción ejecutada del programa. Si
+la instrucción final del programa no es un salto incondicional, entonces el bloque que contiene la
+instrucción final del programa es un predecesor de la salida, pero también lo es cualquier blo-
+que básico que tenga un salto hacia código que no forme parte del programa.
+Ejemplo 8.8: El conjunto de bloques básicos construido en el ejemplo 8.6 produce el grafo de
+flujo de la figura 8.9. La entrada apunta al bloque básico B 1, ya que éste contiene la primera ins-
+trucción del programa. El único sucesor de B 1 es B 2, debido a que B 1 no termina en un salto
+incondicional y la instrucción líder de B 2 sigue justo después del final de B 1.
+El bloque B 3 tiene dos sucesores. Uno es el mismo B 3, ya que la instrucción líder de B 3 (la
+instrucción 3) es el destino del salto condicional al final de B 3, en la instrucción 9. El otro su-
+cesor es B 4, ya que el control puede pasar a través del salto condicional al final de B 3 y entrar
+a continuación a la instrucción líder de B 4.
+Sólo B 6 apunta a la salida del grafo de flujo, ya que la única manera de ir al código que
+sigue después del programa a partir del cual construimos el grafo de flujo es pasar a través del
+salto condicional que termina el bloque B 6.
+2530
+Capítulo 8. Generación de código
+ENTRADA
+SALIDA
+Figura 8.9: Grafo de flujo de la figura 8.7
+8.4.4
+Representación de los grafos de flujo
+En primer lugar, observe en la figura 8.9 que en el grafo de flujo, es normal sustituir los saltos
+hacia números de instrucción o etiquetas, por saltos hacia bloques básicos. Recuerde que todo
+salto condicional o incondicional va hacia la instrucción líder de algún bloque básico, y que el sal-
+to ahora hará referencia a este bloque. La razón de este cambio es que después de construir el
+grafo de flujo, es común realizar cambios considerables a las instrucciones en los diversos blo-
+ques básicos. Si los saltos fueran a instrucciones, tendríamos que corregir los destinos de éstos
+cada vez que se modificara una de las instrucciones de destino.
+Siendo grafos bastante ordinarios, los grafos de flujo pueden representarse mediante una de
+las estructuras de datos apropiadas para grafos. El contenido de los nodos (bloques básicos)
+necesita su propia representación. Podríamos representar el contenido de un nodo mediante un8.4 Bloques básicos y grafos de flujo
+531
+apuntador a la instrucción líder en el arreglo de instrucciones de tres direcciones, junto con un
+conteo del número de instrucciones, o un segundo apuntador a la última instrucción. Sin em-
+bargo, como tal vez cambiemos el número de instrucciones en un bloque básico con frecuencia,
+es probable que sea más eficiente crear una lista enlazada de instrucciones para cada bloque
+básico.
+8.4.5
+Ciclos
+Las construcciones de los lenguajes de programación, como las instrucciones while, do-while y
+for, ocasionan de manera natural el surgimiento de ciclos en los programas. Como casi cual-
+quier programa invierte la mayor parte de su tiempo en ejecutar sus ciclos, es muy importante
+para un compilador generar un buen código para los ciclos. Muchas transformaciones de código
+dependen de la identificación de los “ciclos” en un grafo de flujo. Decimos que un conjunto de
+nodos L en un grafo de flujo es un ciclo si:
+1. Hay un nodo en L llamado entrada al ciclo, con la propiedad de que ningún otro nodo en
+L tiene un predecesor fuera de L. Es decir, cada ruta desde la entrada de todo el grafo
+de flujo completo, hacia cualquier nodo en L, pasa a través de la entrada al ciclo.
+2. Cada nodo en L tiene una ruta que no está vacía, completamente dentro de L, que va
+hacia la entrada de L.
+Ejemplo 8.9: El grafo de flujo de la figura 8.9 tiene tres ciclos:
+1. B 3 por sí solo.
+2. B 6 por sí solo.
+3. {B 2, B 3, B 4 }.
+Los primeros dos son nodos individuales con una flecha que va al mismo nodo. Por ejemplo, B 3
+forma un ciclo con B 3 como su entrada. Observe que el segundo requerimiento para un ciclo es
+que haya una ruta que no esté vacía, desde B 3 hacia sí mismo. Por ende, un nodo individual
+como B 2, que no tiene una flecha B 2 → B 2, no es un ciclo, ya que no hay una ruta no vacía
+desde B 2 hacia sí mismo dentro de {B 2 }.
+El tercer ciclo, L = {B 2, B 3, B 4}, tiene a B 2 como su entrada al ciclo. Observe que entre
+estos tres nodos, sólo B 2 tiene un predecesor, B 1, que no está en L. Además, cada uno de los
+tres nodos tiene una ruta no vacía hacia B 2, que permanece dentro de L. Por ejemplo, B 2 tiene
+2
+la ruta B 2 → B 3 → B 4 → B 2.
+8.4.6
+Ejercicios para la sección 8.4
+Ejercicio 8.4.1: La figura 8.10 es un programa simple de multiplicación de matrices.
+a) Traduzca el programa en instrucciones de tres direcciones, del tipo que hemos estado
+usando en esta sección. Suponga que las entradas de las matrices son números que re-
+quieren 8 bytes, y que las matrices se almacenan en orden por filas.532
+Capítulo 8. Generación de código
+b) Construya el grafo de flujo para su código a partir de (a).
+c) Identifique los ciclos en su grafo de flujo de (b).
+Figura 8.10: Un algoritmo de multiplicación de matrices
+Ejercicio 8.4.2: La figura 8.11 es código para contar los números primos desde 2 hasta n,
+usando el método de criba en un arreglo a con un tamaño adecuado. Es decir, a[i ] es TRUE al
+final sólo si no hay un número primo ¶ī o menor, que se divida de manera uniforme entre i.
+Inicializamos todos los valores de a[i ] a TRUE y después establecemos a[ j ] a FALSE si encontra-
+mos un divisor de j.
+a) Traduzca el programa en instrucciones de tres direcciones, del tipo que hemos estado
+utilizando en esta sección. Asuma que los enteros requieren 4 bytes.
+b) Construya el grafo de flujo para su código de (a).
+c) Identifique los ciclos en su grafo de flujo de (b).
+for (i=2; i<=n; i++)
+a[i] = TRUE;
+cuenta = 0;
+s = sqrt(n);
+for (i=2; i<=s; i++)
+if (a[i]) /* se encontro que i es un numero primo */ {
+cuenta++;
+for (j=2*i; j<=n; j = j+i)
+a[j] = FALSE; /* ningun multiplo de i es primo */
+}
+Figura 8.11: Código para cribar en busca de números primos8.5 Optimización de los bloques básicos
+8.5
+533
+Optimización de los bloques básicos
+A menudo podemos obtener una considerable mejora sobre el tiempo de ejecución del código,
+con sólo realizar una optimización local dentro de cada bloque básico por sí mismo. En capítu-
+los posteriores, empezando desde el capítulo 9, cubriremos la optimización global con más deta-
+lle, en la que se analiza la forma en que fluye la información a través de los bloques básicos de
+un programa. Es un tema complejo, en el cual hay que considerar muchas técnicas distintas.
+8.5.1
+La representación en GDA de los bloques básicos
+Muchas técnicas importantes para la optimización local empiezan por transformar un bloque
+básico en un GDA (grafo dirigido acíclico; DAG, en sus siglas en inglés). En la sección 6.1.1
+presentamos el GDA como una representación para las expresiones simples. La idea se extiende
+en forma natural hasta la colección de expresiones que se crean dentro de un bloque básico.
+Construimos un GDA para bloques básicos de la siguiente manera:
+1. Hay un nodo en el GDA para cada uno de los valores iniciales de las variables que apa-
+recen en el bloque básico.
+2. Hay un nodo N asociado con cada instrucción s dentro del bloque. Los hijos de N son
+aquellos nodos que corresponden a las instrucciones que son las últimas definiciones,
+anteriores a s, de los operandos utilizados por s.
+3. El nodo N se etiqueta mediante el operador que se aplica en s, y también a N se adjunta
+la lista de variables para las cuales es la última definición dentro del bloque.
+4. Ciertos nodos se designan como nodos de salida. Éstos son los nodos cuyas variables
+están vivas al salir del bloque; es decir, sus valores pueden utilizarse después, en otro
+bloque del grafo de flujo. El cálculo de estas “variables vivas” corresponde al análisis de
+flujo global, que veremos en la sección 9.2.5.
+La representación en GDA de un bloque básico nos permite realizar varias transformaciones
+para mejora de código, en el código representado por el bloque.
+a) Podemos eliminar las subexpresiones locales comunes; es decir, las instrucciones que calcu-
+lan un valor que ya se ha calculado.
+b) Podemos eliminar el código muerto; es decir, las instrucciones que calculan un valor que
+nunca se utiliza.
+c) Podemos reordenar las instrucciones que no dependen unas de otras; dicho reorde-
+namiento puede reducir el tiempo que requiere un valor temporal para preservarse en un
+registro.
+d) Podemos aplicar leyes algebraicas para reordenar los operandos de las instrucciones de
+tres direcciones, lo cual algunas veces simplifica los cálculos.534
+8.5.2
+Capítulo 8. Generación de código
+Búsqueda de subexpresiones locales comunes
+Para detectar las subexpresiones comunes hay que observar, en el momento en el que un nue-
+vo nodo M está a punto de agregarse, si hay un nodo N existente con los mismos hijos, en el
+mismo orden y con el mismo operador. De ser así, N calcula el mismo valor que M y puede
+usarse en su lugar. Esta técnica se introdujo como el método “número de valor” para detectar
+subexpresiones comunes en la sección 6.1.1.
+Ejemplo 8.10: En la figura 8.12 se muestra un GDA para el siguiente bloque:
+a = b + c
+b = a − d
+c = b + c
+d = a − d
+Al construir el nodo para la tercera instrucción c = b + c, sabemos que el uso de b en b + c se
+refiere al nodo de la figura 8.12 etiquetado como −, ya que es la definición más reciente de b.
+Por ende, no confundimos los valores calculados en las instrucciones uno y tres.
+Figura 8.12: GDA para el bloque básico en el ejemplo 8.10
+Sin embargo, el nodo que corresponde a la cuarta instrucción d = a − d tiene el operador −
+y los nodos con las variables adjuntas a y d 0 como hijos. Como el operador y los hijos son los
+mismos que para el nodo correspondiente a la instrucción dos, no creamos este nodo, sino que
+agregamos d a la lista de definiciones para el nodo etiquetado como −.
+2
+Podría parecer que, como sólo hay tres nodos que no son hojas en el GDA de la figura 8.12,
+el bloque básico en el ejemplo 8.10 puede sustituirse mediante un bloque con sólo tres instruc-
+ciones. De hecho, si b no está viva al salir del bloque, entonces no necesitamos calcular esa
+variable, y podemos usar d para recibir el valor representado por el nodo etiquetado como −
+en la figura 8.12. Así, el bloque se convierte en:
+a = b + c
+d = a − d
+c = d + c535
+8.5 Optimización de los bloques básicos
+No obstante, si tanto b como d están vivas al salir, entonces debemos usar una cuarta ins-
+trucción para copiar el valor de una a la otra.1
+Ejemplo 8.11: Cuando buscamos subexpresiones comunes, en realidad buscamos expresiones en
+las que se garantiza que calculen el mismo valor, sin importar cómo se calcule ese valor. Por ende,
+el método del GDA ignorará el hecho de que la expresión calculada por las instrucciones primera
+y cuarta en la secuencia
+a = b + c;
+b = b − d
+c = c + d
+e = b + c
+es la misma, a saber b 0 + c 0. Es decir, aun cuando b y c cambian entre la primera y la última
+instrucción, su suma permanece igual, ya que b + c = (b − d ) + (c + d ). El GDA para esta
+secuencia se muestra en la figura 8.13, pero no exhibe subexpresiones comunes. Sin embargo,
+las identidades algebraicas que se aplican al GDA, como vimos en la sección 8.5.4, pueden ex-
+poner esta equivalencia.
+2
+Figura 8.13: GDA para el bloque básico en el ejemplo 8.11
+8.5.3
+Eliminación del código muerto
+La operación sobre GDAs que corresponde a la eliminación de código muerto se puede implemen-
+tar de la siguiente forma. Eliminamos de un GDA cualquier raíz (nodo sin ancestros) que no tenga
+variables vivas adjuntas. La aplicación repetida de esta transformación eliminará todos los nodos
+del GDA que corresponden al código muerto.
+Ejemplo 8.12: Si en la figura 8.13, a y b están vivas pero c y e no, podemos eliminar de
+inmediato la raíz etiquetada como e. Así, el nodo etiquetado como c se convierte en una raíz
+y puede eliminarse. Quedan las raíces etiquetadas como a y b, ya que cada una tiene variables
+vivas adjuntas.
+2
+1
+En general, debemos tener cuidado, al reconstruir código de los GDAs, de la forma en que elegimos los nombres
+de las variables. Si una variable x se define dos veces, o si se asigna una vez y se utiliza también el valor inicial x 0,
+entonces debemos asegurarnos de no modificar el valor de x sino hasta que hayamos efectuado todos los usos del nodo
+cuyo valor x contenía anteriormente.536
+8.5.4
+Capítulo 8. Generación de código
+El uso de identidades algebraicas
+Las identidades algebraicas representan otra clase importante de optimizaciones en los bloques
+básicos. Por ejemplo, podemos aplicar identidades aritméticas, como:
+x+0=0+x=x
+x×1=1×x=x
+x−0=x
+x/1 = x
+para eliminar los cálculos de un bloque básico.
+Otra clase de optimizaciones algebraicas incluye la reducción por fuerza local; es decir, sus-
+tituir un operador más costoso por uno más económico, como en:
+COSTOSO
+x2
+2×x
+x/2
+=
+=
+=
+ECONÓMICO
+x×x
+x+x
+x × 0.5
+El plegado de constantes es una tercera clase de optimizaciones relacionadas. Aquí evalua-
+mos las expresiones constantes en tiempo de compilación y las sustituimos por sus valores.2 Por
+lo tanto, la expresión 2 ∗ 3.14 se sustituiría por 6.28. Muchas expresiones constantes surgen en la
+práctica debido al uso frecuente de las constantes simbólicas en los programas.
+El proceso de construcción de un GDA puede ayudarnos a aplicar estas y otras transfor-
+maciones algebraicas más generales, como la conmutatividad y la asociatividad. Por ejemplo,
+suponga que el manual de referencia del lenguaje especifica que ∗ es conmutativo; es decir, x ∗y
+= y ∗ x. Antes de crear un nuevo nodo etiquetado como ∗, con un hijo izquierdo M y un hijo
+derecho N, siempre verificamos que ya exista un nodo así. No obstante, como ∗ es conmutativo,
+entonces debemos verificar que haya un nodo con el operador ∗, un hijo izquierdo N y un hijo
+derecho M.
+Algunas veces, los operadores relacionales como < y = generan subexpresiones comunes
+inesperadas. Por ejemplo, podemos probar también la condición x > y si restamos los argumen-
+tos y realizamos una evaluación sobre el conjunto de códigos de condición mediante la resta.3
+Por ende, tal vez sólo haya que generar un nodo del GDA para x − y y para x > y.
+Las leyes asociativas también podrían aplicarse para exponer subexpresiones comunes. Por
+ejemplo, si el código fuente tiene las siguientes asignaciones:
+a = b + c;
+e = c + d + b;
+podría generarse el siguiente código intermedio:
+2
+Las expresiones aritméticas deberían evaluarse de la misma forma en tiempo de compilación que en tiempo
+de ejecución. K. Thompson sugirió una solución elegante al plegado de constantes: compilar la expresión constante,
+ejecutar el código de destino ahí mismo y sustituir la expresión con el resultado. Por ende, el compilador no necesita
+contener un intérprete.
+3
+Sin embargo, la resta puede introducir desbordamientos y subdesbordamientos, mientras que una instrucción de
+comparación no lo haría.537
+8.5 Optimización de los bloques básicos
+a = b + c
+t = c + d
+e = t + b
+Si t no se necesita fuera de este bloque, podemos modificar esta secuencia así:
+a = b + c
+e = a + d
+utilizando tanto la ley asociativa como la conmutativa de +.
+El desarrollador de compiladores debería examinar con cuidado el manual de referencia del
+lenguaje, para determinar qué reordenamientos de cálculos se permiten, ya que (debido a los
+posibles desbordamientos o subdesbordamientos) la aritmética de computadora no siempre
+obedece a las identidades algebráicas de las matemáticas. Por ejemplo, el estándar de Fortran
+establece que un compilador puede evaluar cualquier expresión de manera matemática equiva-
+lente, siempre y cuando no se viole la integridad de los paréntesis. Así, un compilador puede
+evaluar x ∗ y − x ∗ z como x ∗ (y − z ), pero no puede evaluar a + (b − c ) como (a + b ) − c.
+Por lo tanto, un compilador de Fortran debe mantener el registro de la ubicación de los parén-
+tesis en las expresiones del lenguaje fuente, si va a optimizar los programas de acuerdo con la
+definición del lenguaje.
+8.5.5
+Representación de referencias a arreglos
+A primera vista, podría parecer que las instrucciones para indexar arreglos pueden tratarse
+como cualquier otro operador. Por ejemplo, considere la siguiente secuencia de instrucciones
+de tres direcciones:
+x = a[i]
+a[j] = y
+z = a[i]
+Si consideramos a a[i] como una operación en la que se involucran a e i, similar a a + i,
+entonces podría parecer que los dos usos de a[i] son una subexpresión común. En este caso,
+podríamos vernos tentados a “optimizar” mediante la sustitución de la tercera instrucción
+z = a[i] por una más simple, z = x. Sin embargo, como j podría ser igual a i, la instrucción de
+en medio puede de hecho modificar el valor de a[i]; por ende, no es legal realizar esta modi-
+ficación.
+La manera apropiada de representar los accesos a arreglos en un GDA es la siguiente:
+1. Una asignación de un arreglo como x = a[i] se representa mediante la creación de un
+nodo con el operador =[ ] y dos hijos, los cuales representan el valor inicial del arreglo,
+en este caso a 0, y el índice i. La variable x se convierte en una etiqueta de este nuevo
+nodo.
+2. Una asignación a un arreglo, como a[j] = y, se representa mediante un nuevo nodo con el
+operador [ ]= y tres hijos que representan a a 0, j y y. No hay una variable para etiquetar538
+Capítulo 8. Generación de código
+este nodo. La diferencia es que la creación de este nodo elimina a todos los nodos actua-
+les construidos, cuyo valor depende de a 0. Un nodo que se ha eliminado no puede recibir
+más etiquetas; es decir, no puede convertirse en una expresión común.
+Ejemplo 8.13: El GDA para el siguiente bloque básico:
+x = a[i]
+a[j] = y
+z = a[i]
+se muestra en la figura 8.14. Primero se crea el nodo N para x, pero cuando se crea el nodo
+etiquetado como [ ]=, N se elimina. Así, cuando se crea el nodo para z, no puede identificarse
+2
+con N y en su lugar debe crearse un nuevo nodo con los mismos operandos a 0 e i 0.
+eliminado
+Figura 8.14: El GDA para una secuencia de asignaciones de arreglos
+Ejemplo 8.14: Algunas veces, debe eliminarse un nodo aun cuando ninguno de sus hijos ten-
+ga un arreglo como a 0 en el ejemplo 8.13, como una variable adjunta. De igual forma, un nodo
+puede eliminar si tiene un descendiente que sea un arreglo, aun cuando ninguno de sus hijos
+sean nodos de arreglos. Por ejemplo, considere el siguiente código de tres direcciones:
+b = 12 + a
+x = b[i]
+b[j] = y
+Lo que está ocurriendo aquí es que, por razones de eficiencia, b se ha definido para ser una
+posición en un arreglo a. Por ejemplo, si los elementos de a son de cuatro bytes, entonces b re-
+presenta el cuarto elemento de a. Si j e i representan el mismo valor, entonces b[i] y b[j]
+representan la misma ubicación. Por lo tanto, es importante hacer que la tercera instrucción,
+b[j] = y, elimine el nodo con x como su variable adjunta. Sin embargo y como veremos en la
+figura 8.15, tanto el nodo eliminado como el nodo que realiza la eliminación tienen a a 0 como
+nieto, no como hijo.
+2539
+8.5 Optimización de los bloques básicos
+eliminado
+Figura 8.15: Un nodo que elimina el uso de un arreglo, no tiene que tener ese arreglo como hijo
+8.5.6
+Asignaciones de apuntadores y llamadas a procedimientos
+Cuando realizamos una asignación indirecta a través de un apuntador, como en las siguientes
+asignaciones:
+x = *p
+*q = y
+no sabemos a dónde apuntan p o q. En realidad, x = *p es un uso de cualquier variable, y *q = y
+es una posible asignación a cualquier variable. Como consecuencia, el operador =∗ debe aceptar
+todos los nodos que se encuentran asociados con identificadores como argumentos, lo cual es rele-
+vante para la eliminación de código muerto. Lo más importante es que el operador ∗= elimina a
+todos los demás nodos que se han construido hasta ahora en el GDA.
+Existen análisis de apuntadores globales que podríamos realizar para limitar el conjunto
+de variables que un apuntador pudiera referenciar en una posición dada en el código. Inclusive
+hasta el análisis local podría restringir el alcance de un apuntador. Por ejemplo, en la siguiente
+secuencia:
+p = &x
+*p = y
+sabemos que sólo la variable x recibe el valor de y, por lo que no necesitamos eliminar ningún
+nodo, sino el nodo al cual se adjunta x.
+Las llamadas a procedimientos se comportan en forma muy parecida a las asignaciones a
+través de los apuntadores. En la ausencia de la información de flujo de datos global, debemos
+asumir que un procedimiento utiliza e intercambia los datos a los que tiene acceso. Por ende,
+si la variable x está en el alcance de un procedimiento P, una llamada a P utiliza el nodo con
+la variable adjunta x y elimina ese nodo.
+8.5.7
+Reensamblado de los bloques básicos a partir de los GDAs
+Después de realizar todas las optimizaciones posibles mientras construimos el GDA, o mediante
+la manipulación del GDA una vez construido, podemos reconstituir el código de tres direcciones540
+Capítulo 8. Generación de código
+para el bloque básico a partir del cual creamos el GDA. Para cada nodo que tenga una o más
+variables adjuntas, construimos una instrucción de tres direcciones que calcula el valor de una
+de estas variables. Preferimos calcular el resultado en una variable que esté viva al salir del
+bloque. No obstante, si no tenemos información sobre las variables globales vivas en la cual po-
+damos trabajar, debemos suponer que todas las variables del programa (pero no las temporales
+que genera el compilador para procesar expresiones) están vivas al salir del bloque.
+Si el nodo tiene más de una variable viva adjunta, entonces tenemos que introducir ins-
+trucciones de copia para dar el valor correcto a cada una de esas variables. Algunas veces la
+eliminación global puede eliminar esas copias, si podemos arreglárnoslas para usar una de dos
+variables en vez de la otra.
+Ejemplo 8.15: Recuerde el GDA de la figura 8.12. En la explicación que sigue del ejemplo
+8.10, decidimos que si b no está viva al salir del bloque, entonces las siguientes tres instruc-
+ciones:
+a = b + c
+d = a − d
+c = d + c
+bastan para reconstruir el bloque básico. La tercera instrucción, c = d + c, debe usar d como
+un operando en vez de b, ya que el bloque optimizado nunca calcula b.
+Si tanto b como d están vivas al salir, o si no estamos seguros de si están vivas o no al salir,
+entonces debemos calcular b al igual que d. Para ello, utilizamos la siguiente secuencia:
+a = b + c
+d = a − d
+b = d
+c = d + c
+Este bloque básico es aún más eficiente que el original. Aunque el número de instrucciones es
+igual, hemos sustituido una resta por una copia, la cual tiende a ser menos costosa en la ma-
+yoría de las máquinas. Además, si realizamos un análisis global, tal vez podamos eliminar el
+uso de este cálculo de b fuera del bloque, sustituyéndolo por usos de d. En ese caso, podemos
+regresar a este bloque básico y eliminar b = d después. Por intuición, podemos eliminar esta
+copia si en cualquier lugar en el que se utilice este valor de b, d todavía contiene el mismo valor.
+Esa situación puede ser verdadera o no, dependiendo de la forma en que el programa vuelva a
+calcular a d. 2
+Al reconstruir el bloque básico a partir de un GDA, no sólo tenemos que preocuparnos acer-
+ca de qué variables se utilizan para contener los valores de los nodos del GDA; sino también
+acerca del orden en el que listamos las instrucciones que calculan los valores de los diversos
+nodos. Las reglas a recordar son:
+1. El orden de las instrucciones debe respetar el orden de los nodos en el GDA. Es decir, no
+podemos calcular el valor de un nodo, sino hasta que hayamos calculado un valor para
+cada uno de sus hijos.541
+8.5 Optimización de los bloques básicos
+2. Las asignaciones a un arreglo deben ir después de todas las asignaciones previas a, o
+evaluaciones de, el mismo arreglo, de acuerdo con el orden de estas instrucciones en el
+bloque básico original.
+3. Las evaluaciones de los elementos de los arreglos deben ir después de cualquier asigna-
+ción previa (de acuerdo con el bloque original) al mismo arreglo. La única permutación
+permitida es que dos evaluaciones del mismo arreglo pueden realizarse en cualquier or-
+den, siempre y cuando ninguna se cruce sobre una asignación a ese arreglo.
+4. Cualquier uso de una variable debe ir después de todas las llamadas a procedimientos
+previas (de acuerdo con el bloque original) o asignaciones indirectas a través de un apun-
+tador.
+5. Cualquier llamada a un procedimiento o asignación indirecta a través de un apuntador
+debe ir después de todas las evaluaciones previas (de acuerdo con el bloque original) de
+cualquier variable.
+Es decir, al reordenar el código, ninguna instrucción puede cruzar una llamada a un proce-
+dimiento o asignación a través de un apuntador, y los usos del mismo arreglo pueden cruzarse
+entre sí, sólo si ambos son accesos a arreglos, pero no asignaciones a elementos del arreglo.
+8.5.8
+Ejercicios para la sección 8.5
+Ejercicio 8.5.1: Construya el GDA para el siguiente bloque básico:
+d = b * c
+e = a + b
+b = b * c
+a = e − d
+Ejercicio 8.5.2: Simplifique el código de tres direcciones del ejercicio 8.5.1, suponiendo lo
+siguiente:
+a) Sólo a está viva al salir del bloque.
+b) a, b y c están vivas al salir del bloque.
+Ejercicio 8.5.3: Construya el bloque básico para el código en el bloque B 6 de la figura 8.9.
+No olvide incluir la comparación i ¥ 10.
+Ejercicio 8.5.4: Construya el bloque básico para el código en el bloque B 3 de la figura 8.9.
+Ejercicio 8.5.5: Extienda el Algoritmo 8.7 para procesar tres instrucciones de la forma:
+a) a[i] = b
+b) a = b[i]
+c) a = *b
+d) *a = b542
+Capítulo 8. Generación de código
+Ejercicio 8.5.6: Construya el GDA para el siguiente bloque básico:
+a[i] = b
+*p = c
+d = a[j]
+e = *p
+*p = a[i]
+suponiendo que:
+a) p puede apuntar a cualquier parte.
+b) p sólo puede apuntar a b o a d.
+! Ejercicio 8.5.7: Si un apuntador o expresión de arreglo, como a[i] o *p, se asigna y después
+se utiliza, sin la posibilidad de modificarse en el intervalo de instrucciones, podemos aprovechar
+la situación para simplificar el GDA. Por ejemplo, en el código del ejercicio 8.5.6, como p no se
+asigna entre la segunda y la cuarta instrucción, la instrucción e = *p puede sustituirse por
+e = c, sin importar hacia dónde apunta p. Modifique el algoritmo de construcción de GDAs
+para aprovechar dichas situaciones, y aplique su algoritmo al código del ejemplo 8.5.6.
+Ejercicio 8.5.8: Suponga que se forma un bloque básico a partir de las siguientes instruccio-
+nes en C:
+y = a + b + c + d + e + f;
+y = a + c + e;
+a) Proporcione las instrucciones de tres direcciones (sólo una suma por instrucción) para este
+bloque.
+b) Use las leyes asociativa y conmutativa para modificar el bloque y utilizar el menor número
+posible de instrucciones, suponiendo que tanto x como y están vivas al salir del bloque.
+8.6
+Un generador de código simple
+En esta sección vamos a considerar un algoritmo que genera código para un solo bloque bási-
+co. Considera una instrucción de tres direcciones a la vez, y lleva la cuenta de qué valores se
+encuentran en qué registros, para poder evitar la generación de operaciones de carga y alma-
+cenamiento innecesarias.
+Una de las cuestiones principales durante la generación de código es decidir cómo usar los
+registros para sacarles el máximo provecho. Hay cuatro usos principales de los registros:
+• En la mayoría de las arquitecturas de máquinas, algunos o todos los operandos de una
+operación deben estar en registros, para poder llevarla a cabo.
+• Los registros son excelentes variables temporales: lugares para guardar el resultado de una
+subexpresión mientras se evalúa una expresión más grande o, dicho en forma más general, un
+lugar para guardar una variable que se utiliza sólo dentro de un bloque básico individual.8.6 Un generador de código simple
+543
+• Los registros se utilizan para guardar valores (globales) que se calculan en un bloque bá-
+sico y se utilizan en otros bloques; por ejemplo, un índice de ciclo que se incrementa al
+pasar por el ciclo y se utiliza varias veces dentro del mismo.
+• A menudo, los registros se utilizan para ayudar con la administración del almacenamiento
+en tiempo de ejecución, por ejemplo, para administrar la pila en tiempo de ejecución,
+incluyendo el mantenimiento de los apuntadores de la pila y posiblemente los elementos
+superiores de ésta.
+Éstas son necesidades en competencia, ya que el número de registros disponibles es limitado.
+El algoritmo en esta sección supone que hay cierto conjunto de registros disponible para guardar
+los valores que se utilizan dentro del bloque. Por lo general, este conjunto de registros no incluye a
+todos los registros de la máquina, ya que algunos registros se reservan para las variables globales y
+para administrar la pila. Suponemos que el bloque básico ya se ha transformado en una secuencia
+preferida de instrucciones de tres direcciones, mediante transformaciones como la combinación de
+subexpresiones comunes. Suponemos también que para cada operador, hay exactamente una ins-
+trucción de máquina que recibe los operandos necesarios en los registros y que realiza esa operación,
+dejando el resultado en un registro. Las instrucciones de máquina son de la siguiente forma:
+• LD reg, mem
+• ST mem, reg
+• OP reg, reg, reg
+8.6.1
+Descriptores de registros y direcciones
+Nuestro algoritmo de generación de código analiza una instrucción de tres direcciones a la vez y de-
+cide qué operaciones de carga son necesarias para meter los operandos requeridos en los registros.
+Después de generar las cargas, genera la operación en sí. Más tarde, si hay necesidad de almacenar
+el resultado en una ubicación de memoria, también genera esa operación de almacenamiento.
+Para poder realizar las decisiones necesarias, requerimos una estructura de datos que nos
+indique qué variables del programa tienen actualmente su valor en un registro, y en qué regis-
+tro o registros están, si es así. También debemos saber si la ubicación de memoria para una
+variable dada tiene actualmente el valor apropiado para esa variable, ya que tal vez se haya
+calculado un nuevo valor para esa variable en un registro y todavía no se almacena. La estruc-
+tura de datos deseada tiene los siguientes descriptores:
+1. Para cada registro disponible, un descriptor de registro lleva la cuenta de los nombres de
+las variables cuyo valor actual se encuentra en ese registro. Como sólo vamos a utilizar
+los registros que estén disponibles para uso local dentro de un bloque básico, suponemos
+que al principio todos los descriptores de registro están vacíos. A medida que progrese la
+generación de código, cada registro contendrá el valor de cero o más nombres.
+2. Para cada variable del programa, un descriptor de acceso lleva la cuenta de la ubicación o
+ubicaciones en las que puede encontrarse el valor actual de esa variable. La ubicación podría
+ser un registro, una dirección de memoria, una ubicación en la pila o algún conjunto de más
+de uno de éstos. La información puede almacenarse en la entrada en la tabla de símbolos
+para ese nombre de variable.544
+8.6.2
+Capítulo 8. Generación de código
+El algoritmo de generación de código
+Una parte esencial del algoritmo es una función llamada obtenReg(I ), la cual selecciona los
+registros para cada ubicación de memoria asociada con la instrucción de tres direcciones I. La
+función obtenReg tiene acceso a los descriptores de registro y de acceso para todas las variables
+del bloque básico, y también puede tener acceso a cierta información útil del flujo de da-
+tos, como las variables que están vivas al salir del bloque. Después de presentar el algoritmo bá-
+sico, hablaremos sobre obtenReg. Aunque no conocemos el número total de registros disponibles
+para los datos locales pertenecientes a un bloque básico, suponemos que hay suficientes regis-
+tros de forma que, después de liberar a todos los registros disponibles almacenando sus valores
+en la memoria, hay suficientes registros como para realizar cualquier operación de tres direc-
+ciones.
+En una instrucción de tres direcciones como x = y + z, vamos a tratar a + como un ope-
+rador genérico y a ADD como la instrucción de máquina equivalente. Por lo tanto, no aprove-
+chamos la ley conmutativa de +. Así, al implementar la operación, el valor de y debe estar en
+el segundo registro mencionado en la instrucción ADD, nunca en el tercero. Una posible mejora
+para el algoritmo es generar código para x = y + z y para x = z + y siempre que + sea un
+operador conmutativo, y elegir la mejor secuencia de código.
+Instrucciones de máquina para las operaciones
+Para una instrucción de tres direcciones como x = y + z, haga lo siguiente:
+1. Usar obtenReg (x = y + z ) para seleccionar registros para x, y y z. Llamar a estos regis-
+tros Rx, Ry y Rz.
+2. Si y no está en Ry (de acuerdo con el descriptor de registro para Ry ), entonces generar
+una instrucción LD Ry, y , en donde y  es una de las ubicaciones de memoria para y (de
+acuerdo con el descriptor de acceso para y).
+3. De manera similar, si z no está en Rz, generar una instrucción LD Rz, z , en donde z  es
+una ubicación para z.
+4. Generar la instrucción ADD Rx, Ry, Rz.
+Instrucciones de máquina para las instrucciones de copia
+Hay un caso especial importante: una instrucción de copia de tres direcciones, de la forma x = y.
+Suponemos que obtenReg siempre elegirá el mismo registro tanto para x como para y. Si y no se
+encuentra ya en el registro Ry, entonces se genera la instrucción de máquina LD Ry, y. Si y ya
+se encontraba en Ry, no hacemos nada. Sólo es necesario ajustar la descripción de registro para
+Ry, de manera que incluya a x como una de las variables que se encuentran ahí.8.6 Un generador de código simple
+545
+Terminación del bloque básico
+Como hemos descrito el algoritmo, las variables utilizadas por el bloque pueden terminar en
+el punto en el que su única ubicación sea un registro. Si la variable es temporal y se utiliza
+sólo dentro del bloque, está bien; cuando termina el bloque, podemos olvidarnos del valor de
+la variable temporal y suponer que su registro está vacío. No obstante, si la variable está viva
+al salir del bloque, o si no sabemos qué variables están vivas al salir, entonces tenemos que
+suponer que el valor de la variable se necesita más adelante. En ese caso, para cada variable x
+cuyo descriptor de ubicación no indique que su valor se encuentra en la ubicación de memoria
+para x, debemos generar la instrucción ST x, R, en donde R es un registro en el cual el valor
+de x existe al final del bloque.
+Administración de los descriptores de registro y de dirección
+A medida que el algoritmo de generación de código genera instrucciones de carga, almacenamien-
+to y demás instrucciones de máquina, debe actualizar los descriptores de registro y de dirección.
+Las reglas para ello son:
+1. Para la instrucción LD R, x
+(a) Modificar el descriptor de registro para el registro R, de manera que sólo contenga a x.
+(b) Modificar el descriptor de dirección para x, agregando el registro R como una ubica-
+ción adicional.
+2. Para la instrucción ST x, R, modificar el descriptor de dirección para x, de manera que
+incluya su propia ubicación de memoria.
+3. Para una operación como ADD R x , Ry , R z , implementar una instrucción de tres direccio-
+nes x = y + z
+(a) Modificar el descriptor de registro para R x , de manera que sólo contenga a x.
+(b) Modificar el descriptor de dirección para x, de manera que su única ubicación sea
+R x . Observe que la ubicación de memoria para x no se encuentra ahora en el des-
+criptor de dirección para x.
+(c) Eliminar R x del descriptor de dirección de cualquier variable distinta de x.
+4. Al procesar una instrucción de copia x = y, después de generar la carga de y en el registro
+R y, si es necesario, y después de administrar los descriptores para todas las instrucciones
+de carga (de acuerdo con la regla 1):
+(a) Agregar x al descriptor de registro para Ry .
+(b) Modificar el descriptor de dirección para x, de manera que su única ubicación sea Ry .
+Ejemplo 8.16: Vamos a traducir el bloque básico que consiste en las siguientes instrucciones
+de tres direcciones:546
+Capítulo 8. Generación de código
+t = a − b
+u = a − c
+v = t + u
+a = d
+d = v + u
+Aquí suponemos que t, u y v son variables temporales, locales para el bloque, mientras que a,
+b, c y d son variables que están vivas al salir del bloque. Como no hemos hablado todavía sobre
+la forma en que podría trabajar la función obtenReg, sólo asumiremos que hay tantos registros
+como necesitemos, pero que cuando ya no se necesite el valor de un registro (por ejemplo, que
+sólo contenga un valor temporal, del cual hayan pasado ya todos los usos), entonces volvemos
+a utilizar su registro.
+En la figura 8.16 se muestra un resumen de todas las instrucciones de código máquina gene-
+radas. Esta figura también muestra los descriptores de registro y de dirección, antes y después
+de la traducción de cada instrucción de tres direcciones.
+salida
+Figura 8.16: Instrucciones generadas y los cambios en los descriptores de registro y de dirección
+Para la primera instrucción de tres direcciones, t = a − b, debemos generar tres instruccio-
+nes, ya que al principio no hay nada en un registro. Por ende, vemos que a y b se cargan en los8.6 Un generador de código simple
+547
+registros R1 y R2, y se produce el valor t en el registro R2. Observe que podemos usar R2 para t,
+ya que el valor b que estaba antes en R2 no se necesita dentro del bloque. Como se supone que
+b está viva al salir del bloque, si no se hubiera encontrado en su propia ubicación de memoria
+(como lo indica su descriptor de dirección), hubiéramos tenido que almacenar R2 en b primero.
+La decisión de hacer esto, si hubiéramos necesitado a R2, sería responsabilidad de obtenReg.
+La segunda instrucción, u = a − c, no requiere una carga de a debido a que ya se encuentra en
+el registro R1. Además, podemos usar R1 para el resultado u, ya que el valor de a, que se encontra-
+ba antes en ese registro, ya no se necesita dentro del bloque, y su valor se encuentra en su propia
+ubicación de memoria, en caso de que a se necesite fuera del bloque. Observe que modificamos el
+descriptor de dirección para a, para indicar que ya no se encuentra en R1, sino en la ubicación de
+memoria llamada a.
+La tercera instrucción, v = t + u, sólo requiere la suma. Además, podemos usar R3 para el
+resultado v, ya que el valor de c en ese registro no se necesita más dentro del bloque, y c tiene
+su valor en su propia ubicación de memoria.
+La instrucción de copia, a = d, requiere una carga de d, ya que no se encuentra en la me-
+moria. Mostramos al descriptor de registro de R2, el cual contiene a a y d. La adición de a al
+descriptor de registro es el resultado que obtenemos al procesar la instrucción de copia, y no
+el resultado de cualquier instrucción de máquina.
+La quinta instrucción, d = v + u, usa dos valores que se encuentran en registros. Como u es
+un valor temporal cuyo valor ya no se necesita, hemos optado por reutilizar su registro R1 para
+el nuevo valor de d. Observe que d ahora se encuentra sólo en R1, y no en su propia ubicación de
+memoria. Lo mismo se aplica para a, que se encuentra en R2 y no en la ubicación de memoria
+llamada a. Como resultado, necesitamos un “coda” al código de máquina para el bloque básico
+que almacena las variables a y d, que están vivas al salir, en sus ubicaciones de memoria. Mos-
+tramos éstas como las últimas dos instrucciones. 2
+8.6.3
+Diseño de la función obtenReg
+Por último, vamos a considerar cómo implementar obtenReg (I ), para una instrucción I de
+tres direcciones. Existen muchas opciones, aunque también hay ciertas prohibiciones absolutas
+contra las opciones que conducen a un código incorrecto, debido a la pérdida del valor de una
+o más variables vivas. Empezamos nuestro examen con el caso del paso de una operación, para
+el cual utilizamos de nuevo a x = y + z como ejemplo genérico. Primero, debemos elegir un
+registro para y y un registro para z. Las cuestiones son las mismas, por lo que nos concentramos
+en elegir el registro R y para y. Las reglas son las siguientes:
+1. Si y se encuentra actualmente en un registro, elija un registro que ya contenga a y como
+R y . No genere una instrucción de máquina para cargar este registro, ya que no se nece-
+sita ninguna.
+2. Si y no está en un registro, pero hay un registro vacío en ese momento, elija un registro
+como R y .
+3. El caso difícil ocurre cuando y no se encuentra en un registro, y no hay un registro va-
+cío en ese momento. Debemos elegir uno de los registros permitidos de todas formas, y
+debemos asegurarnos que sea seguro volver a utilizarlo. Suponga que R es un registro
+candidato y que v es una de las variables que el descriptor de registro para R dice que548
+Capítulo 8. Generación de código
+está en R. Tenemos que estar seguros de que el valor de v no se necesite realmente, o que
+haya alguna otra parte a la que podamos ir para obtener el valor de R. Las posibilidades
+son:
+(a) Si el descriptor de dirección para v dice que v está en alguna otra parte además de
+R, entonces estamos bien.
+(b) Si v es x, el valor calculado por la instrucción I, y x no es tampoco uno de los otros
+operandos de la instrucción I (z en este ejemplo), entonces estamos bien. La razón
+es que en este caso, sabemos que este valor de x nunca se va a volver a utilizar, por
+lo que tenemos la libertad de ignorarlo.
+(c) Por el contrario, si v no se utiliza más adelante (es decir, después de la instrucción I
+no hay más usos de v, y si v está viva al salir del bloque, entonces v se recalcula dentro
+del bloque), entonces estamos bien.
+(d) Si no estamos bien debido a uno de los dos primeros casos, entonces debemos generar
+la instrucción de almacenamiento ST v, R para colocar una copia de v en su propia
+ubicación de memoria. A esta operación se le conoce como un derrame.
+Como R puede contener diversas variables en un momento dado, repetimos los pasos
+anteriores para cada una de esas variables v. Al final, la “puntuación” de R es el numero
+de instrucciones de almacenamiento que tuvimos que generar. Elija uno de los registros
+con la puntuación más baja.
+Ahora, considere la selección del registro Rx . Las cuestiones y opciones son casi iguales que
+para y, por lo que sólo mencionaremos las diferencias.
+1. Como se va a calcular un nuevo valor de x, un registro que sólo contiene a x es siempre
+una elección aceptable para R x . Esta instrucción se aplica incluso si x es y o z, ya que
+nuestras instrucciones de máquina permiten que dos registros sean iguales en una ins-
+trucción.
+2. Si y no se utiliza después de la instrucción I, en el sentido descrito para la variable v en
+el punto (3c), y Ry contiene sólo a y después de cargarse, si es necesario, entonces R y
+también puede utilizarse como R x. Se aplica una opción similar en z y R z .
+La última cuestión a considerar de manera especial es cuando I es una instrucción de copia
+x = y. Elegimos el registro Ry como vimos antes. Después, siempre elegimos R x = Ry .
+8.6.4
+Ejercicios para la sección 8.6
+Ejercicio 8.6.1: Para cada una de las siguientes instrucciones de asignación en C:
+a) x = a + b*c;
+b) x = a/(b+c) − d*(e+f);
+c) x = a[i] + 1;8.7 Optimización de mirilla (peephole)
+549
+d) a[i] = b[c[i]];
+e) a[i][j] = b[i][k] + c[k][j];
+f) *p++ = *q++;
+genere código de tres direcciones, suponiendo que todos los elementos de los arreglos sean ente-
+ros que ocupan cuatro bytes cada uno. En las partes (d) y (e), asuma que a, b y c son constantes
+que proporcionan la ubicación de los primeros (0vo.) elementos de los arreglos con esos nombres,
+como en todos los ejemplos anteriores de los accesos a arreglos en este capítulo.
+! Ejercicio 8.6.2: Repita los incisos (d) y (e) del ejercicio 8.6.1, suponiendo que los arreglos a,
+b y c se ubican mediante los apuntadores pa, pb y pc, respectivamente, apuntando a las ubi-
+caciones de sus primeros elementos respectivamente.
+Ejercicio 8.6.3: Convierta su código de tres direcciones del ejercicio 8.6.1 en código máquina
+para el modelo de la máquina de esta sección. Puede usar todos los registros que necesite.
+Ejercicio 8.6.4: Convierta su código de tres direcciones del ejercicio 8.6.1 en código máquina,
+usando el algoritmo de generación de código simple de esta sección; suponga que hay tres regis-
+tros disponibles. Muestre los descriptores de registro y de dirección después de cada paso.
+Ejercicio 8.6.5: Repita el ejercicio 8.6.4, pero suponga que sólo hay dos registros disponibles.
+8.7
+Optimización de mirilla (peephole)
+Aunque la mayoría de los compiladores de producción producen buen código a través de un
+proceso cuidadoso de selección de instrucciones y asignación de registros, unos cuantos utilizan
+una estrategia alternativa: generan código simple y mejoran la calidad del código de destino,
+aplicando transformaciones de “optimización” al programa destino. El término “optimización”
+es un poco confuso, ya que no hay garantía de que el código resultante sea óptimo bajo ninguna
+medida matemática. Sin embargo, muchas transformaciones simples pueden mejorar en forma
+considerable el tiempo de ejecución o requerimiento de espacio del programa destino.
+Una técnica simple pero efectiva para mejorar el código destino en forma local es la optimiza-
+ción de mirilla (peephole), la cual se lleva a cabo mediante el análisis de una ventana deslizable
+de instrucciones de destino (conocida como la mirilla), y sustituyendo las secuencias de instruc-
+ciones dentro de la mirilla por una secuencia más corta o rápida, cada vez que sea posible. La
+optimización de mirilla también puede aplicarse de manera directa después de la generación de
+código, para mejorar la representación intermedia.
+La mirilla es una pequeña ventana deslizable en un programa. El código en la mirilla no
+tiene que ser contiguo, aunque algunas implementaciones lo requieren. Una característica de
+la optimización de mirilla es que cada mejora puede engendrar oportunidades para mejoras
+adicionales. En general, es necesario realizar varias pasadas a través del código fuente para550
+Capítulo 8. Generación de código
+obtener el beneficio máximo. En esta sección vamos a proporcionar los siguientes ejemplos de
+transformaciones de programas, que son característicos de las optimizaciones de mirilla:
+• Eliminación de instrucciones redundantes.
+• Optimizaciones del flujo de control.
+• Simplificaciones algebraicas.
+• Uso de características específicas de máquinas.
+8.7.1
+Eliminación de instrucciones redundantes de carga
+y almacenamiento
+Si vemos la siguiente secuencia de instrucciones:
+LD
+ST
+a, R0
+R0, a
+en un programa destino, podemos eliminar la instrucción de almacenamiento, ya que cada vez
+que se ejecute, la primera instrucción se asegurará de que el valor de a se haya cargado en el
+registro R0. Tenga en cuenta que si la instrucción de almacenamiento tuviera una etiqueta, no
+podríamos estar seguros de que la primera instrucción se ejecutara siempre antes de la segunda,
+por lo que no podríamos eliminar la instrucción de almacenamiento. Dicho de otra forma, las
+dos instrucciones tienen que estar en el mismo bloque básico para que esta transformación sea
+segura.
+Las instrucciones redundantes de carga y almacenamiento de este tipo no se generan me-
+diante el algoritmo de generación de código simple de la sección anterior. Sin embargo, un
+algoritmo de generación de código simple como el de la sección 8.1.3 puede generar secuencias
+redundantes como éstas.
+8.7.2
+Eliminación de código inalcanzable
+Otra oportunidad para la optimización de mirilla es la eliminación de instrucciones inalcan-
+zables. Una instrucción sin etiqueta que va justo después de un salto incondicional puede
+eliminarse. Esta operación se puede repetir para eliminar una secuencia de instrucciones. Por
+ejemplo, para fines de depuración, un programa extenso puede tener en su interior ciertos frag-
+mentos de código que se ejecuten sólo si una variable debug es igual a 1. En la representación
+intermedia, este código podría ser así:
+if debug == 1 goto L1
+goto L2
+L1: imprimir información de depuración
+L2:
+Una optimización de mirilla obvia es la eliminación de saltos sobre saltos. Por ende, sin
+importar cuál sea el valor de debug, la secuencia de código anterior puede sustituirse por:8.7 Optimización de mirilla (peephole)
+551
+if debug != 1 goto L2
+imprimir información de depuración
+L2:
+Si debug se establece en 0 al principio del programa, la propagación de constantes transfor-
+maría esta secuencia en:
+if 0 != 1 goto L2
+imprimir información de depuración
+L2:
+Ahora el argumento de la primera instrucción siempre se evalúa como verdadero, por lo que
+la instrucción puede sustituirse por goto L2. Así, todas las instrucciones que impriman infor-
+mación de depuración serán inalcanzables y podrán eliminarse una a la vez.
+8.7.3
+Optimizaciones del flujo de control
+Con frecuencia, los algoritmos de generación de código intermedio simples producen saltos hacia
+saltos, saltos hacia saltos condicionales, o saltos condicionales hacia saltos. Estos saltos inne-
+cesarios se pueden eliminar, ya sea en el código intermedio o en el código destino, mediante los
+siguientes tipos de optimizaciones de mirilla. Podemos sustituir la siguiente secuencia:
+goto L1
+...
+L1: goto L2
+por la secuencia:
+goto L2
+...
+L1: goto L2
+Si ahora no hay saltos a L1, entonces tal vez sea posible eliminar la instrucción L1: goto L2,
+siempre y cuando vaya precedida de un salto incondicional.
+De manera similar, la secuencia:
+if a < b goto L1
+...
+L1: goto L2
+puede sustituirse por la secuencia:
+if a < b goto L2
+...
+L1: goto L2
+Por último, suponga que sólo hay un salto hacia L1, y que L1 va precedida de un goto in-
+condicional. Entonces, la secuencia:552
+Capítulo 8. Generación de código
+goto L1
+...
+L1: if a < b goto L2
+L3:
+puede sustituirse por la secuencia:
+if a < b goto L2
+goto L3
+...
+L3:
+Mientras que el número de instrucciones en las dos secuencias sea el mismo, algunas veces
+omitimos el salto incondicional en la segunda secuencia, pero nunca en la primera. Por ende,
+la segunda secuencia es superior a la primera en tiempo de ejecución.
+8.7.4
+Simplificación algebraica y reducción por fuerza
+En la sección 8.5 hablamos sobre las identidades algebraicas que pueden utilizarse para sim-
+plificar los GDAs. Un optimizador de mirilla puede utilizar estas identidades algebraicas para
+eliminar las instrucciones de tres direcciones, como:
+x = x + 0
+o
+x = x * 1
+en la mirilla.
+De manera similar, pueden aplicarse transformaciones de reducción por fuerza a la miri-
+lla para sustituir las operaciones costosas por expresiones equivalentes más económicas en la
+máquina destino. Ciertas instrucciones de máquina son considerablemente más económicas
+que otras, y a menudo pueden usarse como casos especiales de operadores más costosos. Por
+ejemplo, x 2 es sin duda más económica de implementarse como x ∗ x que una llamada a una
+rutina de exponenciación. La multiplicación de punto flotante o división entre un exponente
+de dos es más económica de implementar que un desplazamiento. La división de punto flotan-
+te entre una constante puede aproximarse como una multiplicación por una constante, que puede
+ser más económica.
+8.7.5
+Uso de características específicas de máquina
+La máquina destino puede tener instrucciones de hardware para implementar ciertas operacio-
+nes específicas con eficiencia. La acción de detectar situaciones que permitan el uso de estas
+instrucciones puede reducir el tiempo de ejecución en forma considerable. Por ejemplo, algunas
+máquinas tienen modos de direccionamiento de autoincremento y autodecremento. Estos mo-
+dos suman o restan uno a un operando, antes o después de usar su valor. El uso de estos modos
+mejora en forma considerable la calidad del código al meter o sacar datos de una pila, como
+en el paso de parámetros. Estos modos pueden usarse también en el código para instrucciones
+como x = x + 1.8.8 Repartición y asignación de registros
+8.7.6
+553
+Ejercicios para la sección 8.7
+Ejercicio 8.7.1: Construya un algoritmo que realice la eliminación de instrucciones redundan-
+tes en una mirilla deslizable, en el código de la máquina de destino.
+Ejercicio 8.7.2: Construya un algoritmo que realice optimizaciones de control de flujo en una
+mirilla deslizable, en el código de la máquina de destino.
+Ejercicio 8.7.3: Construya un algoritmo que realice simplificaciones algebraicas simples y
+reducciones en fuerza en una mirilla deslizable, en el código de la máquina de destino.
+8.8
+Repartición y asignación de registros
+Las instrucciones que sólo utilizan operandos tipo registro son más rápidas que las que utilizan
+operandos de memoria. En las máquinas modernas, las velocidades de los procesadores son a
+menudo un orden o más de magnitud más rápidas que las velocidades de las memorias. Por lo
+tanto, la utilización eficiente de los registros es de extrema importancia para generar un buen
+código. Esta sección presenta diversas estrategias para decidir en cada punto de un programa
+qué valores deben residir en registros (repartición de registros) y en qué registro debe residir
+cada valor (asignación de registros).
+Un método para la repartición y asignación de registros es asignar valores específicos en
+el programa de destino a ciertos registros. Por ejemplo, podríamos decidir asignar direcciones
+base a un grupo de registros, cálculos aritméticos a otro, la parte superior de la pila a un re-
+gistro fijo, y así en lo sucesivo.
+Este método tiene la ventaja de que simplifica el diseño de un generador de código. Su
+desventaja es que, si se aplica con demasiado rigor, utiliza los registros en forma ineficiente; tal
+vez no se utilicen ciertos registros en partes considerables del código, mientras que se generan
+instrucciones de carga y almacenamiento innecesarias en los demás registros. No obstante, es
+razonable en la mayoría de los entornos computacionales reservar unos cuantos registros para
+los registros base, apuntadores de pila y demás, y permitir que el generador de código utilice
+el resto de los registros según sea apropiado.
+8.8.1
+Repartición global de registros
+El algoritmo de generación de código de la sección 8.6 utiliza registros para guardar valores
+durante el tiempo en que se ejecute un bloque básico individual. Sin embargo, todas las varia-
+bles vivas se almacenan al final de cada bloque. Para ahorrar varias de estas instrucciones de
+almacenamiento y sus instrucciones correspondientes de carga, podríamos hacer que se asignen
+registros a las variables que se utilizan con frecuencia y mantener esos registros consistentes en-
+tre los límites de los bloques (en forma global ). Debido a que los programas invierten la mayoría
+de su tiempo en ciclos internos, un método natural para la repartición global de registros es
+tratar de mantener un valor utilizado con frecuencia en un registro fijo, durante todo un ciclo.
+Mientras tanto, suponga que conocemos la estructura del ciclo de un grafo de flujo, y sabemos
+qué valores calculados en un bloque básico se utilizan fuera de ese bloque. El siguiente capítulo
+trata sobre las técnicas para calcular esta información.554
+Capítulo 8. Generación de código
+Una estrategia para la repartición global de registros es asignar cierto número fijo de regis-
+tros para guardar los valores más activos en cada ciclo interno. Los valores seleccionados pue-
+den ser distintos en varios ciclos. Los registros que no se hayan repartido ya pueden usarse para
+contener valores que sean locales para un bloque, como en la sección 8.6. Este método tiene la
+desventaja de que el número fijo de registros no es siempre el número correcto de registros que
+debe haber disponibles para la repartición global de los mismos. Aun así, es sencillo implemen-
+tar el método y se utilizó en Fortran H, el compilador optimizador de Fortran desarrollado por
+IBM, para las máquinas de la serie 360 a finales de la década de 1960.
+Con los primeros compiladores de C, un programador podía realizar cierta repartición de
+registros en forma explícita, mediante el uso de declaraciones de registros para mantener ciertos
+valores en registros durante la ejecución de un procedimiento. El uso juicioso de las declara-
+ciones de registros agilizó muchos programas, pero se alentó a los programadores a perfilar
+primero sus programas, para determinar los puntos clave del programa antes de realizar su
+propia repartición de registros.
+8.8.2
+Conteos de uso
+En esta sección vamos a suponer que el ahorro que se obtiene al mantener una variable x en un
+registro durante la ejecución de un ciclo L es de una unidad de costo por cada referencia a x, si
+es que x ya se encuentra en un registro. No obstante, si utilizamos el método de la sección 8.6
+para generar código para un bloque, hay una buena probabilidad de que una vez que se haya
+calculado x en el bloque, permanecerá en un registro si hay usos subsiguientes de x en ese blo-
+que. Por ende, contamos un ahorro de una unidad para cada uso de x en el ciclo L que no vaya
+precedido por una asignación a x en el mismo bloque. Por ende, si a x se le asigna un registro,
+contamos un ahorro de dos unidades por cada bloque en el ciclo L, para el cual x esté viva al
+salir y en el que a x se le asigne un valor.
+En el lado deudor, si x está viva al entrar al encabezado del ciclo, debemos cargar x en su
+registro justo antes de entrar al ciclo L. Esta carga cuesta dos unidades. De manera similar,
+para cada bloque B de salida del ciclo L, en el cual x esté viva al entrar a algún sucesor de B
+fuera de L, debemos almacenar x a un costo de dos. No obstante, si suponemos que el ciclo
+se itera muchas veces, podemos ignorar estas deudas ya que sólo ocurren una vez cada que
+entramos al ciclo. Así, una fórmula aproximada para poder obtener el beneficio de asignar un
+registro x dentro del ciclo L es:
+uso
+viva
+(8.1)
+bloques B en L
+en donde uso (x, B ) es el número de veces que se utiliza x en B antes de cualquier definición de x;
+viva (x, B) es 1 si x está viva al salir de B y se le asigna un valor en B, y viva (x, B ) es 0 en cual-
+quier otro caso. Observe que la ecuación (8.1) es aproximada, ya que no todos los bloques en un
+ciclo se ejecutan con igual frecuencia, y también porque la ecuación (8.1) se basa en la suposición
+de que un ciclo se itera muchas veces. En máquinas específicas, habría que desarrollar una fórmula
+análoga a (8.1), pero tal vez muy distinta de ella.555
+8.8 Repartición y asignación de registros
+Ejemplo 8.17: Considere los bloques básicos en el ciclo interno descrito en la figura 8.17, en
+donde se han omitido las instrucciones de salto y de salto condicional. Suponga que los regis-
+tros R0, R1 y R2 se reparten para guardar valores a lo largo del ciclo. Las variables vivas al
+entrar y al salir de cada bloque se muestran en la figura 8.17 por conveniencia, justo encima
+y debajo de cada bloque, respectivamente. Hay algunos puntos delicados acerca de las varia-
+bles vivas que trataremos en el siguiente capítulo. Por ejemplo, observe que tanto e como f
+están vivas al final de B 1, pero de éstas, sólo e está viva al entrar a B 2 y sólo f al entrar a
+B 3. En general, las variables vivas al final de un bloque son la unión de las que están vivas al
+principio de cada uno de sus bloques sucesores.
+vivas
+vivas
+Figura 8.17: Grafo de flujo de un ciclo interno
+Para evaluar la ecuación (8.1) para x = a, observamos que a está viva al salir de B 1 y se le
+asigna un valor ahí, pero no está viva al salir de B 2, B 3 o B 4. Por ende, aB en L uso (a, B ) = 2.
+Así, el valor de (8.1) para x = a es 4. Es decir, podemos ahorrar cuatro unidades de costo si
+seleccionamos a para uno de los registros globales. Los valores de (8.1) para b, c, d, e y f son
+5, 3, 6, 4 y 4, respectivamente. De este modo, podemos seleccionar a, b y d para los registros
+R0, R1 y R2, respectivamente. Usar R0 para e o f en vez de a sería otra elección con el mis-
+mo beneficio aparente. La figura 8.18 muestra el código ensamblador generado a partir de la
+figura 8.17, suponiendo que se utiliza la estrategia de la sección 8.6 para generar código para
+cada bloque. No mostramos el código generado para los saltos condicionales o incondicionales
+omitidos que terminan cada bloque en la figura 8.17 y, por lo tanto, no mostraremos el código
+generado como un solo flujo, como aparecería en la práctica.
+2556
+Capítulo 8. Generación de código
+Figura 8.18: Secuencia de código que utiliza la repartición global de registros
+8.8.3
+Asignación de registros para ciclos externos
+Ya que hemos asignado registros y generado código para los ciclos internos, podemos aplicar
+la misma idea a ciclos circundantes cada vez más grandes. Si un ciclo externo L 1 contiene un
+ciclo interno L 2, a los nombres que se les asignaron registros en L 2 no se les necesita asignar
+registros en L 1 − L 2. De manera similar, si elegimos asignar a x un registro en L 2 pero no
+en L 1, debemos cargar x al entrar a L 2 y almacenar x al salir de L 2. Dejamos como ejercicio
+para el lector la derivación de un criterio para seleccionar los nombres que se van a asignar a
+los registros en un ciclo externo L, dado que ya se han hecho elecciones para todos los ciclos
+anidados dentro de L.
+8.8.4
+Asignación de registros mediante la coloración de grafos
+Cuando se requiere un registro para un cálculo pero todos los registros disponibles están en uso,
+el contenido de uno de los registros debe almacenarse (derramarse) en una ubicación de memo-
+ria, para poder liberar un registro. La coloración de grafos es una técnica simple y sistemática
+para asinar registros y administrar los derrames de los mismos.
+En este método se utilizan dos pasadas. En la primera, se seleccionan instrucciones de la má-
+quina destino como si hubiera un número infinito de registros simbólicos; en efecto, los nombres8.8 Repartición y asignación de registros
+557
+que se utilizan en el código intermedio se convierten en los nombres de los registros, y las instruc-
+ciones de tres direcciones se convierten en instrucciones en lenguaje máquina. Si el acceso a las
+variables requiere instrucciones que utilicen apuntadores de pila, apuntadores de visualización,
+registros base o demás cantidades que ayuden al acceso, entonces asumimos que estas cantidades
+se guardan en los registros reservados para cada fin. Por lo general, su uso puede traducirse en
+forma directa a un modo de acceso para una dirección mencionada en una instrucción de máqui-
+na. Si el acceso es más complejo, debe descomponerse en varias instrucciones de máquina, y tal
+vez haya que crear un registro simbólico temporal (o varios).
+Una vez seleccionadas las instrucciones, una segunda pasada asigna los registros físicos a
+los simbólicos. El objetivo es encontrar una asignación que disminuya al mínimo el costo de los
+derrames.
+En la segunda pasada, para cada procedimiento se construye un grafo de interferencia de
+registros, en el cual los nodos son registros simbólicos y una flecha conecta a dos nodos, si uno
+está vivo en un punto en el que el otro está definido. Por ejemplo, un gráfico de interferencia
+de registros para la figura 8.17 tendría nodos para los nombres a y d. En el bloque B 1, a está
+viva en la segunda instrucción, que define a d; por lo tanto, en el gráfico habría un flanco entre
+los nodos para a y d.
+Se hace un intento por colorear el grafo de interferencia de registros usando k colores, en
+donde k es el número de registros asignables. Se dice que un grafo está coloreado si a cada nodo
+se le asigna un color de tal forma que no haya dos nodos adyacentes con el mismo color. Un
+color representa a un registro, y este color se asegura de que a dos registros simbólicos, que
+puedan interferir uno con el otro, no se les asigne el mismo registro físico.
+Aunque el problema de determinar si un grafo puede colorearse con k colores es NP-completo
+en general, por lo regular se puede utilizar la siguiente técnica heurística para realizar la coloración
+con rapidez. Suponga que un nodo n en un grafo G tiene menos de k vecinos (nodos conectados a
+n por una flecha). Elimine a n y sus flechas de G para obtener un grafo G . Una coloración con k
+colores de G  puede extenderse a una coloración con k colores de G, si se asigna a n un color que
+no se haya asignado a ninguno de sus vecinos.
+Al eliminar en forma repetida los nodos que tengan menos de k flancos del grafo de interfe-
+rencia de registros, podemos obtener el grafo vacío, en cuyo caso podemos producir una colo-
+ración con k colores para el grafo original, coloreando los nodos en el orden inverso en el que se
+eliminaron, o podemos obtener un gráfico en el cual cada nodo tenga k o más nodos adyacentes.
+En este último caso, ya no es posible realizar una coloración con k colores. En este punto, se
+derrama un nodo introduciendo código para almacenar y recargar el registro. Chaitin ha ideado
+varias heurísticas para elegir el nodo a derramar. Una regla general es evitar introducir código
+de derrame en los ciclos internos.
+8.8.5
+Ejercicios para la sección 8.8
+Ejercicio 8.8.1: Construya el grafo de interferencia de registros para el programa en la figura
+8.17.
+Ejercicio 8.8.2: Idee una estrategia de asignación de registros, suponiendo que almacenamos
+de manera automática todos los registros en la pila antes de cada llamada a un procedimiento,
+y que los restauramos después de su retorno.558
+8.9
+Capítulo 8. Generación de código
+Selección de instrucciones mediante la rescritura
+de árboles
+La selección de instrucciones puede ser una extensa tarea combinatoria, en especial en las máqui-
+nas que tienen muchos modos de direccionamiento, como las máquinas CISC, o en las máquinas
+con instrucciones de propósito especial, digamos, para el procesamiento de señales. Aun cuando
+asumimos que se proporciona el orden de evaluación y que los registros se asignan mediante un
+mecanismo separado, la selección de instrucciones (el problema de seleccionar instrucciones en el
+lenguaje destino para implementar los operadores en la representación intermedia) sigue siendo
+una extensa tarea combinatoria.
+En esta sección, manejamos la selección de instrucciones como un problema de rescritura de
+árboles. Las representaciones tipo árbol de las instrucciones destino se han utilizado de manera
+efectiva en los generadores de generadores de código, que en forma automática construyen la
+fase de selección de instrucciones de un generador de código, a partir de una especificación de
+alto nivel de la máquina destino. Podría obtenerse mejor código para algunas máquinas me-
+diante el uso de GDAs en lugar de árboles, pero la coincidencia de GDAs es más compleja que
+la coincidencia de árboles.
+8.9.1
+Esquemas de traducción de árboles
+A lo largo de esta sección, la entrada al proceso de generación de código será una secuencia
+de árboles en el nivel semántico de la máquina de destino. Los árboles son lo que podríamos
+obtener después de insertar instrucciones en tiempo de ejecución en la representación interme-
+dia, como se describe en la sección 8.3. Además, las hojas de los árboles contienen información
+acerca de los tipos de almacenamiento de sus etiquetas.
+Ejemplo 8.18: La figura 8.19 contiene un árbol para la instrucción de asignación a[i] = b + 1,
+en donde el arreglo a se almacena en la pila en tiempo de ejecución, y la variable b es global en
+la ubicación de memoria Mb. Las direcciones en tiempo de ejecución de las variables locales a e i
+se proporcionan como los desplazamientos constantes Ca y Ci de SP, el registro que contiene el
+apuntador al principio del registro de activación actual.
+La asignación para a[i] es una asignación indirecta, en la cual el valor r de la ubicación
+para a[i] se establece al valor r de la expresión b + 1. Las direcciones del arreglo a y la va-
+riable i se proporcionan agregando los valores de las constantes Ca y Ci, respectivamente, al
+contenido del registro SP. Para simplificar los cálculos de las direcciones del arreglo, asumimos
+que todos los valores son caracteres de un byte. Algunos conjuntos de instrucciones hacen
+provisiones especiales para las multiplicaciones por constantes, como 2, 4 y 8, durante los
+cálculos de las direcciones.
+En el árbol, el operador ind trata a su argumento como una dirección de memoria. Como el
+hijo izquierdo de un operador de asignación, el nodo ind proporciona la ubicación en la que se
+almacenará el valor r del lado derecho del operador de asignación. Si un argumento de a + o del
+operador ind es una ubicación de memoria o un registro, entonces se toma el contenido de esa
+ubicación de memoria o registro como valor. Las hojas en el árbol se etiquetan con atributos;
+un subíndice indica el valor del atributo. 28.9 Selección de instrucciones mediante la rescritura de árboles
+559
+Figura 8.19: Árbol de código intermedio para a[i] = b + 1
+El código destino se genera aplicando una secuencia de reglas de rescritura de árboles, para
+reducir el árbol de entrada a un solo nodo. Cada regla de rescritura de árboles tiene la siguiente
+forma:
+sustituto ← plantilla { acción }
+en donde sustituto es un solo nodo, plantilla es un árbol y acción es un fragmento de código,
+como en un esquema de traducción orientado por la sintaxis.
+A un conjunto de reglas de rescritura de árboles se le conoce como esquema de traducción
+de árboles.
+Cada regla de rescritura de árboles representa la traducción de una parte del árbol que pro-
+porciona la plantilla. La traducción consiste en una secuencia posiblemente vacía de instrucciones
+de máquina, emitida por la acción asociada con la plantilla. Las hojas de la plantilla son atribu-
+tos con subíndices, como en el árbol de entrada. Algunas veces se aplican ciertas restricciones a
+los valores de los subíndices en las plantillas; estas restricciones se especifican como predicados
+semánticos que deben cumplirse para poder decir que la plantilla tiene una coincidencia. Por
+ejemplo, un predicado podría especificar que el valor de una constante caiga en un cierto rango.
+Un esquema de traducción de árboles es una forma conveniente de representar la fase de
+selección de instrucciones de un generador de código. Como ejemplo de una regla de rescritura
+de árboles, considere la regla para la instrucción de suma, de registro a registro:
+Esta regla se utiliza de la siguiente manera. Si el árbol de entrada contiene un subárbol que
+coincide con esta plantilla de árbol, es decir, un subárbol cuya raíz esté etiquetada por el opera-
+dor + y cuyos hijos izquierdo y derecho sean cantidades en los registros i y j, entonces podemos
+sustituir ese subárbol por un solo nodo etiquetado como Ri y generar la instrucción ADD Ri,
+Ri, Rj como salida. A esta sustitución le llamamos revestimiento (tiling) del subárbol. Más de
+una plantilla puede coincidir con un subárbol en un momento dado; en breve describiremos los
+mecanismos para decidir qué regla aplicar, en casos de conflicto.
+Ejemplo 8.19: La figura 8.20 contiene reglas de rescritura de árboles para algunas instruccio-
+nes de nuestra máquina de destino. A lo largo de esta sección utilizaremos estas reglas en un560
+Capítulo 8. Generación de código
+ejemplo abierto. Las primeras dos reglas corresponden a instrucciones de carga, las siguientes
+dos para las instrucciones de almacenamiento, y el resto para las cargas y sumas indexadas.
+Observe que la regla (8) requiere que el valor de la constante sea 1. Esta condición se especifica
+mediante un predicado semántico.
+2
+8.9.2
+Generación de código mediante el revestimiento
+de un árbol de entrada
+Un esquema de traducción de árboles funciona de la siguiente manera. Dado un árbol de entra-
+da, se aplican las plantillas en las reglas de rescritura para revestir sus subárboles. Si una planti-
+lla coincide, el subárbol coincidente en el árbol de entrada se sustituye con el nodo de reemplazo
+de la regla y termina la acción asociada con la regla. Si la acción contiene una secuencia de
+instrucciones de máquina, se generan las instrucciones. Este proceso se repite hasta que el árbol
+se reduce a un solo nodo, o hasta que no haya coincidencia entre las plantillas. La secuencia de
+instrucciones de máquina generadas a medida que el árbol de entrada se reduce a un solo nodo
+constituye la salida del esquema de traducción de árboles en el árbol de entrada dado.
+El proceso de especificar un generador de código es muy similar al de usar un esquema de tra-
+ducción orientado por la sintaxis para especificar a un traductor. Escribimos un esquema de traduc-
+ción de árboles para describir el conjunto de instrucciones de una máquina destino. En la práctica es
+conveniente encontrar un esquema que genere una secuencia de instrucciones con un costo mínimo
+para cada árbol de entrada. Existen varias herramientas para ayudar a construir un generador de
+código de manera automática, a partir de un esquema de traducción de árboles.
+Ejemplo 8.20: Vamos a usar el esquema de traducción de árboles de la figura 8.20 para gene-
+rar código en el árbol de entrada de la figura 8.19. Suponga que se aplica la primera regla para
+cargar la constante Ca en el registro R0:
+La etiqueta de la hoja de más a la izquierda cambia entonces de Ca a R 0 y se genera la instruc-
+ción LD R0, #a. Ahora la séptima regla coincide con el subárbol de más a la izquierda, con la
+raíz etiquetada como +:
+Mediante esta regla, rescribimos este subárbol como un solo nodo etiquetado como R 0 y gene-
+ramos la instrucción ADD R0, R0, SP. Ahora el árbol tiene la siguiente apariencia:8.9 Selección de instrucciones mediante la rescritura de árboles
+561
+Figura 8.20: Reglas de rescritura de árboles para algunas instrucciones de la máquina destino562
+Capítulo 8. Generación de código
+En este punto, podríamos aplicar la regla (5) para reducir el subárbol:
+a un solo nodo etiquetado como R 1, por ejemplo. También podríamos usar la regla (6) para
+reducir el subárbol más grande:
+a un solo nodo etiquetado como R 0 y generar la instrucción ADD R0, R0, i(SP). Suponiendo que
+es más eficiente usar una sola instrucción para calcular el subárbol más grande, en vez del más
+pequeño, elegimos la regla (6) para obtener lo siguiente:
+En el subárbol derecho, la regla (2) se aplica a la hoja M b. Genera una instrucción para cargar
+b en el registro R1, por ejemplo. Ahora, usando la regla (8) podemos igualar el subárbol:
+y generar la instrucción de incremento INC R1. En este punto, el árbol de entrada se ha redu-
+cido a:
+Este árbol restante se iguala mediante la regla (4), la cual reduce el árbol a un solo nodo y
+genera la instrucción ST *R0, R1. Generamos la siguiente secuencia de código:
+en el proceso de reducir el árbol a un solo nodo.
+28.9 Selección de instrucciones mediante la rescritura de árboles
+563
+Para poder implementar el proceso de reducción de árboles en el ejemplo 8.18, debemos
+considerar ciertas cuestiones relacionadas con la coincidencia de patrones de árboles:
+• ¿Cómo deben coincidir los patrones de árboles? La eficiencia del proceso de generación
+de código (en tiempo de compilación) depende de la eficiencia del algoritmo para igualar
+árboles.
+• ¿Qué hacemos si más de una plantilla coincide en un momento dado? La eficiencia del có-
+digo generado (en tiempo de ejecución) puede depender del orden en el que se igualan las
+plantillas, ya que en general, distintas secuencias de coincidencias conducirán a distintas
+secuencias de código de la máquina destino, algunas más eficientes que otras.
+Si ninguna plantilla coincide, entonces el proceso de generación de código se bloquea. En el
+otro extremo, debemos protegernos contra la posibilidad de que se rescriba un solo nodo en forma
+indefinida, generando una secuencia infinita de instrucciones de movimiento de registros, o una
+secuencia infinita de instrucciones de carga y almacenamiento.
+Para evitar el bloqueo, suponemos que cada operador en el código intermedio puede im-
+plementarse mediante una o más instrucciones de la máquina destino. Además, suponemos
+que hay suficientes registros para calcular cada uno de los nodos del árbol por sí solos. Así,
+no importa cómo se dé el proceso de igualar el árbol, ya que el árbol restante siempre podrá
+traducirse en instrucciones de la máquina destino.
+8.9.3
+Coincidencias de los patrones mediante el análisis sintáctico
+Antes de considerar el proceso general de igualar árboles, consideraremos un método especia-
+lizado que utiliza un analizador sintáctico LR para buscar las coincidencias de los patrones.
+El árbol de entrada puede tratarse como una cadena, usando su representación en prefijo. Por
+ejemplo, la representación prefijo para el árbol de la figura 8.19 es:
+El esquema de traducción de árboles puede convertirse en un esquema de traducción orien-
+tado por la sintaxis, para lo cual se sustituyen las reglas de rescritura de árboles con las pro-
+ducciones de una gramática libre de contexto, en la que los lados derechos son representaciones
+prefijas de las plantillas de instrucciones.
+Ejemplo 8.21: El esquema de traducción orientado por la sintaxis en la figura 8.21 se basa
+en el esquema de traducción de árboles de la figura 8.20.
+Los no terminales de la gramática subyacente son R y M. El terminal m representa una
+ubicación en memoria específica, como la ubicación para la variable global b en el ejemplo 8.18.
+La producción M → m en la regla (10) puede considerarse como el proceso de igualar M con m,
+antes de usar una de las plantillas que involucran a M. De manera similar, introducimos el terminal
+sp para el registro SP y agregamos la producción R → SP. Por último, la terminal c representa a
+las constantes.564
+Capítulo 8. Generación de código
+Figura 8.21: Esquema de traducción orientado por la sintaxis, construido a partir de la figura
+8.20
+Usando estos terminales, la cadena para el árbol de entrada en la figura 8.19 es:
+2
+De las producciones para el esquema de traducción, construimos un analizador sintáctico LR
+usando una de las técnicas de construcción de analizadores sintácticos LR que vimos en el capítu-
+lo 4. Para generar el código destino, se genera la instrucción de máquina correspondiente a cada
+reducción.
+Por lo general, una gramática de generación de código es muy ambigua, y hay que tener cuida-
+do en la forma en que se resuelven los conflictos de acción de análisis sintáctico cuando se constru-
+ye el analizador sintáctico. En la ausencia de información sobre los costos, una regla general es dar
+preferencia a las reducciones más grandes sobre las más pequeñas. Esto significa que en un conflic-
+to de reducción-reducción, se favorece a la reducción más larga; en un conflicto de desplazamiento-
+reducción, se elige el movimiento por desplazamiento. Este método del “máximo procesado” hace
+que se realice un gran número de operaciones con una sola instrucción de máquina.
+Hay algunos beneficios en el uso del análisis sintáctico LR en la generación de código. En
+primer lugar, el método del análisis sintáctico es eficiente y bien comprendido, por lo que pueden
+producirse generadores de código confiables y eficientes mediante el uso de los algoritmos descri-
+tos en el capítulo 4. En segundo lugar, es muy sencillo redirigir el generador de código resultante;
+puede construirse un selector de código para una nueva máquina mediante la escritura de una
+gramática para describir las instrucciones de la nueva máquina. En tercer lugar, la calidad del
+código generado puede volverse eficiente al agregar producciones de casos especiales para aprove-
+char características específicas de las máquinas.
+Sin embargo, existen también algunos retos. El método de análisis sintáctico fija un orden
+de evaluación de izquierda a derecha. Además, para algunas máquinas con grandes números de
+modos de direccionamiento, la gramática de descripción de la máquina y el analizador sintác-
+tico resultante pueden aumentar de tamaño en forma desordenada. Como consecuencia, son
+necesarias técnicas especializadas para codificar y procesar las gramáticas de descripción de la
+máquina. También debemos tener cuidado en que el analizador sintáctico resultante no se blo-
+quee (que no pueda hacer más movimientos) mientras analiza un árbol de expresiones, ya sea
+debido a que la gramática no maneja algunos patrones de operadores, o porque el analizador8.9 Selección de instrucciones mediante la rescritura de árboles
+565
+sintáctico ha tomado la resolución incorrecta de algún conflicto de acción del análisis sintáctico.
+También debemos asegurarnos de que el analizador sintáctico no entre en un ciclo infinito de
+reducciones de producciones con símbolos individuales en el lado derecho. El problema de los
+ciclos puede resolverse mediante el uso de una técnica de división de estados, al mismo tiempo
+en el que se generan las tablas del analizador sintáctico.
+8.9.4
+Rutinas para la comprobación semántica
+En un esquema de traducción para la generación de código, aparecen los mismos atributos que en
+un árbol de entrada, pero a menudo con restricciones en los valores que pueden tener los subíndices.
+Por ejemplo, una instrucción de máquina puede requerir que el valor de un atributo se encuentre
+dentro de cierto rango, o que los valores de dos atributos estén relacionados.
+Estas restricciones sobre los valores de los atributos pueden especificarse como predicados
+que se invocan antes de realizar una reducción. De hecho, el uso general de acciones semánticas
+y predicados puede proporcionar una mayor flexibilidad y facilidad de descripción que una
+especificación sólo gramatical de un generador de código. Pueden utilizarse plantillas genéricas
+para representar clases de instrucciones y después pueden usarse las acciones semánticas para
+elegir instrucciones en los casos específicos. Por ejemplo, dos formas de la instrucción de suma
+pueden representarse con una plantilla:
+Los conflictos de acción del análisis sintáctico pueden resolverse mediante predicados para
+eliminar ambigüedades, los cuales pueden permitir el uso de distintas estrategias de selección
+en varios contextos. Es posible una descripción más pequeña de una máquina destino, ya que
+ciertos aspectos de la arquitectura de la máquina, como los modos de direccionamiento, pueden
+factorizarse en los atributos. La complicación en este método es que puede ser difícil verificar la
+precisión del esquema de traducción como una descripción fiel de la máquina destino, aunque
+este problema se comparte hasta cierto grado por todos los generadores de código.
+8.9.5
+Proceso general para igualar árboles
+El método de análisis sintáctico LR para la coincidencia de patrones basada en las representacio-
+nes prefijas favorece al operando izquierdo de un operador binario. En una representación prefija
+op E 1 E 2, las decisiones del análisis sintáctico LR de lectura anticipada limitada deben hacerse
+en base a cierto prefijo de E 1, ya que E 1 puede tener una longitud arbitraria. Por ende, la coin-
+cidencia de patrones puede omitir matices del conjunto de instrucciones destino que se deben a
+los operandos derechos.
+En vez de la representación prefija, podríamos usar una representación postfija. Pero, enton-
+ces un método de análisis sintáctico LR para la coincidencia de patrones favorecería al operando
+derecho.
+Para un generador de código escrito a mano podemos usar plantillas de árboles, como en la
+figura 8.20, como una guía y escribir un igualador ad hoc. Por ejemplo, si la raíz del árbol de
+entrada se etiqueta como ind, entonces el único patrón que podría coincidir es para la regla (5);566
+Capítulo 8. Generación de código
+en cualquier otro caso, si la raíz está etiquetada como +, entonces los patrones que podría coin-
+cidir son para las reglas (6-8).
+Para un generador de generadores de código, necesitamos un algoritmo general de coinciden-
+cia de árboles. Podemos desarrollar un algoritmo descendente eficiente, extendiendo las técnicas
+de coincidencia de patrones de cadenas del capítulo 3. La idea es representar cada plantilla como
+un conjunto de cadenas, en donde una cadena corresponde a una ruta de la raíz hacia una hoja
+en la plantilla. Tratamos a todos los operandos de igual forma, incluyendo el número de posición
+de un hijo, de izquierda a derecha, en las cadenas.
+Ejemplo 8.22: Para construir el conjunto de cadenas para un conjunto de instrucciones, va-
+mos a omitir los subíndices, ya que la coincidencia de patrones se basa sólo en los atributos,
+no en sus valores.
+Las plantillas de la figura 8.22 tienen el siguiente conjunto de cadenas, desde la raíz hasta
+una hoja:
+La cadena C representa a la plantilla que tiene a C en la raíz. La cadena + 1 R representa al +
+y su operando izquierdo R en las dos plantillas que tienen a + en la raíz.
+2
+Figura 8.22: Un conjunto de instrucciones para la coincidencia de árboles
+Si utilizamos conjuntos de cadenas como en el ejemplo 8.22, podemos construir un igua-
+lador de patrones de árboles mediante el uso de las técnicas para igualar con eficiencia varias
+cadenas en paralelo.
+En la práctica, el proceso de rescritura de árboles puede implementarse mediante la ejecución
+del igualador de patrones de árboles durante un recorrido en profundidad (depth-first) del árbol
+de entrada, y realizando las reducciones a medida que se visitan los nodos por última vez.
+Podemos tomar en cuenta los costos de las instrucciones, asociando con cada regla de res-
+critura de árboles el costo de la secuencia de instrucciones de máquina que se generan, si se
+aplica esa regla. En la sección 8.11 veremos un algoritmo de programación dinámica que puede
+usarse en conjunto con la coincidencia de patrones de árboles.
+Al ejecutar el algoritmo de programación dinámica en forma concurrente, podemos selec-
+cionar una secuencia óptima de coincidencias, usando la información de costos asociada con8.10 Generación de código óptimo para las expresiones
+567
+cada regla. Tal vez haya que diferir la decisión sobre una coincidencia hasta que se conozca el
+costo de todas las alternativas. Mediante el uso de este método, podemos construir con rapidez
+un generador de código eficiente y pequeño, a partir de un esquema de rescritura de árboles.
+Además, el algoritmo de programación dinámica libera al diseñador del generador de código de
+tener que resolver las coincidencias conflictivas, o decidir sobre un orden para la evaluación.
+8.9.6
+Ejercicios para la sección 8.9
+Ejercicio 8.9.1: Construya árboles sintácticos para cada una de las siguientes instrucciones,
+suponiendo que todos los operandos no constantes se encuentran en ubicaciones de memoria:
+a) x = a * b + c * d;
+b) x[i] = y[j] * z[k];
+c) x = x + 1;
+Use el esquema de rescritura de árboles de la figura 8.20 para generar el código de cada ins-
+trucción.
+Ejercicio 8.9.2: Repita el ejercicio 8.9.1 anterior, mediante el esquema de traducción orienta-
+do por la sintaxis de la figura 8.21 en vez del esquema de rescritura de árboles.
+! Ejercicio 8.9.3: Extienda el esquema de rescritura de árboles de la figura 8.20 para que se
+aplique a las instrucciones while.
+! Ejercicio 8.9.4: ¿Cómo extendería la rescritura de árboles para aplicarla a los GDAs?
+8.10
+Generación de código óptimo para las expresiones
+Podemos elegir registros de manera óptima cuando un bloque básico consiste en una sola eva-
+luación de una expresión, o si aceptamos que basta con generar código para un bloque, una
+expresión a la vez. En el siguiente algoritmo, presentamos un esquema de numeración para los
+nodos de un árbol de expresión (un árbol sintáctico para una expresión) que nos permite generar
+el código óptimo para un árbol de expresión, cuando hay un número fijo de registros con los que
+se puede evaluar la expresión.
+8.10.1
+Números de Ershov
+Empezaremos por asignar a los nodos de un árbol de expresión un número que indique cuántos
+registros se necesitan para evaluar ese nodo, sin almacenar valores temporales. A estos números se
+les llama algunas veces números de Ershov, por A. Ershov, quien utilizó un esquema similar para
+las máquinas con un solo registro aritmético. Para nuestro modelo de máquina, las reglas son:
+1. Etiquetar cualquier hoja con 1.
+2. La etiqueta de un nodo interior con un hijo es la etiqueta de su hijo.568
+Capítulo 8. Generación de código
+3. La etiqueta de un nodo interior con dos hijos es:
+(a) La más grande de las etiquetas de sus hijos, si esas etiquetas son distintas.
+(b) Uno más la etiqueta de sus hijos, si las etiquetas son iguales.
+Ejemplo 8.23: En la figura 8.23 vemos un árbol de expresión (se omitieron los operadores)
+que podría ser el árbol para la expresión (a − b ) + e × (c + d ) o el siguiente código de tres
+direcciones:
+t1 = a − b
+t2 = c + d
+t3 = e * t2
+t4 = t1 + t3
+Cada una de las cinco hojas se etiqueta como 1 mediante la regla (1). Así, podemos etiquetar
+el nodo interior para t1 = a − b, ya que ambos de sus hijos están etiquetados. La regla (3b) se
+aplica, por lo que obtiene una etiqueta más que las etiquetas de sus hijos, es decir, 2. Lo mismo
+se aplica para el nodo interior para t2 = c + d.
+Figura 8.23: Un árbol etiquetado con números de Ershov
+Ahora podemos trabajar en el nodo para t3 = e * t2. Sus hijos tienen las etiquetas 1 y 2,
+por lo que la etiqueta del nodo para t3 es la máxima, 2, según la regla (3a). Por último, la
+raíz, el nodo para t4 = t1 + t3, tiene dos hijos con la etiqueta 2 y, por lo tanto, obtiene
+la etiqueta 3.
+2
+8.10.2
+Generación de código a partir de árboles
+de expresión etiquetados
+Puede demostrarse que, en nuestro modelo de máquina, en donde todos los operandos deben
+estar en registros, y los registros pueden utilizarse tanto por un operando como por el resultado
+de una operación, la etiqueta de un nodo es la menor cantidad de registros con los que se puede
+evaluar la expresión, sin utilizar almacenamientos de resultados temporales. Como en este mo-
+delo estamos obligados a cargar cada operando y a calcular el resultado correspondiente a cada
+nodo interior, lo único que puede hacer que el código generado sea inferior al código óptimo es
+si hay almacenamientos innecesarios de valores temporales. El argumento para esta declaración
+está incrustado en el siguiente algoritmo para generar código sin almacenamientos de valores
+temporales, utilizando un número de registros igual a la etiqueta de la raíz.8.10 Generación de código óptimo para las expresiones
+569
+Algoritmo 8.24: Generación de código a partir de un árbol de expresión etiquetado.
+ENTRADA: Un árbol etiquetado con cada operando que aparece una vez (es decir, sin sub-
+expresiones comunes).
+SALIDA: Una secuencia óptima de instrucciones de máquina para evaluar la raíz y colocarla
+en un registro.
+MÉTODO: A continuación se muestra un algoritmo recursivo para generar el código máqui-
+na. Los siguientes pasos se aplican, empezando en la raíz del árbol. Si el algoritmo se aplica a
+un nodo con la etiqueta k, entonces sólo se utilizarán k registros. No obstante, hay una “base”
+b ¦ 1 para los registros utilizados, de manera que los registros actuales utilizados son R b , R b + 1,
+..., R b + k − 1. El resultado siempre aparece en R b + k − 1.
+1. Para generar código máquina para un nodo interior con la etiqueta k y dos hijos con
+etiquetas iguales (que deben ser k − 1), haga lo siguiente:
+(a) Genere código en forma recursiva para el hijo derecho, usando la base b + 1. El
+resultado del hijo derecho aparece en el registro R b + k .
+(b) Genere código en forma recursiva para el hijo izquierdo, usando la base b; el resul-
+tado aparece en R b + k − 1.
+(c) Genere la instrucción OP R b + k , R b + k − 1, R b + k , en donde OP es la operación apro-
+piada para el nodo interior en cuestión.
+2. Suponga que tenemos un nodo interior con la etiqueta k e hijos con etiquetas desiguales.
+Entonces uno de los hijos, al que llamaremos el hijo “grande”, tiene la etiqueta k, y el
+otro hijo, el hijo “pequeño”, tiene cierta etiqueta m < k. Haga lo siguiente para generar
+código para este nodo interior, usando la base b :
+(a) Genere código en forma recursiva para el hijo grande, usando la base b; el resultado
+aparece en el registro R b +k − 1.
+(b) Genere código en forma recursiva para el hijo pequeño, usando la base b; el resulta-
+do aparece en el registro R b + m − 1. Observe que como m < k, no se utiliza R b + k − 1
+ni cualquier otro registro con numeración más alta.
+(c) Genere la instrucción OP R b + k − 1, R b + m − 1, R b + k − 1 o la instrucción OP R b + k − 1,
+R b + k − 1, R b + m − 1, dependiendo de si el hijo grande es el derecho o el izquierdo,
+respectivamente.
+3. Para una hoja que represente al operando x, si la base es b genere la instrucción LD R b, x.
+2
+Ejemplo 8.25: Vamos a aplicar el Algoritmo 8.24 al árbol de la figura 8.23. Como la etiqueta
+de la raíz es 3, el resultado aparecerá en R 3 y sólo se utilizarán R 1, R 2 y R 3. La base para la
+raíz es b = 1. Como la raíz tiene hijos con etiquetas iguales, generamos código para el hijo
+derecho primero, con la base 2.570
+Capítulo 8. Generación de código
+Al generar código para el hijo derecho de la raíz, etiquetado como t3, encontramos que el
+hijo grande es el hijo derecho y que el hijo pequeño es el hijo izquierdo. Por ende, generamos
+código para el hijo derecho primero, con b = 2. Si aplicamos las reglas para hijos y hojas con
+etiquetas iguales, generamos el siguiente código para el nodo etiquetado como t 2:
+LD R3, d
+LD R2, c
+ADD R3, R2, R3
+A continuación, generamos código para el hijo izquierdo del hijo derecho de la raíz; este nodo
+es la hoja etiquetada como e. Debido a que b = 2, la instrucción apropiada es:
+LD
+R2, e
+Ahora podemos completar el código para el hijo derecho de la raíz, agregando la siguiente
+instrucción:
+MUL R3, R2, R3
+El algoritmo procede a generar código para el hijo izquierdo de la raíz, dejando el resultado en
+2
+R 2 y con la base 1. La secuencia completa de instrucciones se muestra en la figura 8.24.
+LD R3, d
+LD R2, c
+ADD R3, R2, R3
+LD R2, e
+MUL R3, R2, R3
+LD R2, b
+LD R1, a
+SUB R2, R1, R2
+ADD R3, R2, R3
+Figura 8.24: Código óptimo de tres registros para el árbol de la figura 8.23
+8.10.3
+Evaluación de expresiones con un suministro insuficiente
+de registros
+Cuando hay un número de registros disponibles menor a la etiqueta de la raíz del árbol, no
+podemos aplicar el Algoritmo 8.24 en forma directa. Debemos introducir ciertas instrucciones
+de almacenamiento que derramen los valores de los subárboles en la memoria, y después tene-
+mos que cargar esos valores de vuelta en los registros, según se vayan requiriendo. He aquí el
+algoritmo modificado que toma en cuenta una limitación sobre el número de registros.
+Algoritmo 8.26: Generación de código a partir de un árbol de expresión etiquetado.
+ENTRADA: Un árbol etiquetado, en el que cada operando aparece una vez (es decir, no hay
+subexpresiones comunes) y un número de registros r ¦ 2.8.10 Generación de código óptimo para las expresiones
+571
+SALIDA: Una secuencia óptima de instrucciones de máquina para evaluar la raíz y colocarla
+en un registro, usando no más de r registros, que suponemos son R 1, R 2,..., R r .
+MÉTODO: Aplique el siguiente algoritmo recursivo, empezando en la raíz del árbol, con la
+base b = 1. Para un nodo N con la etiqueta r o menor, el algoritmo es exactamente el mismo
+que el Algoritmo 8.24, por lo que no repetiremos aquí esos pasos. Sin embargo, para los nodos
+interiores con una etiqueta k > r, debemos trabajar en cada lado del árbol por separado y
+almacenar el resultado del subárbol más grande. Ese resultado se regresa a la memoria justo
+antes de evaluar el nodo N, y el paso final se llevará a cabo en los registros R r − 1 y R r . Las
+modificaciones al algoritmo básico son las siguientes:
+1. El nodo N tiene por lo menos un hijo con la etiqueta r o mayor. Elija el hijo más grande
+(o cualquiera si sus etiquetas son iguales) para que sea el hijo “grande” y que el otro hijo
+sea el “pequeño”.
+2. Genere código en forma recursiva para el hijo grande, usando la base b = 1. El resultado
+de esta evaluación aparecerá en el registro R r .
+3. Genere la instrucción de máquina ST t k, R r, en donde t k es una variable temporal que se
+utiliza para los resultados temporales que ayudan a evaluar los nodos con la etiqueta k.
+4. Genere código para el hijo pequeño de la siguiente forma. Si el hijo pequeño tiene la
+etiqueta r o mayor, elija la base b = 1. Si la etiqueta del hijo pequeño es j < r, entonces
+elija b = r − j. Después aplique este algoritmo en forma recursiva al hijo pequeño; el
+resultado aparece en R r .
+5. Genere la instrucción LD R r − 1, tk .
+6. Si el hijo grande es el hijo derecho de N, entonces genere la instrucción OP R r, R r, R r − 1. Si
+el hijo grande es el izquierdo, genere OP R r, R r − 1, R r .
+2
+Ejemplo 8.27: Vamos a repasar la expresión representada por la figura 8.23, pero ahora
+suponga que r = 2; es decir, sólo están disponibles los registros R1 y R2 para guardar los
+temporales usados en la evaluación de las expresiones. Al aplicar el Algoritmo 8.26 a la figura
+8.23, podemos ver que la raíz, con la etiqueta 3, tiene una etiqueta más grande que r = 2. Por
+ende, tenemos que identificar a uno de los hijos como el hijo “grande”. Como tienen etiquetas
+iguales, cualquiera puede serlo. Suponga que elegimos el hijo derecho como el hijo grande.
+Como la etiqueta del hijo grande de la raíz es 2, hay suficientes registros. Por ende, aplica-
+mos el Algoritmo 8.24 a este subárbol, con b = 1 y dos registros. El resultado es muy parecido
+al código que generamos en la figura 8.24, pero con los registros R1 y R2 en vez de R2 y R3.
+Este código es:
+LD R2, d
+LD R1, c
+ADD R2, R1, R2
+LD R1, e
+MUL R2, R1, R2572
+Capítulo 8. Generación de código
+Ahora, como necesitamos ambos registros para el hijo izquierdo de la raíz, debemos generar la
+siguiente instrucción:
+ST
+t3, R2
+A continuación, se maneja el hijo izquierdo de la raíz. De nuevo, el número de registros es sufi-
+ciente para este hijo, y el código es:
+LD R2, b
+LD R1, a
+SUB R2, R1, R2
+Por último, recargamos la variable temporal que contiene el hijo derecho de la raíz con la si-
+guiente instrucción:
+LD
+R1, t3
+y ejecutamos la operación en la raíz del árbol con la siguiente instrucción:
+ADD R2, R2, R1
+La secuencia completa de instrucciones se muestra en la figura 8.25.
+2
+LD R2, d
+LD R1, c
+ADD R2, R1, R2
+LD R1, e
+MUL R2, R1, R2
+ST t3, R2
+LD R2, b
+LD R1, a
+SUB R2, R1, R2
+LD R1, t3
+ADD R2, R2, R1
+Figura 8.25: Código óptimo de tres registros para el árbol de la figura 8.23, usando sólo dos
+registros
+8.10.4
+Ejercicios para la sección 8.10
+Ejercicio 8.10.1: Calcule los números de Ershov para las siguientes expresiones:
+a) a/(b + c) − d ∗ (e + f ).
+b) a + b ∗ (c ∗ (d + e)).8.11 Generación de código de programación dinámica
+573
+c) (−a + ∗p) ∗ ((b − ∗q)/(−c + ∗r)).
+Ejercicio 8.10.2: Genere código óptimo, usando dos registros para cada una de las expresio-
+nes del ejercicio 8.10.1.
+Ejercicio 8.10.3: Genere código óptimo, usando tres registros para cada una de las expresio-
+nes del ejercicio 8.10.1.
+! Ejercicio 8.10.4: Generalice el cálculo de los números de Ershov para los árboles de expresión
+con nodos interiores que tengan tres o más hijos.
+! Ejercicio 8.10.5: Una asignación a un elemento de un arreglo, como a[i] = x, parece ser un
+operador con tres operandos: a, i y x. ¿Cómo modificaría el esquema de etiquetado de árboles
+para generar código óptimo para este modelo de máquina?
+! Ejercicio 8.10.6: Los números de Ershov originales se utilizaron para una máquina que per-
+mitía que el operando derecho de una expresión estuviera en la memoria, en vez de estar en un
+registro. ¿Cómo modificaría el esquema de etiquetado de árboles para generar código óptimo
+para este modelo de máquina?
+! Ejercicio 8.10.7: Algunas máquinas requieren dos registros para ciertos valores de precisión
+simple. Suponga que el resultado de una multiplicación de cantidades de un solo registro re-
+quiere dos registros consecutivos, y que cuando dividimos a/b, el valor de a debe guardarse
+en dos registros consecutivos. ¿Cómo modificaría el esquema de etiquetado de árboles para
+generar código óptimo en este modelo de máquina?
+8.11
+Generación de código de programación dinámica
+El Algoritmo 8.26 en la sección 8.10 produce código óptimo a partir de un árbol de expresión,
+utilizando una cantidad de tiempo que es una función lineal del tamaño del árbol. Este proce-
+dimiento funciona para las máquinas en las que todos los cálculos se realizan en registros, y en
+las que las instrucciones consisten en un operador que se aplica a dos registros, o a un registro
+y a una ubicación de memoria.
+Podemos usar un algoritmo basado en el principio de la programación dinámica con el fin
+de extender la clase de máquinas para las cuales se puede generar un código óptimo, a partir de
+árboles de expresión en tiempo lineal. El algoritmo de programación dinámica se aplica a una
+amplia clase de máquinas de registro con conjuntos complejos de instrucciones.
+El algoritmo de programación dinámica se puede utilizar en la generación de código para
+cualquier máquina con r registros intercambiables R0, R1,..., Rr − 1 e instrucciones de carga,
+almacenamiento y suma. Por cuestión de simplicidad, suponemos que cada instrucción tiene
+un costo de una unidad, aunque el algoritmo de programación dinámica puede modificarse con
+facilidad para trabajar aun cuando cada instrucción tiene su propio costo.574
+8.11.1
+Capítulo 8. Generación de código
+Evaluación contigua
+El algoritmo de programación dinámica particiona el problema de generar código óptimo para
+una expresión en los subproblemas de generar código óptimo para las subexpresiones de la
+expresión dada. Como un ejemplo simple, considere una expresión E de la forma E 1 + E 2. Un
+programa óptimo para E se forma mediante la combinación de programas óptimos para E 1 y
+E 2, en un orden o en el otro, seguidos de código para evaluar el operador +. Los subproblemas
+de generar código óptimo para E 1 y E 2 se resuelven de manera similar.
+Un programa óptimo producido por el algoritmo de programación dinámica tiene una
+importante propiedad. Evalúa una expresión E = E 1 op E 2 en forma “contigua”. Podemos
+apreciar lo que esto significa si analizamos el árbol sintáctico T para E:
+Aquí, T 1 y T 2 son árboles para E 1 y E 2, respectivamente.
+Decimos que un programa P evalúa a un árbol T en forma contigua si primero evalúa los
+subárboles de T que deben calcularse en la memoria. Después, evalúa el resto de T, ya sea en
+el orden T 1, T 2, y después la raíz, o en el orden T 2, T 1, y después la raíz, en cualquier caso
+usando los valores antes calculados de la memoria, siempre que sea necesario. Como ejemplo de
+evaluación no contigua, P primero podría evaluar parte de T 1, dejando el valor en un regis-
+tro (en vez de dejarlo en la memoria), después evaluar T 2 y luego regresar a evaluar el resto
+de T 1.
+Para la máquina de registro en esta sección, podemos demostrar que dado cualquier progra-
+ma P en lenguaje máquina para evaluar un árbol de expresión T, podemos encontrar un programa
+equivalente P  de forma que:
+1. P  no tenga un mayor costo que P.
+2. P  no utilice más registros que P.
+3. P  evalúe el árbol en forma contigua.
+Este resultado implica que cada árbol de expresión se puede evaluar de manera óptima
+mediante un programa contiguo.
+En contraste, las máquinas con pares de registros impar-par no siempre tienen evaluacio-
+nes contiguas óptimas; la arquitectura x86 utiliza pares de registros para la multiplicación y
+la división. Para tales máquinas, podemos dar ejemplos de árboles de expresión en los que un
+programa óptimo en lenguaje máquina primero debe evaluar en un registro una porción del
+subárbol izquierdo de la raíz, después una porción del subárbol derecho, sucesivamente otra
+parte del subárbol izquierdo, después otra parte del subárbol derecho, y así en lo sucesivo. Este
+tipo de oscilación es innecesaria para una evaluación óptima de cualquier árbol de expresión,
+si usamos la máquina de esta sección.8.11 Generación de código de programación dinámica
+575
+La propiedad de evaluación contigua antes definida asegura que, para cualquier árbol de
+expresión T, siempre exista un programa óptimo que consista de programas óptimos para los
+subárboles de la raíz, seguidos de una instrucción para evaluar la raíz. Esta propiedad nos
+permite usar un algoritmo de programación dinámica en la generación de un programa óptimo
+para T.
+8.11.2
+El algoritmo de programación dinámica
+El algoritmo de programación dinámica procede en tres fases (suponga que la máquina destino
+tiene r registros):
+1. Calcula, de abajo hacia arriba, para cada nodo n del árbol de expresión T, un arreglo C
+de costos, en el cual el i-ésimo componente C [i ] es el costo óptimo de calcular el subárbol
+S con raíz en n y colocarlo en un registro, suponiendo que hay i registros disponibles para
+el cálculo, para 1 ¥ i ¥ r.
+2. Recorre T, usando los vectores de costo para determinar cuáles subárboles de T deben
+calcularse y colocarse en la memoria.
+3. Recorre cada árbol usando los vectores de costo y las instrucciones asociadas para gene-
+rar el código de destino final. El código para los árboles que se calculan en las ubicaciones
+de memoria se genera primero.
+Cada una de estas fases puede implementarse para ejecutarse en el tiempo, en forma linealmen-
+te proporcional al tamaño del árbol de expresión.
+El costo de calcular un nodo n incluye todas las instrucciones de carga y almacenamiento
+necesarias para evaluar S en el número dado de registros. También incluye el costo de calcular el
+operador en la raíz de S. El componente cero del vector de costos es el costo óptimo de calcular
+el subárbol S y colocar el resultado en la memoria. La propiedad de evaluación contigua asegura
+que pueda generarse un programa óptimo para S, al considerar las combinaciones de los progra-
+mas óptimos sólo para los subárboles de la raíz de S. Esta restricción reduce el número de casos
+que hay que considerar.
+Para poder calcular los costos C[i] en el nodo n, vemos las instrucciones como reglas de res-
+critura de árboles, como en la sección 8.9. Considere cada plantilla E que coincida con el árbol de
+entrada en el nodo n. Al examinar los vectores de costo en los descendientes correspondientes
+de n, determine los costos de evaluar los operandos en las hojas de E. Para aquellos operandos de E
+que sean registros, considere todos los órdenes posibles en los que pueden evaluarse los correspon-
+dientes subárboles de T y colocarse en registros. En cada ordenamiento, el primer subárbol corres-
+pondiente a un operando de registro puede evaluarse mediante el uso de i registros disponibles, el
+segundo usando i − 1 registros, y así en lo sucesivo. Para tomar en cuenta el nodo n, agregue
+el costo de la instrucción asociada con la plantilla E. El valor C [i ] es entonces el costo mínimo
+sobre todos los posibles órdenes.
+Los vectores de costos para todo el árbol T pueden calcularse de abajo hacia arriba en el tiem-
+po, de una forma linealmente proporcional al número de nodos en T. Es conveniente almacenar
+en cada nodo la instrucción utilizada para lograr el mejor costo para C [i ], por cada valor de i. El
+menor costo en el vector para la raíz de T proporciona el mínimo costo de evaluar a T.576
+Capítulo 8. Generación de código
+Ejemplo 8.28: Considere una máquina que tiene dos registros R0 y R1, y las siguientes ins-
+trucciones, cada una de un costo unitario:
+En estas instrucciones, Ri es R0 o R1, y Mj es una ubicación de memoria. El operador op corres-
+ponde a los operadores aritméticos.
+Vamos a aplicar el algoritmo de programación dinámica para generar código óptimo para
+el árbol sintáctico de la figura 8.26. En la primera fase, calculamos los vectores de costos que
+se muestran en cada nodo. Para ilustrar este cálculo de costos, considere el vector de costos
+en la hoja a. C [0], el costo de calcular a en la memoria, es 0 debido a que ya se encuentra ahí.
+C [1], el costo de calcular a en un registro es 1, ya que podemos cargarla en un registro con la
+instrucción LD R0, a. C [2], el costo de cargar a en un registro con dos registros disponibles es el
+mismo que con un registro disponible. Por lo tanto, el vector de costos en la hoja a es (0, 1, 1).
+Figura 8.26: Árbol sintáctico para (a−b)+c*(d/e), con un vector de costos en cada nodo
+Considere el vector de costos en la raíz. Primero determinamos el costo mínimo de calcular
+la raíz con uno y dos registros disponibles. La instrucción de máquina ADD R0, R0, M coincide
+con la raíz, ya que está etiquetada con el operador +. Utilizando esta instrucción, el costo mí-
+nimo de evaluar la raíz con un registro disponible es el costo mínimo de calcular su subárbol
+derecho en la memoria, más el costo mínimo de calcular su subárbol izquierdo en el registro,
+más 1 por la instrucción; no existe otra manera. Los vectores de costos en los hijos derecho e
+izquierdo de la raíz muestran que el costo mínimo de calcular la raíz con un registro disponible
+es 5 + 2 + 1 = 8.
+Ahora considere el costo mínimo de evaluar la raíz con dos registros disponibles. Surgen tres
+casos, dependiendo de qué instrucción se utilice para calcular la raíz y en qué orden se evalúen
+los subárboles izquierdo y derecho de la raíz.8.11 Generación de código de programación dinámica
+577
+1. Calcule el subárbol izquierdo con dos registros disponibles en el registro R0, calcule el
+subárbol derecho con un registro disponible en el registro R1 y utilice la instrucción ADD
+R0, R0, R1 para calcular la raíz. Esta secuencia tiene un costo de 2 + 5 + 1 = 8.
+2. Calcule el subárbol derecho con dos registros disponibles en R1, calcule el subárbol iz-
+quierdo con un registro disponible en R0, y utilice la instrucción ADD R0, R0, R1. Esta
+secuencia tiene un costo de 4 + 2 + 1 = 7.
+3. Calcule el subárbol derecho en la ubicación de memoria M, calcule el subárbol izquierdo
+con dos registros disponibles en el registro R0, y utilice la instrucción ADD R0, R0, M. Esta
+secuencia tiene un costo de 5 + 2 + 1 = 8.
+La segunda elección produce el costo mínimo de 7.
+El costo mínimo de calcular la raíz en la memoria se determina sumando uno al costo
+mínimo de calcular la raíz con todos los registros disponibles; es decir, calculamos la raíz en
+un registro y después almacenamos el resultado. Por lo tanto, el vector de costos en la raíz es
+(8, 8, 7).
+A partir de los vectores de costos podemos construir con facilidad la secuencia de código,
+mediante un recorrido del árbol. Del árbol en la figura 8.26, suponiendo que hay dos registros
+disponibles, una secuencia de código óptimo sería:
+2
+Las técnicas de programación dinámica se han utilizado en una variedad de compiladores,
+incluyendo la segunda versión del compilador C portable, PCC2. La técnica facilita la redes-
+tinación, debido a la capacidad de aplicación de la técnica de programación dinámica a una
+amplia clase de máquinas.
+8.11.3
+Ejercicios para la sección 8.11
+Ejercicio 8.11.1: Aumente el esquema de rescritura de árboles en la figura 8.20 con costos, y
+utilice la programación dinámica y la coincidencia de árboles en la generación de código para
+las instrucciones del ejercicio 8.9.1.
+!! Ejercicio 8.11.2: ¿Cómo extendería la programación dinámica para realizar la generación de
+código óptimo en GDAs?578
+8.12
+Capítulo 8. Generación de código
+Resumen del capítulo 8
+♦ La generación de código es la fase final de un compilador. El generador de código asigna la
+representación intermedia producida por el front-end, o si hay una fase de optimización
+de código correspondiente al optimizador de código, al programa de destino.
+♦ La selección de instrucciones es el proceso de elegir instrucciones del lenguaje de destino
+para cada instrucción representación intermedia.
+♦ La repartición de registros es el proceso de decidir qué valores de representación interme-
+dia mantener en los registros. La coloración de grafos es una técnica efectiva para realizar
+la repartición de registros en los compiladores.
+♦ La asignación de registros es el proceso de decidir qué registro debe contener un valor de
+representación intermedia dado.
+♦ Un compilador redestinable es uno que puede generar código para varios conjuntos de
+instrucciones.
+♦ Una máquina virtual es un intérprete para un lenguaje intermedio de bytecodes, produ-
+cido por lenguajes como Java y C#.
+♦ Una máquina CISC es, por lo general, una máquina de dos direcciones, con pocos regis-
+tros, varias clases de registros e instrucciones de longitud variable con modos de direc-
+cionamiento complejos.
+♦ Una máquina RISC es, por lo general, una máquina de tres direcciones con muchos regis-
+tros, en donde las operaciones se realizan en los registros.
+♦ Un bloque básico es una secuencia máxima de instrucciones consecutivas de tres direccio-
+nes, en donde el flujo de control sólo puede entrar en la primera instrucción del bloque
+y salir en la última instrucción, sin detenerse o bifurcarse, tal vez excepto en la última
+instrucción del bloque básico.
+♦ Un grafo de flujo es una representación gráfica de un programa, en el cual los nodos del
+gráfico son bloques básicos y las flechas del grafo muestran cómo puede fluir el control
+entre los bloques.
+♦ Un ciclo en un grafo de flujo es una región con conexión sólida, con un solo punto de
+entrada conocido como el encabezado del ciclo.
+♦ Una representación GDA de un bloque básico es un grafo dirigido acíclico, en el cual los
+nodos del GDA representan a las instrucciones dentro del bloque y cada hijo de un nodo
+corresponde a la instrucción, que es la última definición de un operando utilizado en la
+instrucción.
+♦ Las optimizaciones de mirilla (peephole) son transformaciones para mejorar el código
+local que pueden aplicarse a un programa, por lo general, a través de una ventana desli-
+zable.8.13 Referencias para el capítulo 8
+579
+♦ La selección de instrucciones puede realizarse mediante un proceso de rescritura de ár-
+boles, en el cual los patrones tipo árbol que corresponden a las instrucciones de máquina
+se utilizan para revestir un árbol sintáctico. Podemos asociar los costos con las reglas de
+rescritura de árboles y aplicar la programación dinámica para obtener un revestimiento
+óptimo para clases útiles de máquinas y expresiones.
+♦ Un número de Ershov indica cuántos registros se necesitan para evaluar una expresión sin
+almacenar valores temporales.
+♦ El código de derrame es una secuencia de instrucciones que almacena un valor en un re-
+gistro en la memoria, con el fin de hacer espacio para guardar otro valor en ese registro.
