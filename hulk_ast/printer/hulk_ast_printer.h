@@ -13,7 +13,7 @@
 #ifndef HULK_AST_PRINTER_H
 #define HULK_AST_PRINTER_H
 
-#include "hulk_ast.h"
+#include "../core/hulk_ast.h"
 #include <stdio.h>
 
 // Imprime el AST completo al stream indicado (stdout, archivo, etc.)

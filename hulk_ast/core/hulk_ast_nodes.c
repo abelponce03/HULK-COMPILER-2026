@@ -1,98 +1,19 @@
 /*
- * hulk_ast.c — Implementación del AST de HULK
+ * hulk_ast_nodes.c — Funciones factory de nodos del AST
  *
- * Contiene:
- *   - Object Pool (arena) para asignación eficiente de nodos
- *   - Funciones de creación de cada tipo de nodo
- *   - HulkNodeList (lista dinámica de hijos)
- *   - Visitor dispatch y traversal
- *   - Nombres para debugging
+ * Cada función asigna un nodo concreto desde la arena (HulkASTContext),
+ * inicializa sus campos y retorna el puntero.
+ *
+ * El macro ALLOC_NODE encapsula: asignación + inicialización de la
+ * cabecera HulkNode (type, line, col).
+ *
+ * SRP: Solo creación e inicialización de nodos del AST.
  */
 
 #include "hulk_ast.h"
-#include "../error_handler.h"
-#include <stdio.h>
+#include "../../error_handler.h"
 #include <stdlib.h>
 #include <string.h>
-
-// ============== HULK NODE LIST ==============
-
-void hulk_node_list_init(HulkNodeList *list) {
-    list->items    = NULL;
-    list->count    = 0;
-    list->capacity = 0;
-}
-
-void hulk_node_list_push(HulkNodeList *list, HulkNode *node) {
-    if (list->count >= list->capacity) {
-        int new_cap = list->capacity == 0 ? 4 : list->capacity * 2;
-        list->items = realloc(list->items, sizeof(HulkNode*) * new_cap);
-        if (!list->items) {
-            LOG_FATAL_MSG("hulk_ast", "sin memoria para HulkNodeList");
-            return;
-        }
-        list->capacity = new_cap;
-    }
-    list->items[list->count++] = node;
-}
-
-void hulk_node_list_free(HulkNodeList *list) {
-    if (list->items) {
-        free(list->items);
-        list->items = NULL;
-    }
-    list->count = 0;
-    list->capacity = 0;
-}
-
-// ============== OBJECT POOL (ARENA) ==============
-
-void hulk_ast_context_init(HulkASTContext *ctx) {
-    ctx->blocks         = NULL;
-    ctx->block_count    = 0;
-    ctx->block_capacity = 0;
-}
-
-void hulk_ast_context_free(HulkASTContext *ctx) {
-    for (int i = 0; i < ctx->block_count; i++) {
-        free(ctx->blocks[i]);
-    }
-    free(ctx->blocks);
-    ctx->blocks         = NULL;
-    ctx->block_count    = 0;
-    ctx->block_capacity = 0;
-}
-
-void* hulk_ast_alloc(HulkASTContext *ctx, size_t size) {
-    void *block = calloc(1, size);
-    if (!block) {
-        LOG_FATAL_MSG("hulk_ast", "sin memoria (%zu bytes)", size);
-        return NULL;
-    }
-    // Registrar en el pool para liberación posterior
-    if (ctx->block_count >= ctx->block_capacity) {
-        int new_cap = ctx->block_capacity == 0
-                      ? HULK_AST_POOL_INIT_CAP
-                      : ctx->block_capacity * 2;
-        ctx->blocks = realloc(ctx->blocks, sizeof(void*) * new_cap);
-        if (!ctx->blocks) {
-            LOG_FATAL_MSG("hulk_ast", "sin memoria para pool");
-            free(block);
-            return NULL;
-        }
-        ctx->block_capacity = new_cap;
-    }
-    ctx->blocks[ctx->block_count++] = block;
-    return block;
-}
-
-char* hulk_ast_strdup(HulkASTContext *ctx, const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s);
-    char *copy = hulk_ast_alloc(ctx, len + 1);
-    if (copy) memcpy(copy, s, len + 1);
-    return copy;
-}
 
 // ============== MACRO HELPER ==============
 // Asigna un nodo del tipo dado, inicializa la base, y retorna.
@@ -342,54 +263,4 @@ ConcatExprNode* hulk_ast_concat_expr(HulkASTContext *ctx, BinaryOp op,
     node->left  = left;
     node->right = right;
     return node;
-}
-
-// ============== VISITOR ==============
-
-void hulk_visitor_init(HulkASTVisitor *v) {
-    for (int i = 0; i < NODE_HULK_COUNT; i++)
-        v->visit[i] = NULL;
-}
-
-void hulk_ast_accept(HulkNode *node, HulkASTVisitor *visitor, void *data) {
-    if (!node || !visitor) return;
-    if (node->type < 0 || node->type >= NODE_HULK_COUNT) return;
-    HulkVisitFn fn = visitor->visit[node->type];
-    if (fn) fn(node, visitor, data);
-}
-
-void hulk_ast_accept_list(HulkNodeList *list, HulkASTVisitor *visitor, void *data) {
-    if (!list) return;
-    for (int i = 0; i < list->count; i++) {
-        hulk_ast_accept(list->items[i], visitor, data);
-    }
-}
-
-// ============== NOMBRES PARA DEBUGGING ==============
-
-static const char* node_type_names[] = {
-    "Program", "FunctionDef", "TypeDef", "MethodDef", "AttributeDef",
-    "LetExpr", "VarBinding", "IfExpr", "ElifBranch", "WhileStmt",
-    "ForStmt", "BlockStmt", "BinaryOp", "UnaryOp", "NumberLit",
-    "StringLit", "BoolLit", "Ident", "CallExpr", "MemberAccess",
-    "NewExpr", "Assign", "DestructAssign", "AsExpr", "IsExpr",
-    "Self", "BaseCall", "DecorBlock", "DecorItem", "ConcatExpr"
-};
-
-const char* hulk_node_type_name(HulkNodeType type) {
-    if (type >= 0 && type < NODE_HULK_COUNT)
-        return node_type_names[type];
-    return "Unknown";
-}
-
-static const char* binary_op_names[] = {
-    "+", "-", "*", "/", "%", "**",
-    "<", ">", "<=", ">=", "==", "!=",
-    "&&", "||", "@", "@@"
-};
-
-const char* hulk_binary_op_name(BinaryOp op) {
-    if (op >= 0 && op <= OP_CONCAT_WS)
-        return binary_op_names[op];
-    return "?op?";
 }

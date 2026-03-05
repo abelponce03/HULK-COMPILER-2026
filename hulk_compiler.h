@@ -2,7 +2,7 @@
 #define HULK_COMPILER_H
 
 #include "generador_analizadores_lexicos/afd.h"
-#include "hulk_ast/hulk_ast.h"
+#include "hulk_ast/core/hulk_ast.h"
 
 // Fachada del compilador HULK.
 // Encapsula el DFA del lexer y ofrece las operaciones de alto nivel.

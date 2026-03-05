@@ -16,9 +16,16 @@ REGEX_LEXER_C = $(LEXER_DIR)/regex_lexer.c
 # Objetos del proyecto (sin main.o para poder linkear tests)
 LIB_OBJS = hulk_tokens.o \
             hulk_compiler.o \
-            $(HULK_AST_DIR)/hulk_ast.o \
-            $(HULK_AST_DIR)/hulk_ast_printer.o \
-            $(HULK_AST_DIR)/hulk_ast_builder.o \
+            $(HULK_AST_DIR)/core/hulk_ast_context.o \
+            $(HULK_AST_DIR)/core/hulk_ast_nodes.o \
+            $(HULK_AST_DIR)/core/hulk_ast_visitor.o \
+            $(HULK_AST_DIR)/printer/hulk_ast_printer.o \
+            $(HULK_AST_DIR)/builder/hulk_ast_builder.o \
+            $(HULK_AST_DIR)/builder/parse_helpers.o \
+            $(HULK_AST_DIR)/builder/parse_expressions.o \
+            $(HULK_AST_DIR)/builder/parse_statements.o \
+            $(HULK_AST_DIR)/builder/parse_definitions.o \
+            $(HULK_AST_DIR)/builder/parse_primary.o \
             error_handler.o \
             $(LEXER_DIR)/ast.o \
             $(LEXER_DIR)/afd.o \
@@ -121,7 +128,8 @@ test-file: $(TARGET)
 # Limpiar
 clean:
 	rm -f $(OBJS) $(TARGET)
-	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o $(HULK_AST_DIR)/*.o
+	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o
+	rm -f $(HULK_AST_DIR)/core/*.o $(HULK_AST_DIR)/builder/*.o $(HULK_AST_DIR)/printer/*.o
 	rm -f $(REGEX_LEXER_C)
 	rm -f *.ll1.cache
 	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.dot $(OUTPUT_DIR)/*.png

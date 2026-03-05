@@ -3,8 +3,8 @@
 #include <string.h>
 
 #include "hulk_compiler.h"
-#include "hulk_ast/hulk_ast.h"
-#include "hulk_ast/hulk_ast_printer.h"
+#include "hulk_ast/core/hulk_ast.h"
+#include "hulk_ast/printer/hulk_ast_printer.h"
 #include "error_handler.h"
 
 // ============== MAIN ==============

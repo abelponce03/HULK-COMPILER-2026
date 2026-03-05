@@ -11,8 +11,8 @@
  */
 
 #include "test_framework.h"
-#include "../hulk_ast/hulk_ast.h"
-#include "../hulk_ast/hulk_ast_printer.h"
+#include "../hulk_ast/core/hulk_ast.h"
+#include "../hulk_ast/printer/hulk_ast_printer.h"
 
 // ============================================
 //  Suite 1: Arena / Object Pool

@@ -20,8 +20,8 @@
 #ifndef HULK_AST_BUILDER_H
 #define HULK_AST_BUILDER_H
 
-#include "hulk_ast.h"
-#include "../generador_analizadores_lexicos/afd.h"
+#include "../core/hulk_ast.h"
+#include "../../generador_analizadores_lexicos/afd.h"
 
 // Construye el AST del programa HULK a partir del código fuente.
 //

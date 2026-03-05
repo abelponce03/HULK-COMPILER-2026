@@ -19,7 +19,7 @@
 #ifndef HULK_AST_H
 #define HULK_AST_H
 
-#include "../generador_analizadores_lexicos/token_types.h"
+#include "../../generador_analizadores_lexicos/token_types.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

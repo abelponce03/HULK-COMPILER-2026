@@ -14,8 +14,8 @@
 #include "generador_parser_ll1/parser.h"
 #include "generador_parser_ll1/grammar.h"
 #include "generador_parser_ll1/first_follow.h"
-#include "hulk_ast/hulk_ast_builder.h"
-#include "hulk_ast/hulk_ast_printer.h"
+#include "hulk_ast/builder/hulk_ast_builder.h"
+#include "hulk_ast/printer/hulk_ast_printer.h"
 
 #include <stdio.h>
 #include <stdlib.h>

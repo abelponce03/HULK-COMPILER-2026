@@ -18,8 +18,8 @@
 
 #include "test_framework.h"
 #include "../hulk_compiler.h"
-#include "../hulk_ast/hulk_ast.h"
-#include "../hulk_ast/hulk_ast_builder.h"
+#include "../hulk_ast/core/hulk_ast.h"
+#include "../hulk_ast/builder/hulk_ast_builder.h"
 
 #include <stdio.h>
 #include <string.h>
