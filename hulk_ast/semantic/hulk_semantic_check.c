@@ -68,6 +68,28 @@ static void collect_pass2_resolve(SemanticContext *c, ProgramNode *prog) {
         }
     }
 
+    /* 2a.1: detectar ciclos de herencia */
+    for (int i = 0; i < prog->declarations.count; i++) {
+        HulkNode *decl = prog->declarations.items[i];
+        if (decl->type != NODE_TYPE_DEF) continue;
+        TypeDefNode *td = (TypeDefNode*)decl;
+        HulkType *t = sem_type_resolve(c, td->name);
+        if (!t || !t->parent) continue;
+        /* Tortoise-and-hare cycle detection */
+        HulkType *slow = t, *fast = t;
+        int cycle = 0;
+        while (fast && fast->parent) {
+            slow = slow->parent;
+            fast = fast->parent->parent;
+            if (slow == fast) { cycle = 1; break; }
+        }
+        if (cycle) {
+            sem_error(c, decl,
+                "ciclo de herencia detectado: tipo '%s'", td->name);
+            t->parent = c->t_object;  /* romper el ciclo */
+        }
+    }
+
     /* 2b: registrar funciones */
     for (int i = 0; i < prog->declarations.count; i++) {
         HulkNode *decl = prog->declarations.items[i];
@@ -112,15 +134,8 @@ static void collect_function(SemanticContext *c, FunctionDefNode *fn) {
         sym->param_names = calloc(sym->param_count, sizeof(const char*));
         for (int i = 0; i < fn->params.count; i++) {
             VarBindingNode *p = (VarBindingNode*)fn->params.items[i];
-            HulkType *pt = c->t_object;
-            if (p->type_annotation) {
-                pt = sem_type_resolve(c, p->type_annotation);
-                if (!pt) {
-                    sem_error(c, (HulkNode*)p,
-                        "tipo '%s' no definido", p->type_annotation);
-                    pt = c->t_error;
-                }
-            }
+            HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                    (HulkNode*)p);
             sym->param_types[i] = pt;
             sym->param_names[i] = p->name;
         }
@@ -144,15 +159,8 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
         tsym->param_names = calloc(td->params.count, sizeof(const char*));
         for (int i = 0; i < td->params.count; i++) {
             VarBindingNode *p = (VarBindingNode*)td->params.items[i];
-            HulkType *pt = c->t_object;
-            if (p->type_annotation) {
-                pt = sem_type_resolve(c, p->type_annotation);
-                if (!pt) {
-                    sem_error(c, (HulkNode*)p,
-                        "tipo '%s' no definido", p->type_annotation);
-                    pt = c->t_error;
-                }
-            }
+            HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                    (HulkNode*)p);
             tsym->param_types[i] = pt;
             tsym->param_names[i] = p->name;
         }
@@ -169,11 +177,7 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
             MethodDefNode *md = (MethodDefNode*)m;
             HulkType *ret = c->t_object;
             if (md->return_type) {
-                ret = sem_type_resolve(c, md->return_type);
-                if (!ret) {
-                    sem_error(c, m, "tipo '%s' no definido", md->return_type);
-                    ret = c->t_error;
-                }
+                ret = sem_resolve_annotation(c, md->return_type, m);
             }
             Symbol *ms = sem_define(c, md->name, SYM_METHOD, ret, m);
             if (ms && md->params.count > 0) {
@@ -182,25 +186,15 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
                 ms->param_names = calloc(ms->param_count, sizeof(const char*));
                 for (int j = 0; j < md->params.count; j++) {
                     VarBindingNode *p = (VarBindingNode*)md->params.items[j];
-                    HulkType *pt = c->t_object;
-                    if (p->type_annotation) {
-                        pt = sem_type_resolve(c, p->type_annotation);
-                        if (!pt) pt = c->t_error;
-                    }
+                    HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                            (HulkNode*)p);
                     ms->param_types[j] = pt;
                     ms->param_names[j] = p->name;
                 }
             }
         } else if (m->type == NODE_ATTRIBUTE_DEF) {
             AttributeDefNode *ad = (AttributeDefNode*)m;
-            HulkType *at = c->t_object;
-            if (ad->type_annotation) {
-                at = sem_type_resolve(c, ad->type_annotation);
-                if (!at) {
-                    sem_error(c, m, "tipo '%s' no definido", ad->type_annotation);
-                    at = c->t_error;
-                }
-            }
+            HulkType *at = sem_resolve_annotation(c, ad->type_annotation, m);
             sem_define(c, ad->name, SYM_ATTRIBUTE, at, m);
         }
     }
@@ -216,11 +210,8 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
 static void inject_ctor_params(SemanticContext *c, TypeDefNode *td) {
     for (int j = 0; j < td->params.count; j++) {
         VarBindingNode *p = (VarBindingNode*)td->params.items[j];
-        HulkType *pt = c->t_object;
-        if (p->type_annotation) {
-            pt = sem_type_resolve(c, p->type_annotation);
-            if (!pt) pt = c->t_error;
-        }
+        HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                (HulkNode*)p);
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
     }
 }
@@ -247,11 +238,8 @@ static void check_function_def(SemanticContext *c, FunctionDefNode *fn) {
 
     for (int i = 0; i < fn->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)fn->params.items[i];
-        HulkType *pt = c->t_object;
-        if (p->type_annotation) {
-            pt = sem_type_resolve(c, p->type_annotation);
-            if (!pt) pt = c->t_error;
-        }
+        HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                (HulkNode*)p);
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
     }
 
@@ -295,11 +283,8 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
             inject_ctor_params(c, td);
             for (int j = 0; j < md->params.count; j++) {
                 VarBindingNode *p = (VarBindingNode*)md->params.items[j];
-                HulkType *pt = c->t_object;
-                if (p->type_annotation) {
-                    pt = sem_type_resolve(c, p->type_annotation);
-                    if (!pt) pt = c->t_error;
-                }
+                HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
+                                                        (HulkNode*)p);
                 sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
             }
 
@@ -307,7 +292,7 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
 
             /* Verificar tipo de retorno del método */
             if (md->return_type) {
-                HulkType *ret = sem_type_resolve(c, md->return_type);
+                HulkType *ret = sem_resolve_annotation(c, md->return_type, m);
                 if (ret && ret != c->t_error &&
                     !sem_type_conforms(body_t, ret))
                     sem_error(c, m,

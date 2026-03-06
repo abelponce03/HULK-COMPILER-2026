@@ -18,7 +18,9 @@ CGScope* cg_scope_create(CodegenContext *c, CGScope *parent) {
 
     if (c->scope_count >= c->scope_cap) {
         int nc = c->scope_cap == 0 ? 16 : c->scope_cap * 2;
-        c->all_scopes = realloc(c->all_scopes, sizeof(CGScope*) * nc);
+        CGScope **tmp = realloc(c->all_scopes, sizeof(CGScope*) * nc);
+        if (!tmp) { free(s); return NULL; }
+        c->all_scopes = tmp;
         c->scope_cap = nc;
     }
     c->all_scopes[c->scope_count++] = s;
@@ -56,7 +58,9 @@ CGSymbol* cg_define_in(CodegenContext *c, CGScope *scope, const char *name,
 
     if (scope->sym_count >= scope->sym_cap) {
         int nc = scope->sym_cap == 0 ? 8 : scope->sym_cap * 2;
-        scope->symbols = realloc(scope->symbols, sizeof(CGSymbol*) * nc);
+        CGSymbol **tmp = realloc(scope->symbols, sizeof(CGSymbol*) * nc);
+        if (!tmp) { free(sym); return NULL; }
+        scope->symbols = tmp;
         scope->sym_cap = nc;
     }
     scope->symbols[scope->sym_count++] = sym;
@@ -94,10 +98,13 @@ CGTypeInfo* cg_type_info_create(CodegenContext *c, const char *name) {
     CGTypeInfo *ti = calloc(1, sizeof(CGTypeInfo));
     if (!ti) return NULL;
     ti->name = name;
+    ti->type_tag = c->type_info_count;  /* tag numérico único */
 
     if (c->type_info_count >= c->type_info_cap) {
         int nc = c->type_info_cap == 0 ? 8 : c->type_info_cap * 2;
-        c->type_infos = realloc(c->type_infos, sizeof(CGTypeInfo*) * nc);
+        CGTypeInfo **tmp = realloc(c->type_infos, sizeof(CGTypeInfo*) * nc);
+        if (!tmp) { free(ti); return NULL; }
+        c->type_infos = tmp;
         c->type_info_cap = nc;
     }
     c->type_infos[c->type_info_count++] = ti;
@@ -111,6 +118,12 @@ CGTypeInfo* cg_type_info_find(CodegenContext *c, const char *name) {
             strcmp(c->type_infos[i]->name, name) == 0)
             return c->type_infos[i];
     }
+    return NULL;
+}
+
+CGTypeInfo* cg_type_info_find_by_tag(CodegenContext *c, int tag) {
+    if (tag >= 0 && tag < c->type_info_count)
+        return c->type_infos[tag];
     return NULL;
 }
 
@@ -130,7 +143,9 @@ void cg_type_add_method(CGTypeInfo *ti, const char *name, LLVMValueRef fn) {
 
     if (ti->method_count >= ti->method_cap) {
         int nc = ti->method_cap == 0 ? 4 : ti->method_cap * 2;
-        ti->methods = realloc(ti->methods, sizeof(CGSymbol*) * nc);
+        CGSymbol **tmp = realloc(ti->methods, sizeof(CGSymbol*) * nc);
+        if (!tmp) { free(sym); return; }
+        ti->methods = tmp;
         ti->method_cap = nc;
     }
     ti->methods[ti->method_count++] = sym;

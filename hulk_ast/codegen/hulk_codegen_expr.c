@@ -71,14 +71,70 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             return cg_emit_expr(c, n->expr);
         }
         case NODE_IS_EXPR: {
-            /* is retorna true siempre para tipos simples (sin RTTI) */
-            /* TODO: implementar RTTI completo */
+            /* is: comprueba type tag contra el tag del tipo objetivo */
             IsExprNode *n = (IsExprNode*)node;
-            cg_emit_expr(c, n->expr);
-            return LLVMConstInt(c->t_bool, 1, 0);
+            LLVMValueRef val = cg_emit_expr(c, n->expr);
+            CGTypeInfo *target_ti = cg_type_info_find(c, n->type_name);
+            if (!target_ti) {
+                /* Tipo no registrado como user type — check LLVM type */
+                LLVMTypeRef vt = LLVMTypeOf(val);
+                int result = 0;
+                if (n->type_name) {
+                    if (strcmp(n->type_name, "Number") == 0)
+                        result = (vt == c->t_double);
+                    else if (strcmp(n->type_name, "String") == 0)
+                        result = (vt == c->t_i8ptr);
+                    else if (strcmp(n->type_name, "Boolean") == 0)
+                        result = (vt == c->t_bool);
+                    else result = 1; /* Object matches everything */
+                }
+                return LLVMConstInt(c->t_bool, result ? 1 : 0, 0);
+            }
+            /* For user types: check if the LLVM ptr type matches any
+             * type in the inheritance chain of the target */
+            LLVMTypeRef vt = LLVMTypeOf(val);
+            int match = 0;
+            for (CGTypeInfo *ti = target_ti; ti; ti = ti->parent) {
+                if (vt == ti->ptr_type) { match = 1; break; }
+            }
+            /* Also check if val's type conforms to target (child is target) */
+            if (!match) {
+                for (int i = 0; i < c->type_info_count; i++) {
+                    CGTypeInfo *vti = c->type_infos[i];
+                    if (vt == vti->ptr_type) {
+                        /* Walk vti's parents to see if target_ti is ancestor */
+                        for (CGTypeInfo *p = vti; p; p = p->parent) {
+                            if (p == target_ti) { match = 1; break; }
+                        }
+                        break;
+                    }
+                }
+            }
+            return LLVMConstInt(c->t_bool, match ? 1 : 0, 0);
         }
         case NODE_BASE_CALL: {
-            /* base() — por ahora retorna void */
+            /* base() — llamar al constructor padre */
+            BaseCallNode *bn = (BaseCallNode*)node;
+            if (c->enclosing_type && c->enclosing_type->parent) {
+                char ctor_name[256];
+                snprintf(ctor_name, sizeof(ctor_name), "%s_new",
+                         c->enclosing_type->parent->name);
+                CGSymbol *psym = cg_lookup(c->global, ctor_name);
+                if (psym && psym->value) {
+                    int argc = bn->args.count;
+                    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1,
+                                                sizeof(LLVMValueRef));
+                    for (int i = 0; i < argc; i++)
+                        argv[i] = cg_emit_expr(c, bn->args.items[i]);
+                    LLVMTypeRef fn_type = LLVMGlobalGetValueType(psym->value);
+                    LLVMValueRef result = LLVMBuildCall2(
+                        c->builder, fn_type, psym->value, argv, argc, "base");
+                    free(argv);
+                    return result;
+                }
+            }
+            /* Fallback si no hay padre */
+            cg_error(c, node, "base() sin tipo padre válido");
             return LLVMConstReal(c->t_double, 0.0);
         }
         default:
@@ -107,7 +163,58 @@ static LLVMValueRef emit_ident(CodegenContext *c, IdentNode *n) {
  *  Operadores binarios
  * ============================================================ */
 
+static LLVMValueRef emit_short_circuit(CodegenContext *c, BinaryOpNode *n,
+                                        int is_and) {
+    /*
+     * Short-circuit evaluation:
+     *   AND: if (left) right else false
+     *   OR:  if (left) true  else right
+     */
+    LLVMValueRef lv = cg_emit_expr(c, n->left);
+    LLVMTypeRef lt = LLVMTypeOf(lv);
+    if (lt != c->t_bool)
+        lv = LLVMBuildFCmp(c->builder, LLVMRealONE, lv,
+                            LLVMConstReal(c->t_double, 0.0), "tobool");
+
+    LLVMValueRef fn = c->current_fn;
+    LLVMBasicBlockRef rhs_bb   = LLVMAppendBasicBlockInContext(
+        c->llvm_ctx, fn, is_and ? "and.rhs" : "or.rhs");
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+        c->llvm_ctx, fn, is_and ? "and.merge" : "or.merge");
+
+    LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(c->builder);
+
+    if (is_and)
+        LLVMBuildCondBr(c->builder, lv, rhs_bb, merge_bb);
+    else
+        LLVMBuildCondBr(c->builder, lv, merge_bb, rhs_bb);
+
+    /* Evaluate RHS */
+    LLVMPositionBuilderAtEnd(c->builder, rhs_bb);
+    LLVMValueRef rv = cg_emit_expr(c, n->right);
+    LLVMTypeRef rt = LLVMTypeOf(rv);
+    if (rt != c->t_bool)
+        rv = LLVMBuildFCmp(c->builder, LLVMRealONE, rv,
+                            LLVMConstReal(c->t_double, 0.0), "tobool");
+    LLVMBasicBlockRef rhs_end = LLVMGetInsertBlock(c->builder);
+    LLVMBuildBr(c->builder, merge_bb);
+
+    /* Merge with PHI */
+    LLVMPositionBuilderAtEnd(c->builder, merge_bb);
+    LLVMValueRef phi = LLVMBuildPhi(c->builder, c->t_bool,
+                                     is_and ? "and.val" : "or.val");
+    LLVMValueRef short_val = LLVMConstInt(c->t_bool, is_and ? 0 : 1, 0);
+    LLVMValueRef vals[2]   = { short_val, rv };
+    LLVMBasicBlockRef bbs[2] = { entry_bb, rhs_end };
+    LLVMAddIncoming(phi, vals, bbs, 2);
+    return phi;
+}
+
 static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n) {
+    /* Short-circuit for logical operators */
+    if (n->op == OP_AND) return emit_short_circuit(c, n, 1);
+    if (n->op == OP_OR)  return emit_short_circuit(c, n, 0);
+
     LLVMValueRef lv = cg_emit_expr(c, n->left);
     LLVMValueRef rv = cg_emit_expr(c, n->right);
 
@@ -134,10 +241,7 @@ static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n) {
         case OP_EQ: return LLVMBuildFCmp(c->builder, LLVMRealOEQ, lv, rv, "eq");
         case OP_NEQ: return LLVMBuildFCmp(c->builder, LLVMRealUNE, lv, rv, "neq");
 
-        /* Lógicos: i1 × i1 → i1 */
-        case OP_AND: return LLVMBuildAnd(c->builder, lv, rv, "and");
-        case OP_OR:  return LLVMBuildOr(c->builder, lv, rv, "or");
-
+        /* OP_AND / OP_OR handled above via short-circuit */
         default: break;
     }
     return LLVMConstReal(c->t_double, 0.0);
@@ -246,22 +350,30 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
         MemberAccessNode *ma = (MemberAccessNode*)n->callee;
         LLVMValueRef obj = cg_emit_expr(c, ma->object);
 
-        /* Buscar tipo del objeto en type_infos */
-        /* Por ahora: llamada genérica aplanada TypeName_method */
-        char fname[256];
-        /* Intentar descubrir tipo — esto es simplificado */
-        CGTypeInfo *ti = c->enclosing_type;
-        if (!ti) {
-            /* Buscar en todos los type_infos si el objeto viene de new */
-            /* Fallback: usar el nombre del miembro como función global */
-            snprintf(fname, sizeof(fname), "%s", ma->member);
-        } else {
-            snprintf(fname, sizeof(fname), "%s_%s", ti->name, ma->member);
+        /* Descubrir el tipo del objeto por su LLVMTypeRef */
+        LLVMTypeRef obj_type = LLVMTypeOf(obj);
+        CGTypeInfo *ti = NULL;
+        for (int i = 0; i < c->type_info_count; i++) {
+            if (c->type_infos[i]->ptr_type == obj_type) {
+                ti = c->type_infos[i];
+                break;
+            }
         }
+        if (!ti && c->enclosing_type && obj == c->self_ptr)
+            ti = c->enclosing_type;
 
-        CGSymbol *msym = cg_lookup(c->current, fname);
+        /* Buscar método caminando herencia */
+        char fname[256];
+        CGSymbol *msym = NULL;
+        if (ti) {
+            for (CGTypeInfo *cur = ti; cur && !msym; cur = cur->parent) {
+                snprintf(fname, sizeof(fname), "%s_%s", cur->name, ma->member);
+                msym = cg_lookup(c->global, fname);
+            }
+        }
         if (!msym) {
-            /* Buscar en global */
+            /* Fallback: buscar por nombre plano */
+            snprintf(fname, sizeof(fname), "%s", ma->member);
             msym = cg_lookup(c->global, fname);
         }
 
@@ -319,18 +431,36 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
 
 static LLVMValueRef emit_member_access(CodegenContext *c, MemberAccessNode *n) {
     LLVMValueRef obj = cg_emit_expr(c, n->object);
-    /* obj es ptr a struct — buscar índice del field */
-    /* Por ahora buscamos en type_infos */
+    LLVMTypeRef obj_type = LLVMTypeOf(obj);
+
+    /* Buscar el CGTypeInfo que corresponde al tipo del objeto */
+    CGTypeInfo *ti = NULL;
     for (int t = 0; t < c->type_info_count; t++) {
-        CGTypeInfo *ti = c->type_infos[t];
-        for (int f = 0; f < ti->field_count; f++) {
-            if (strcmp(ti->field_names[f], n->member) == 0) {
-                LLVMValueRef gep = LLVMBuildStructGEP2(
-                    c->builder, ti->struct_type, obj, f, n->member);
-                /* Determinar tipo del campo */
-                LLVMTypeRef field_t = LLVMStructGetTypeAtIndex(
-                    ti->struct_type, f);
-                return LLVMBuildLoad2(c->builder, field_t, gep, "field");
+        if (c->type_infos[t]->ptr_type == obj_type) {
+            ti = c->type_infos[t];
+            break;
+        }
+    }
+    /* Si estamos dentro de un tipo y obj es self, usar enclosing_type */
+    if (!ti && c->enclosing_type && obj == c->self_ptr)
+        ti = c->enclosing_type;
+
+    /* Buscar campo caminando la cadena de herencia */
+    if (ti) {
+        for (CGTypeInfo *cur = ti; cur; cur = cur->parent) {
+            for (int f = 0; f < cur->field_count; f++) {
+                if (strcmp(cur->field_names[f], n->member) == 0) {
+                    /* Si cur != ti, necesitamos cast a la struct padre */
+                    LLVMValueRef target_obj = obj;
+                    if (cur != ti)
+                        target_obj = LLVMBuildBitCast(c->builder, obj,
+                                                      cur->ptr_type, "upcast");
+                    LLVMValueRef gep = LLVMBuildStructGEP2(
+                        c->builder, cur->struct_type, target_obj, f, n->member);
+                    LLVMTypeRef field_t = LLVMStructGetTypeAtIndex(
+                        cur->struct_type, f);
+                    return LLVMBuildLoad2(c->builder, field_t, gep, "field");
+                }
             }
         }
     }
@@ -573,13 +703,32 @@ static LLVMValueRef emit_block(CodegenContext *c, BlockStmtNode *n) {
  * ============================================================ */
 
 static LLVMValueRef emit_new(CodegenContext *c, NewExprNode *n) {
+    /* Buscar constructor generado: TypeName_new */
+    char ctor_name[256];
+    snprintf(ctor_name, sizeof(ctor_name), "%s_new", n->type_name);
+    CGSymbol *ctor_sym = cg_lookup(c->global, ctor_name);
+
+    if (ctor_sym && ctor_sym->value && LLVMIsAFunction(ctor_sym->value)) {
+        /* Llamar al constructor generado */
+        int argc = n->args.count;
+        LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
+        for (int i = 0; i < argc; i++)
+            argv[i] = cg_emit_expr(c, n->args.items[i]);
+
+        LLVMTypeRef fn_type = LLVMGlobalGetValueType(ctor_sym->value);
+        LLVMValueRef result = LLVMBuildCall2(
+            c->builder, fn_type, ctor_sym->value, argv, argc, "new");
+        free(argv);
+        return result;
+    }
+
+    /* Fallback: tipo no tiene constructor generado — malloc + init campos */
     CGTypeInfo *ti = cg_type_info_find(c, n->type_name);
     if (!ti) {
         cg_error(c, (HulkNode*)n, "tipo '%s' no registrado", n->type_name);
         return LLVMConstNull(c->t_i8ptr);
     }
 
-    /* malloc(sizeof(struct)) */
     LLVMValueRef size = LLVMSizeOf(ti->struct_type);
     LLVMTypeRef malloc_params[1] = { LLVMInt64TypeInContext(c->llvm_ctx) };
     LLVMTypeRef malloc_ft = LLVMFunctionType(c->t_i8ptr, malloc_params, 1, 0);
@@ -587,7 +736,6 @@ static LLVMValueRef emit_new(CodegenContext *c, NewExprNode *n) {
                                        c->fn_malloc, &size, 1, "raw");
     LLVMValueRef obj = LLVMBuildBitCast(c->builder, raw, ti->ptr_type, "obj");
 
-    /* Inicializar campos con argumentos del constructor */
     int arg_count = n->args.count < ti->field_count
                     ? n->args.count : ti->field_count;
     for (int i = 0; i < arg_count; i++) {
@@ -596,7 +744,6 @@ static LLVMValueRef emit_new(CodegenContext *c, NewExprNode *n) {
             c->builder, ti->struct_type, obj, i, "field.ptr");
         LLVMBuildStore(c->builder, val, gep);
     }
-
     return obj;
 }
 

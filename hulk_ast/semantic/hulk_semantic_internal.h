@@ -120,6 +120,7 @@ Symbol* sem_define_in(SemanticContext *ctx, Scope *scope, const char *name,
                       SymbolKind kind, HulkType *type, HulkNode *decl);
 Symbol* sem_lookup(Scope *scope, const char *name);
 Symbol* sem_lookup_local(Scope *scope, const char *name);
+Symbol* sem_lookup_member(HulkType *type, const char *name);
 void    sem_push_scope(SemanticContext *ctx);
 void    sem_pop_scope(SemanticContext *ctx);
 
@@ -140,6 +141,19 @@ HulkType* sem_type_new(SemanticContext *ctx, HulkTypeKind kind,
 int       sem_type_conforms(HulkType *child, HulkType *ancestor);
 HulkType* sem_type_join(SemanticContext *ctx, HulkType *a, HulkType *b);
 HulkType* sem_type_resolve(SemanticContext *ctx, const char *name);
+
+/* Helper: resuelve type_annotation o retorna t_object (con error si no existe) */
+static inline HulkType* sem_resolve_annotation(SemanticContext *c,
+                                                 const char *annotation,
+                                                 HulkNode *err_node) {
+    if (!annotation) return c->t_object;
+    HulkType *t = sem_type_resolve(c, annotation);
+    if (!t) {
+        sem_error(c, err_node, "tipo '%s' no definido", annotation);
+        return c->t_error;
+    }
+    return t;
+}
 
 /* ============================================================
  *  Verificación  (hulk_semantic_check.c / check_expr.c)

@@ -50,17 +50,22 @@ struct CGScope_s {
  *  Registro de tipos de usuario (TypeDef → struct LLVM)
  * ============================================================ */
 
-typedef struct {
+typedef struct CGTypeInfo_s CGTypeInfo;
+
+struct CGTypeInfo_s {
     const char   *name;
     LLVMTypeRef   struct_type;    /* tipo struct opaco */
     LLVMTypeRef   ptr_type;       /* puntero al struct */
     int           field_count;
     const char  **field_names;    /* nombres de atributos */
+    int           type_tag;       /* tag numérico único para RTTI */
     /* Métodos: nombre → LLVMValueRef función */
     CGSymbol    **methods;
     int           method_count;
     int           method_cap;
-} CGTypeInfo;
+    /* Herencia: tipo padre (NULL si no tiene) */
+    CGTypeInfo   *parent;
+};
 
 /* ============================================================
  *  Contexto de Generación de Código
@@ -145,6 +150,7 @@ CGSymbol*  cg_lookup_local(CGScope *scope, const char *name);
 
 CGTypeInfo* cg_type_info_create(CodegenContext *c, const char *name);
 CGTypeInfo* cg_type_info_find(CodegenContext *c, const char *name);
+CGTypeInfo* cg_type_info_find_by_tag(CodegenContext *c, int tag);
 void        cg_type_add_method(CGTypeInfo *ti, const char *name,
                                LLVMValueRef fn);
 

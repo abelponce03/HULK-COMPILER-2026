@@ -46,6 +46,9 @@ static const char* node_type_names[] = {
     "Self", "BaseCall", "DecorBlock", "DecorItem", "ConcatExpr"
 };
 
+_Static_assert(sizeof(node_type_names)/sizeof(node_type_names[0]) == NODE_HULK_COUNT,
+               "node_type_names out of sync with HulkNodeType enum");
+
 const char* hulk_node_type_name(HulkNodeType type) {
     if (type >= 0 && type < NODE_HULK_COUNT)
         return node_type_names[type];
@@ -57,6 +60,9 @@ static const char* binary_op_names[] = {
     "<", ">", "<=", ">=", "==", "!=",
     "&&", "||", "@", "@@"
 };
+
+_Static_assert(sizeof(binary_op_names)/sizeof(binary_op_names[0]) == OP_CONCAT_WS + 1,
+               "binary_op_names out of sync with BinaryOp enum");
 
 const char* hulk_binary_op_name(BinaryOp op) {
     if (op >= 0 && op <= OP_CONCAT_WS)

@@ -23,7 +23,9 @@ HulkType* sem_type_new(SemanticContext *ctx, HulkTypeKind kind,
 
     if (ctx->type_count >= ctx->type_cap) {
         int nc = ctx->type_cap == 0 ? 16 : ctx->type_cap * 2;
-        ctx->types = realloc(ctx->types, sizeof(HulkType*) * nc);
+        HulkType **tmp = realloc(ctx->types, sizeof(HulkType*) * nc);
+        if (!tmp) { free(t); return NULL; }
+        ctx->types = tmp;
         ctx->type_cap = nc;
     }
     ctx->types[ctx->type_count++] = t;

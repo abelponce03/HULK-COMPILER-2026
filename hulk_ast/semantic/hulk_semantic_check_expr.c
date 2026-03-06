@@ -207,8 +207,8 @@ static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
         MemberAccessNode *ma = (MemberAccessNode*)n->callee;
         HulkType *obj_t = sem_check_expr(c, ma->object);
 
-        if (obj_t && obj_t->members) {
-            Symbol *method = sem_lookup_local(obj_t->members, ma->member);
+        if (obj_t) {
+            Symbol *method = sem_lookup_member(obj_t, ma->member);
             if (method && method->kind == SYM_METHOD) {
                 char label[256];
                 snprintf(label, sizeof(label), "%s.%s",
@@ -239,8 +239,8 @@ static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
 
 static HulkType* check_member(SemanticContext *c, MemberAccessNode *n) {
     HulkType *obj_t = sem_check_expr(c, n->object);
-    if (obj_t && obj_t->members) {
-        Symbol *sym = sem_lookup_local(obj_t->members, n->member);
+    if (obj_t) {
+        Symbol *sym = sem_lookup_member(obj_t, n->member);
         if (sym) return sym->type ? sym->type : c->t_object;
     }
     if (obj_t && obj_t->kind != HULK_TYPE_ERROR)
@@ -262,12 +262,8 @@ static HulkType* check_let(SemanticContext *c, LetExprNode *n) {
 
         HulkType *decl_t = NULL;
         if (vb->type_annotation) {
-            decl_t = sem_type_resolve(c, vb->type_annotation);
-            if (!decl_t) {
-                sem_error(c, (HulkNode*)vb,
-                    "tipo '%s' no definido", vb->type_annotation);
-                decl_t = c->t_error;
-            }
+            decl_t = sem_resolve_annotation(c, vb->type_annotation,
+                                              (HulkNode*)vb);
             if (decl_t != c->t_error && !sem_type_conforms(init_t, decl_t))
                 sem_error(c, (HulkNode*)vb,
                     "inicializador de '%s' es %s, se esperaba %s",

@@ -114,7 +114,4 @@ int parser_create_predefined(Parser* p, const char* type, const char* table_cach
 // Libera recursos del parser
 void parser_destroy(Parser* p);
 
-// Parsea una cadena usando el parser
-int parser_parse_string(Parser* p, const char* input);
-
 #endif

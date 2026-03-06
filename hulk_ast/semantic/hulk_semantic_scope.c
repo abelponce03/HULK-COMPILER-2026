@@ -19,7 +19,9 @@ Scope* sem_scope_create(SemanticContext *ctx, Scope *parent) {
     /* Registrar para cleanup al final del análisis */
     if (ctx->scope_count >= ctx->scope_cap) {
         int nc = ctx->scope_cap == 0 ? 16 : ctx->scope_cap * 2;
-        ctx->all_scopes = realloc(ctx->all_scopes, sizeof(Scope*) * nc);
+        Scope **tmp = realloc(ctx->all_scopes, sizeof(Scope*) * nc);
+        if (!tmp) { free(s); return NULL; }
+        ctx->all_scopes = tmp;
         ctx->scope_cap = nc;
     }
     ctx->all_scopes[ctx->scope_count++] = s;
@@ -48,7 +50,9 @@ Symbol* sem_define_in(SemanticContext *ctx, Scope *scope, const char *name,
 
     if (scope->sym_count >= scope->sym_cap) {
         int nc = scope->sym_cap == 0 ? 8 : scope->sym_cap * 2;
-        scope->symbols = realloc(scope->symbols, sizeof(Symbol*) * nc);
+        Symbol **tmp = realloc(scope->symbols, sizeof(Symbol*) * nc);
+        if (!tmp) { free(sym); return NULL; }
+        scope->symbols = tmp;
         scope->sym_cap = nc;
     }
     scope->symbols[scope->sym_count++] = sym;
@@ -79,6 +83,18 @@ Symbol* sem_lookup(Scope *scope, const char *name) {
     for (Scope *s = scope; s; s = s->parent) {
         Symbol *sym = sem_lookup_local(s, name);
         if (sym) return sym;
+    }
+    return NULL;
+}
+
+/* Lookup un miembro caminando la cadena de herencia del tipo */
+Symbol* sem_lookup_member(HulkType *type, const char *name) {
+    if (!name) return NULL;
+    for (HulkType *t = type; t; t = t->parent) {
+        if (t->members) {
+            Symbol *sym = sem_lookup_local(t->members, name);
+            if (sym) return sym;
+        }
     }
     return NULL;
 }

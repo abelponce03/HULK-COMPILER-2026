@@ -13,6 +13,9 @@
  */
 
 #include "hulk_codegen_internal.h"
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 /* ============================================================
  *  Declarar funciones externas del runtime C
@@ -467,10 +470,24 @@ int hulk_codegen_to_executable(HulkNode *program, const char *out_file) {
     LLVMDisposeTargetMachine(tm);
     cg_context_free(&c);
 
-    /* Link: cc -o output output.o -lm */
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cc -o %s %s -lm", out_file, obj_path);
-    int ret = system(cmd);
+    /* Link: cc -o output output.o -lm (sin system() para evitar injection) */
+    int ret = 1;
+    {
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("fork");
+            remove(obj_path);
+            return 1;
+        }
+        if (pid == 0) {
+            execlp("cc", "cc", "-o", out_file, obj_path, "-lm", (char*)NULL);
+            perror("exec cc");
+            _exit(127);
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+        ret = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    }
 
     /* Limpiar .o temporal */
     remove(obj_path);

@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g -D_GNU_SOURCE
+CFLAGS = -Wall -Wextra -std=c99 -g -D_GNU_SOURCE -MMD -MP
 LDFLAGS = -lfl
 TARGET = hulk_compiler
 
@@ -165,8 +165,13 @@ clean:
 	rm -f *.ll1.cache
 	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.dot $(OUTPUT_DIR)/*.png
 	rm -f $(TEST_BINS)
+	find . -name '*.d' -delete
 
 # Reconstruir desde cero
 rebuild: clean $(TARGET)
 
 .PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen
+
+# Auto-generated dependency files
+-include $(OBJS:.o=.d)
+-include $(LIB_OBJS:.o=.d)

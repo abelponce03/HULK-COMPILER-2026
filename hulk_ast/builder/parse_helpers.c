@@ -11,6 +11,7 @@
  */
 
 #include "hulk_ast_builder_internal.h"
+#include "../../hulk_tokens.h"
 
 // ============================================================
 //  Manipulación de tokens
@@ -62,7 +63,10 @@ int expect(ASTBuilder *b, TokenType t) {
         return 1;
     }
     char buf[128];
-    snprintf(buf, sizeof(buf), "se esperaba token %d", (int)t);
+    const char *expected = get_token_name((int)t);
+    const char *found    = get_token_name((int)b->current.type);
+    snprintf(buf, sizeof(buf), "se esperaba '%s', se encontró '%s'",
+             expected ? expected : "?", found ? found : "?");
     error_at(b, buf);
     return 0;
 }
@@ -108,9 +112,11 @@ void synchronize(ASTBuilder *b) {
 void parse_arg_list(ASTBuilder *b, HulkNodeList *out) {
     if (check(b, TOKEN_RPAREN)) return;
 
-    hulk_node_list_push(out, parse_expr(b));
+    HulkNode *arg = parse_expr(b);
+    if (arg) hulk_node_list_push(out, arg);
     while (match(b, TOKEN_COMMA)) {
-        hulk_node_list_push(out, parse_expr(b));
+        arg = parse_expr(b);
+        if (arg) hulk_node_list_push(out, arg);
     }
 }
 
@@ -122,9 +128,10 @@ void parse_arg_id_list(ASTBuilder *b, HulkNodeList *out) {
     do {
         int line = cur_line(b), col = cur_col(b);
         char *pname = expect_ident(b);
+        if (!pname) break;
         char *ptype = parse_type_annotation(b);
         VarBindingNode *vb = hulk_ast_var_binding(b->ctx, pname, ptype, line, col);
-        hulk_node_list_push(out, (HulkNode*)vb);
+        if (vb) hulk_node_list_push(out, (HulkNode*)vb);
     } while (match(b, TOKEN_COMMA));
 }
 

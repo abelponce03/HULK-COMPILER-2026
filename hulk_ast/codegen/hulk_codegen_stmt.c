@@ -251,6 +251,12 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     ti->struct_type = st;
     ti->ptr_type = LLVMPointerType(st, 0);
 
+    /* Enlazar con tipo padre si hereda */
+    if (n->parent) {
+        CGTypeInfo *parent_ti = cg_type_info_find(c, n->parent);
+        ti->parent = parent_ti;  /* puede ser NULL si padre aún no declarado */
+    }
+
     /* Recoger campos (atributos + parámetros del constructor) */
     int attr_count = 0;
     for (int i = 0; i < n->members.count; i++) {
