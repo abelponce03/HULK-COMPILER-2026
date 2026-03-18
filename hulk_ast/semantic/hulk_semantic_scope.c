@@ -15,6 +15,7 @@ Scope* sem_scope_create(SemanticContext *ctx, Scope *parent) {
     Scope *s = calloc(1, sizeof(Scope));
     if (!s) return NULL;
     s->parent = parent;
+    s->func_node = parent ? parent->func_node : NULL;
 
     /* Registrar para cleanup al final del análisis */
     if (ctx->scope_count >= ctx->scope_cap) {
@@ -97,6 +98,54 @@ Symbol* sem_lookup_member(HulkType *type, const char *name) {
         }
     }
     return NULL;
+}
+
+/* ============================================================
+ *  Captura de Variables (Closures)
+ * ============================================================ */
+
+static int is_captured(HulkNodeList *list, const char *name) {
+    for (int i = 0; i < list->count; i++) {
+        VarBindingNode *vb = (VarBindingNode*)list->items[i];
+        if (strcmp(vb->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+void sem_capture_variable(SemanticContext *ctx, Symbol *sym) {
+    if (!sym || sym->kind != SYM_VARIABLE) return;
+
+    /* Find the scope where sym was defined */
+    Scope *decl_scope = NULL;
+    for (Scope *s = ctx->current; s; s = s->parent) {
+        if (sem_lookup_local(s, sym->name) == sym) {
+            decl_scope = s;
+            break;
+        }
+    }
+    if (!decl_scope || !decl_scope->func_node) return;
+
+    /* Iterate from current scope up to decl_scope, adding the capture
+       to all functions in between. */
+    HulkNode *last_func = NULL;
+    for (Scope *s = ctx->current; s && s != decl_scope; s = s->parent) {
+        HulkNode *f = s->func_node;
+        if (f && f != last_func && f != decl_scope->func_node) {
+            HulkNodeList *caps = NULL;
+            if (f->type == NODE_FUNCTION_DEF)
+                caps = &((FunctionDefNode*)f)->captured_vars;
+            else if (f->type == NODE_FUNCTION_EXPR)
+                caps = &((FunctionExprNode*)f)->captured_vars;
+
+            if (caps && !is_captured(caps, sym->name)) {
+                // Add capture binding (fake VarBindingNode just to keep name and annotation)
+                int line = f->line, col = f->col;
+                VarBindingNode *cap = hulk_ast_var_binding(ctx->ast_ctx, sym->name, NULL, line, col);
+                hulk_node_list_push(caps, (HulkNode*)cap);
+            }
+            last_func = f;
+        }
+    }
 }
 
 /* ============================================================

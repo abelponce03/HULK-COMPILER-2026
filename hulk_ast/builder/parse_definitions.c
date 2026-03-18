@@ -145,8 +145,8 @@ HulkNode* parse_type_def(ASTBuilder *b) {
 
 // ============================================================
 //  DecorBlock
-//  DECOR DecorItems DecorNext
-//  DecorNext → DECOR DecorItems DecorNext | FunctionDef | TypeDef
+//  CONCAT DecorItems DecorNext
+//  DecorNext → CONCAT DecorItems DecorNext | FunctionDef | TypeDef
 // ============================================================
 
 static void parse_decor_items(ASTBuilder *b, HulkNodeList *decorators) {

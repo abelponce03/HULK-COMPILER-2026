@@ -1,0 +1,5 @@
+let factor = 10,
+    multiply = function(x: Number) => x * factor
+in {
+    print(multiply(5));
+};

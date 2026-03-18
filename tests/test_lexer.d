@@ -1,4 +1,4 @@
-tests/test_lexer: tests/test_lexer.c tests/test_framework.h \
+tests/test_lexer.exe: tests/test_lexer.c tests/test_framework.h \
  tests/../hulk_tokens.h \
  tests/../generador_analizadores_lexicos/token_types.h \
  tests/../hulk_compiler.h tests/../generador_analizadores_lexicos/afd.h \

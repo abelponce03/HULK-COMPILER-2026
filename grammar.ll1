@@ -27,6 +27,7 @@ MethodDef    -> IDENT LPAREN ArgIdList RPAREN FunctionBody
 # MethodBody tiene la misma definición que FunctionBody.
 # Se mantiene como NT separado para claridad semántica dentro de TypeMemberTail.
 MethodBody   -> ARROW Expr SEMICOLON | BlockStmt
+ClosureBody  -> ARROW Expr | BlockStmt
 ArgIdList    -> ArgId ArgIdListTail | ε
 ArgIdListTail-> COMMA ArgId ArgIdListTail | ε
 ArgId        -> IDENT TypeAnnotation
@@ -90,6 +91,7 @@ Primary      -> NUMBER
               | NEW IDENT LPAREN ArgList RPAREN
               | SELF PrimaryTail
               | BASE LPAREN ArgList RPAREN
+              | FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation ClosureBody
 PrimaryTail  -> LPAREN ArgList RPAREN PrimaryTail
               | DOT IDENT PrimaryTail
               | ASSIGN_DESTRUCT Expr

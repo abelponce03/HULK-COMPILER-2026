@@ -34,11 +34,17 @@ static int hc_ready = 0;
 static void ensure_compiler(void) {
     if (!hc_ready) {
         // Silenciar output del pipeline de construcción
-        FILE *saved = stdout;
-        stdout = fopen("/dev/null", "w");
+#ifdef _WIN32
+        freopen("NUL", "w", stdout);
+#else
+        freopen("/dev/null", "w", stdout);
+#endif
         hc_ready = hulk_compiler_init(&hc);
-        fclose(stdout);
-        stdout = saved;
+#ifdef _WIN32
+        freopen("CON", "w", stdout);
+#else
+        freopen("/dev/tty", "w", stdout);
+#endif
     }
 }
 
@@ -1052,11 +1058,7 @@ TEST(new_with_method_call) {
 TEST(error_returns_null) {
     HulkASTContext ctx;
     // Redirect stderr to suppress error messages
-    FILE *saved_err = stderr;
-    stderr = fopen("/dev/null", "w");
     HulkNode *ast = build("let = ;", &ctx);
-    fclose(stderr);
-    stderr = saved_err;
     // Should return NULL on error
     ASSERT_NULL(ast);
     hulk_ast_context_free(&ctx);
@@ -1064,11 +1066,7 @@ TEST(error_returns_null) {
 
 TEST(error_missing_semicolon) {
     HulkASTContext ctx;
-    FILE *saved_err = stderr;
-    stderr = fopen("/dev/null", "w");
     HulkNode *ast = build("42", &ctx);
-    fclose(stderr);
-    stderr = saved_err;
     // Missing semicolon → error → NULL
     ASSERT_NULL(ast);
     hulk_ast_context_free(&ctx);

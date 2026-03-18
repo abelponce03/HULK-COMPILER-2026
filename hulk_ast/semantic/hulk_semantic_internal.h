@@ -75,6 +75,7 @@ struct Scope_s {
     Symbol **symbols;
     int      sym_count;
     int      sym_cap;
+    HulkNode *func_node;
 };
 
 /* ============================================================
@@ -123,6 +124,7 @@ Symbol* sem_lookup_local(Scope *scope, const char *name);
 Symbol* sem_lookup_member(HulkType *type, const char *name);
 void    sem_push_scope(SemanticContext *ctx);
 void    sem_pop_scope(SemanticContext *ctx);
+void    sem_capture_variable(SemanticContext *ctx, Symbol *sym);
 
 /* ============================================================
  *  Error  (hulk_semantic_scope.c)

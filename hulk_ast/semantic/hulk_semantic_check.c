@@ -235,6 +235,7 @@ static void check_top_level(SemanticContext *c, HulkNode *decl) {
 
 static void check_function_def(SemanticContext *c, FunctionDefNode *fn) {
     sem_push_scope(c);
+    c->current->func_node = (HulkNode*)fn;
 
     for (int i = 0; i < fn->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)fn->params.items[i];

@@ -153,38 +153,17 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
  *  Forward-declare una función
  * ============================================================ */
 
-static LLVMTypeRef infer_return_type(CodegenContext *c, const char *ann) {
-    if (!ann) return c->t_double;  /* default */
-    if (strcmp(ann, "Number") == 0) return c->t_double;
-    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
-    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
-    if (strcmp(ann, "Void") == 0) return c->t_void;
-    /* Para tipos de usuario, retornar pointer genérico */
-    CGTypeInfo *ti = cg_type_info_find(c, ann);
-    if (ti) return ti->ptr_type;
-    return c->t_double;
-}
-
-static LLVMTypeRef infer_param_type(CodegenContext *c, const char *ann) {
-    if (!ann) return c->t_double;
-    if (strcmp(ann, "Number") == 0) return c->t_double;
-    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
-    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
-    CGTypeInfo *ti = cg_type_info_find(c, ann);
-    if (ti) return ti->ptr_type;
-    return c->t_double;
-}
-
 static void forward_declare_function(CodegenContext *c, FunctionDefNode *n) {
-    int argc = n->params.count;
-    LLVMTypeRef *param_types = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
+    int argc = n->params.count + 1; /* +1 para env_ptr */
+    LLVMTypeRef *param_types = calloc(argc, sizeof(LLVMTypeRef));
 
-    for (int i = 0; i < argc; i++) {
+    param_types[0] = c->t_i8ptr; /* env_ptr */
+    for (int i = 0; i < n->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        param_types[i] = infer_param_type(c, p->type_annotation);
+        param_types[i + 1] = cg_infer_param_type(c, p->type_annotation);
     }
 
-    LLVMTypeRef ret_t = infer_return_type(c, n->return_type);
+    LLVMTypeRef ret_t = cg_infer_return_type(c, n->return_type);
     LLVMTypeRef fn_type = LLVMFunctionType(ret_t, param_types, argc, 0);
     LLVMValueRef fn = LLVMAddFunction(c->module, n->name, fn_type);
 
@@ -212,10 +191,13 @@ static void emit_function_def(CodegenContext *c, FunctionDefNode *n) {
 
     cg_push_scope(c);
 
-    /* Crear allocas para parámetros */
+    /* El parámetro 0 es el env_ptr */
+    c->env_ptr = LLVMGetParam(fn, 0);
+
+    /* Crear allocas para parámetros (ahora desplazados por 1) */
     for (int i = 0; i < n->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        LLVMValueRef param_val = LLVMGetParam(fn, i);
+        LLVMValueRef param_val = LLVMGetParam(fn, i + 1);
         LLVMTypeRef  param_t   = LLVMTypeOf(param_val);
         LLVMValueRef alloca = cg_create_entry_alloca(c, param_t, p->name);
         LLVMBuildStore(c->builder, param_val, alloca);
@@ -276,7 +258,7 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     /* Params del constructor → campos */
     for (int i = 0; i < n->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        field_types[idx] = infer_param_type(c, p->type_annotation);
+        field_types[idx] = cg_infer_param_type(c, p->type_annotation);
         ti->field_names[idx] = p->name;
         idx++;
     }
@@ -284,7 +266,7 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     for (int i = 0; i < n->members.count; i++) {
         if (n->members.items[i]->type == NODE_ATTRIBUTE_DEF) {
             AttributeDefNode *a = (AttributeDefNode*)n->members.items[i];
-            field_types[idx] = infer_param_type(c, a->type_annotation);
+            field_types[idx] = cg_infer_param_type(c, a->type_annotation);
             ti->field_names[idx] = a->name;
             idx++;
         }
@@ -299,7 +281,7 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
                                        sizeof(LLVMTypeRef));
     for (int i = 0; i < ctor_argc; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        ctor_params[i] = infer_param_type(c, p->type_annotation);
+        ctor_params[i] = cg_infer_param_type(c, p->type_annotation);
     }
     char ctor_name[256];
     snprintf(ctor_name, sizeof(ctor_name), "%s_new", n->name);
@@ -324,10 +306,10 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
             m_params[0] = ti->ptr_type;  /* self */
             for (int j = 0; j < m->params.count; j++) {
                 VarBindingNode *p = (VarBindingNode*)m->params.items[j];
-                m_params[j + 1] = infer_param_type(c, p->type_annotation);
+                m_params[j + 1] = cg_infer_param_type(c, p->type_annotation);
             }
 
-            LLVMTypeRef m_ret = infer_return_type(c, m->return_type);
+            LLVMTypeRef m_ret = cg_infer_return_type(c, m->return_type);
             char mname[256];
             snprintf(mname, sizeof(mname), "%s_%s", n->name, m->name);
             LLVMTypeRef m_ft = LLVMFunctionType(m_ret, m_params, m_argc, 0);
@@ -513,27 +495,53 @@ static void emit_decor_block(CodegenContext *c, DecorBlockNode *n) {
             LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(c->builder);
 
             /* Construir llamada: dec(current_val, args...) */
-            int total_args = 1 + dec->args.count;
-            LLVMValueRef *args = calloc(total_args, sizeof(LLVMValueRef));
-            LLVMTypeRef  *argt = calloc(total_args, sizeof(LLVMTypeRef));
-            args[0] = current_val;
-            argt[0] = LLVMTypeOf(current_val);
+            int total_args = 1 + dec->args.count; /* target func + args */
+            int call_argc = total_args + 1; /* + env para el decorador mismo */
+            LLVMValueRef *args = calloc(call_argc, sizeof(LLVMValueRef));
+            LLVMTypeRef  *argt = calloc(call_argc, sizeof(LLVMTypeRef));
+            
+            /* El decorador se llama globalmente sin env_ptr (o extraído si es un closure, pero asumimos RAW function for now si es global decorator) */
+            /* En realidad if dec_sym is global it's raw. Let's pass null env. */
+            args[0] = LLVMConstNull(c->t_i8ptr);
+            argt[0] = c->t_i8ptr;
+            
+            /* Si current_val es RAW function (ej. primera iteración sobre el target), debemos empaquetarlo en un Closure aquí, porque los decoradores esperan un Closure. */
+            /* Mejor: podemos usar emit_ident(c, dec_sym) pero estamos construyendo args manualmente. */
+            LLVMValueRef arg_func_val = current_val;
+            if (i == n->decorators.count - 1 && sym->is_func) {
+                LLVMValueRef null_env = LLVMConstNull(c->t_i8ptr);
+                LLVMValueRef fn_ptr_cast = LLVMBuildBitCast(c->builder, arg_func_val, c->t_i8ptr, "fncast");
+                LLVMValueRef closure_v = LLVMGetUndef(c->t_closure);
+                closure_v = LLVMBuildInsertValue(c->builder, closure_v, fn_ptr_cast, 0, "c1");
+                closure_v = LLVMBuildInsertValue(c->builder, closure_v, null_env, 1, "c2");
+
+                LLVMValueRef size = LLVMSizeOf(c->t_closure);
+                LLVMTypeRef mparams[1] = { LLVMInt64TypeInContext(c->llvm_ctx) };
+                LLVMTypeRef m_ft = LLVMFunctionType(c->t_i8ptr, mparams, 1, 0);
+                LLVMValueRef raw = LLVMBuildCall2(c->builder, m_ft, c->fn_malloc, &size, 1, "raw");
+                LLVMValueRef ptr = LLVMBuildBitCast(c->builder, raw, c->t_closure_ptr, "clos.ptr");
+                LLVMBuildStore(c->builder, closure_v, ptr);
+                arg_func_val = ptr;
+            }
+
+            args[1] = arg_func_val;
+            argt[1] = LLVMTypeOf(arg_func_val);
             for (int j = 0; j < dec->args.count; j++) {
-                args[j + 1] = cg_emit_expr(c, dec->args.items[j]);
-                argt[j + 1] = LLVMTypeOf(args[j + 1]);
+                args[j + 2] = cg_emit_expr(c, dec->args.items[j]);
+                argt[j + 2] = LLVMTypeOf(args[j + 2]);
             }
 
             LLVMTypeRef dec_fn_type;
             if (LLVMIsAFunction(dec_sym->value)) {
                 dec_fn_type = LLVMGlobalGetValueType(dec_sym->value);
             } else {
-                LLVMTypeRef ret_t = LLVMTypeOf(current_val);
-                dec_fn_type = LLVMFunctionType(ret_t, argt, total_args, 0);
+                LLVMTypeRef ret_t = LLVMTypeOf(arg_func_val);
+                dec_fn_type = LLVMFunctionType(ret_t, argt, call_argc, 0);
             }
 
             current_val = LLVMBuildCall2(c->builder, dec_fn_type,
                                           dec_sym->value, args,
-                                          total_args, "decor");
+                                          call_argc, "decor");
             free(args);
             free(argt);
 
@@ -544,6 +552,7 @@ static void emit_decor_block(CodegenContext *c, DecorBlockNode *n) {
 
         /* Actualizar el símbolo global con el valor decorado */
         sym->value = current_val;
+        sym->is_func = 0;  /* Ahora es una variable que contiene un Closure_ptr */
 
     } else if (n->target->type == NODE_TYPE_DEF) {
         emit_type_def(c, (TypeDefNode*)n->target);

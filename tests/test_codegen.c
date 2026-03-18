@@ -35,11 +35,17 @@ static int hc_ready = 0;
 
 static void ensure_compiler(void) {
     if (!hc_ready) {
-        FILE *saved = stdout;
-        stdout = fopen("/dev/null", "w");
+#ifdef _WIN32
+        freopen("NUL", "w", stdout);
+#else
+        freopen("/dev/null", "w", stdout);
+#endif
         hc_ready = hulk_compiler_init(&hc);
-        fclose(stdout);
-        stdout = saved;
+#ifdef _WIN32
+        freopen("CON", "w", stdout);
+#else
+        freopen("/dev/tty", "w", stdout);
+#endif
     }
 }
 
@@ -49,9 +55,6 @@ static int codegen_to_file(const char *src, const char *out_file) {
     ensure_compiler();
     HulkASTContext ctx;
     hulk_ast_context_init(&ctx);
-
-    FILE *saved_err = stderr;
-    stderr = fopen("/dev/null", "w");
 
     HulkNode *ast = hulk_build_ast(&ctx, hc.dfa, src);
     int result = -1;
@@ -63,9 +66,6 @@ static int codegen_to_file(const char *src, const char *out_file) {
             result = sem_err;
         }
     }
-
-    fclose(stderr);
-    stderr = saved_err;
 
     hulk_ast_context_free(&ctx);
     return result;

@@ -1,4 +1,4 @@
-tests/test_semantic: tests/test_semantic.c tests/test_framework.h \
+tests/test_semantic.exe: tests/test_semantic.c tests/test_framework.h \
  tests/../hulk_compiler.h tests/../generador_analizadores_lexicos/afd.h \
  tests/../generador_analizadores_lexicos/ast.h \
  tests/../hulk_ast/core/hulk_ast.h \

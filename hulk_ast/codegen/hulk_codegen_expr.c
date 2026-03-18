@@ -27,6 +27,7 @@ static LLVMValueRef emit_new(CodegenContext *c, NewExprNode *n);
 static LLVMValueRef emit_assign(CodegenContext *c, AssignNode *n);
 static LLVMValueRef emit_destruct(CodegenContext *c, DestructAssignNode *n);
 static LLVMValueRef emit_self(CodegenContext *c, SelfNode *n);
+static LLVMValueRef emit_function_expr(CodegenContext *c, FunctionExprNode *n);
 
 /* ============================================================
  *  Dispatcher
@@ -65,6 +66,7 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
         case NODE_ASSIGN:          return emit_assign(c, (AssignNode*)node);
         case NODE_DESTRUCT_ASSIGN: return emit_destruct(c, (DestructAssignNode*)node);
         case NODE_SELF:            return emit_self(c, (SelfNode*)node);
+        case NODE_FUNCTION_EXPR:   return emit_function_expr(c, (FunctionExprNode*)node);
         case NODE_AS_EXPR: {
             /* as es un no-op en IR (el tipo estático cambia, no el runtime) */
             AsExprNode *n = (AsExprNode*)node;
@@ -153,9 +155,25 @@ static LLVMValueRef emit_ident(CodegenContext *c, IdentNode *n) {
         cg_error(c, (HulkNode*)n, "variable '%s' no definida", n->name);
         return LLVMConstReal(c->t_double, 0.0);
     }
-    if (sym->is_func) return sym->value;
+    
+    if (sym->is_func) {
+        /* Es una función global — empaquetar en struct Closure */
+        LLVMValueRef null_env = LLVMConstNull(c->t_i8ptr);
+        LLVMValueRef fn_ptr_cast = LLVMBuildBitCast(c->builder, sym->value, c->t_i8ptr, "fncast");
+        LLVMValueRef closure_v = LLVMGetUndef(c->t_closure);
+        closure_v = LLVMBuildInsertValue(c->builder, closure_v, fn_ptr_cast, 0, "c1");
+        closure_v = LLVMBuildInsertValue(c->builder, closure_v, null_env, 1, "c2");
 
-    /* Variable: cargar desde alloca */
+        LLVMValueRef size = LLVMSizeOf(c->t_closure);
+        LLVMTypeRef mparams[1] = { LLVMInt64TypeInContext(c->llvm_ctx) };
+        LLVMTypeRef m_ft = LLVMFunctionType(c->t_i8ptr, mparams, 1, 0);
+        LLVMValueRef raw = LLVMBuildCall2(c->builder, m_ft, c->fn_malloc, &size, 1, "raw");
+        LLVMValueRef ptr = LLVMBuildBitCast(c->builder, raw, c->t_closure_ptr, "clos.ptr");
+        LLVMBuildStore(c->builder, closure_v, ptr);
+        return ptr;
+    }
+
+    /* Variable: cargar desde alloca / ptr guardado */
     return LLVMBuildLoad2(c->builder, sym->type, sym->value, n->name);
 }
 
@@ -302,7 +320,7 @@ static LLVMValueRef emit_to_string(CodegenContext *c, HulkNode *node) {
  * ============================================================ */
 
 static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
-    /* Caso 1: callee es identificador → llamada directa */
+    /* Caso 1: callee es identificador de función global */
     if (n->callee->type == NODE_IDENT) {
         IdentNode *id = (IdentNode*)n->callee;
         CGSymbol *sym = cg_lookup(c->current, id->name);
@@ -311,41 +329,32 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
             return LLVMConstReal(c->t_double, 0.0);
         }
 
-        LLVMValueRef fn_val = sym->value;
-        if (!sym->is_func) {
-            /* Variable que contiene function pointer — cargar */
-            fn_val = LLVMBuildLoad2(c->builder, sym->type, sym->value, "fptr");
-        }
+        if (sym->is_func) {
+            /* Llamada directa a función global (env_ptr = NULL) */
+            int argc = n->args.count + 1; /* +1 para env_ptr */
+            LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
+            LLVMTypeRef  *argt = calloc(argc, sizeof(LLVMTypeRef));
+            
+            argv[0] = LLVMConstNull(c->t_i8ptr);
+            argt[0] = c->t_i8ptr;
+            
+            for (int i = 0; i < n->args.count; i++) {
+                argv[i + 1] = cg_emit_expr(c, n->args.items[i]);
+                argt[i + 1] = LLVMTypeOf(argv[i + 1]);
+            }
 
-        int argc = n->args.count;
-        LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
-        LLVMTypeRef  *argt = calloc(argc, sizeof(LLVMTypeRef));
-        for (int i = 0; i < argc; i++) {
-            argv[i] = cg_emit_expr(c, n->args.items[i]);
-            argt[i] = LLVMTypeOf(argv[i]);
+            LLVMTypeRef fn_type = LLVMGlobalGetValueType(sym->value);
+            LLVMTypeRef ret_type = LLVMGetReturnType(fn_type);
+            const char *call_name = (ret_type == c->t_void) ? "" : "call";
+            LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
+                                                  sym->value, argv, argc, call_name);
+            free(argv);
+            free(argt);
+            return result;
         }
-
-        /* Obtener tipo de función: si podemos, de la función; si no, construir */
-        LLVMTypeRef fn_type;
-        if (LLVMIsAFunction(fn_val)) {
-            fn_type = LLVMGlobalGetValueType(fn_val);
-        } else {
-            /* Función variádica o pointer — construir tipo */
-            LLVMTypeRef ret_t = c->t_double;
-            fn_type = LLVMFunctionType(ret_t, argt, argc, 0);
-        }
-
-        /* LLVM: void calls can't have a name */
-        LLVMTypeRef ret_type = LLVMGetReturnType(fn_type);
-        const char *call_name = (ret_type == c->t_void) ? "" : "call";
-        LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
-                                              fn_val, argv, argc, call_name);
-        free(argv);
-        free(argt);
-        return result;
     }
 
-    /* Caso 2: callee es member access → llamada a método */
+    /* Caso 2: callee es member access → llamada a método (sin cambios, usa self) */
     if (n->callee->type == NODE_MEMBER_ACCESS) {
         MemberAccessNode *ma = (MemberAccessNode*)n->callee;
         LLVMValueRef obj = cg_emit_expr(c, ma->object);
@@ -390,8 +399,7 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
             fn_val  = msym->value;
             fn_type = LLVMGlobalGetValueType(fn_val);
         } else {
-            /* Fallback: buscar como método en type_infos */
-            /* Construir tipo genérico */
+            /* Fallback: construir tipo genérico */
             LLVMTypeRef *argt = calloc(argc, sizeof(LLVMTypeRef));
             for (int i = 0; i < argc; i++)
                 argt[i] = LLVMTypeOf(argv[i]);
@@ -402,24 +410,45 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
             return LLVMConstReal(c->t_double, 0.0);
         }
 
+        LLVMTypeRef ret_type = LLVMGetReturnType(fn_type);
+        const char *call_name = (ret_type == c->t_void) ? "" : "mcall";
         LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
-                                              fn_val, argv, argc, "mcall");
+                                              fn_val, argv, argc, call_name);
         free(argv);
         return result;
     }
 
-    /* Caso 3: expresión genérica como callee */
-    LLVMValueRef callee_val = cg_emit_expr(c, n->callee);
-    int argc = n->args.count;
-    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
-    LLVMTypeRef  *argt = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
-    for (int i = 0; i < argc; i++) {
-        argv[i] = cg_emit_expr(c, n->args.items[i]);
-        argt[i] = LLVMTypeOf(argv[i]);
+    /* Caso 3: callee es una variable / expresión -> Closure pointer */
+    LLVMValueRef closure_ptr = cg_emit_expr(c, n->callee);
+    
+    /* GEP fn_ptr (index 0) y env_ptr (index 1) */
+    LLVMValueRef fn_ptr_gep = LLVMBuildStructGEP2(c->builder, c->t_closure, closure_ptr, 0, "fn.gep");
+    LLVMValueRef fn_ptr_i8 = LLVMBuildLoad2(c->builder, c->t_i8ptr, fn_ptr_gep, "fn.i8");
+    
+    LLVMValueRef env_ptr_gep = LLVMBuildStructGEP2(c->builder, c->t_closure, closure_ptr, 1, "env.gep");
+    LLVMValueRef env_ptr = LLVMBuildLoad2(c->builder, c->t_i8ptr, env_ptr_gep, "env.ptr");
+
+    int argc = n->args.count + 1;
+    LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
+    LLVMTypeRef  *argt = calloc(argc, sizeof(LLVMTypeRef));
+    
+    argv[0] = env_ptr;
+    argt[0] = c->t_i8ptr;
+    
+    for (int i = 0; i < n->args.count; i++) {
+        argv[i + 1] = cg_emit_expr(c, n->args.items[i]);
+        argt[i + 1] = LLVMTypeOf(argv[i + 1]);
     }
+    
+    /* Construir signature a partir de argumentos pasados (HULK = dynamic)
+       NOTA: En HULK real, inferiríamos tipos, pero por defecto asume double */
     LLVMTypeRef fn_type = LLVMFunctionType(c->t_double, argt, argc, 0);
+    /* Castear el puntero crudo a función tipada */
+    LLVMTypeRef fn_ptr_t = LLVMPointerType(fn_type, 0);
+    LLVMValueRef fn_val = LLVMBuildBitCast(c->builder, fn_ptr_i8, fn_ptr_t, "fn.cast");
+
     LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
-                                          callee_val, argv, argc, "gcall");
+                                          fn_val, argv, argc, "gcall");
     free(argv);
     free(argt);
     return result;
@@ -790,4 +819,152 @@ static LLVMValueRef emit_self(CodegenContext *c, SelfNode *n) {
     if (c->self_ptr) return c->self_ptr;
     cg_error(c, (HulkNode*)n, "'self' fuera de un tipo");
     return LLVMConstNull(c->t_i8ptr);
+}
+
+/* ============================================================
+ *  Function Expression (Closures)
+ * ============================================================ */
+
+static LLVMValueRef emit_function_expr(CodegenContext *c, FunctionExprNode *n) {
+    /* 1. Malloc environment struct and store captured variables */
+    int cap_count = n->captured_vars.count;
+    LLVMTypeRef *cap_types = NULL;
+    LLVMValueRef *cap_vals = NULL;
+    LLVMTypeRef env_struct_ty = c->t_i8ptr;
+
+    if (cap_count > 0) {
+        cap_types = calloc(cap_count, sizeof(LLVMTypeRef));
+        cap_vals = calloc(cap_count, sizeof(LLVMValueRef));
+        for (int i = 0; i < cap_count; i++) {
+            VarBindingNode *vb = (VarBindingNode*)n->captured_vars.items[i];
+            CGSymbol *sym = cg_lookup(c->current, vb->name);
+            if (!sym) {
+                cg_error(c, (HulkNode*)vb, "variable capturada '%s' no encontrada", vb->name);
+                cap_types[i] = c->t_double;
+                cap_vals[i] = LLVMConstReal(c->t_double, 0.0);
+                continue;
+            }
+            cap_types[i] = sym->type;
+            if (sym->is_func) {
+                /* Función global capturada — la empaquetamos */
+                LLVMValueRef null_env = LLVMConstNull(c->t_i8ptr);
+                LLVMValueRef fn_ptr_cast = LLVMBuildBitCast(c->builder, sym->value, c->t_i8ptr, "fncast");
+                LLVMValueRef closure_v = LLVMGetUndef(c->t_closure);
+                closure_v = LLVMBuildInsertValue(c->builder, closure_v, fn_ptr_cast, 0, "c1");
+                closure_v = LLVMBuildInsertValue(c->builder, closure_v, null_env, 1, "c2");
+
+                LLVMValueRef size = LLVMSizeOf(c->t_closure);
+                LLVMTypeRef mparams[1] = { LLVMInt64TypeInContext(c->llvm_ctx) };
+                LLVMTypeRef m_ft = LLVMFunctionType(c->t_i8ptr, mparams, 1, 0);
+                LLVMValueRef raw = LLVMBuildCall2(c->builder, m_ft, c->fn_malloc, &size, 1, "raw");
+                LLVMValueRef ptr = LLVMBuildBitCast(c->builder, raw, c->t_closure_ptr, "clos.ptr");
+                LLVMBuildStore(c->builder, closure_v, ptr);
+                
+                cap_types[i] = c->t_closure_ptr;
+                cap_vals[i] = ptr;
+            } else {
+                cap_vals[i] = LLVMBuildLoad2(c->builder, sym->type, sym->value, "cap.val");
+            }
+        }
+        env_struct_ty = LLVMStructTypeInContext(c->llvm_ctx, cap_types, cap_count, 0);
+    }
+
+    LLVMValueRef typed_env = NULL;
+    LLVMValueRef raw_env = LLVMConstNull(c->t_i8ptr);
+
+    if (cap_count > 0) {
+        LLVMValueRef env_size = LLVMSizeOf(env_struct_ty);
+        LLVMTypeRef malloc_p = LLVMInt64TypeInContext(c->llvm_ctx);
+        LLVMTypeRef malloc_ft = LLVMFunctionType(c->t_i8ptr, &malloc_p, 1, 0);
+        raw_env = LLVMBuildCall2(c->builder, malloc_ft, c->fn_malloc, &env_size, 1, "raw.env");
+        typed_env = LLVMBuildBitCast(c->builder, raw_env, LLVMPointerType(env_struct_ty, 0), "env.ptr");
+
+        for (int i = 0; i < cap_count; i++) {
+            LLVMValueRef gep = LLVMBuildStructGEP2(c->builder, env_struct_ty, typed_env, i, "env.gep");
+            LLVMBuildStore(c->builder, cap_vals[i], gep);
+        }
+    }
+
+    /* 2. Create inner function */
+    int argc = n->params.count + 1;
+    LLVMTypeRef *param_types = calloc(argc, sizeof(LLVMTypeRef));
+    param_types[0] = c->t_i8ptr;
+    for (int i = 0; i < n->params.count; i++) {
+        VarBindingNode *p = (VarBindingNode*)n->params.items[i];
+        param_types[i + 1] = cg_infer_param_type(c, p->type_annotation);
+    }
+
+    LLVMTypeRef ret_t = cg_infer_return_type(c, n->return_type);
+    LLVMTypeRef fn_type = LLVMFunctionType(ret_t, param_types, argc, 0);
+    
+    static int anon_count = 0;
+    char fn_name[64];
+    snprintf(fn_name, sizeof(fn_name), "__anon_fn_%d", ++anon_count);
+    LLVMValueRef fn = LLVMAddFunction(c->module, fn_name, fn_type);
+
+    /* 3. Emit inner function body */
+    LLVMValueRef saved_fn = c->current_fn;
+    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(c->builder);
+
+    c->current_fn = fn;
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(c->llvm_ctx, fn, "entry");
+    LLVMPositionBuilderAtEnd(c->builder, entry);
+
+    cg_push_scope(c);
+
+    LLVMValueRef env_param = LLVMGetParam(fn, 0);
+
+    /* Unpack environment onto local allocas */
+    if (cap_count > 0) {
+        LLVMValueRef typed_env_arg = LLVMBuildBitCast(c->builder, env_param, LLVMPointerType(env_struct_ty, 0), "env.cast");
+        for (int i = 0; i < cap_count; i++) {
+            VarBindingNode *vb = (VarBindingNode*)n->captured_vars.items[i];
+            LLVMValueRef gep = LLVMBuildStructGEP2(c->builder, env_struct_ty, typed_env_arg, i, "env.gep");
+            LLVMValueRef val = LLVMBuildLoad2(c->builder, cap_types[i], gep, "env.val");
+            
+            LLVMValueRef alloca = cg_create_entry_alloca(c, cap_types[i], vb->name);
+            LLVMBuildStore(c->builder, val, alloca);
+            cg_define(c, vb->name, alloca, cap_types[i], 0);
+        }
+    }
+
+    for (int i = 0; i < n->params.count; i++) {
+        VarBindingNode *p = (VarBindingNode*)n->params.items[i];
+        LLVMValueRef param_val = LLVMGetParam(fn, i + 1);
+        LLVMTypeRef  param_t   = LLVMTypeOf(param_val);
+        LLVMValueRef alloca = cg_create_entry_alloca(c, param_t, p->name);
+        LLVMBuildStore(c->builder, param_val, alloca);
+        cg_define(c, p->name, alloca, param_t, 0);
+    }
+
+    LLVMValueRef body_val = cg_emit_expr(c, n->body);
+
+    LLVMBasicBlockRef cur_bb = LLVMGetInsertBlock(c->builder);
+    if (!LLVMGetBasicBlockTerminator(cur_bb)) {
+        if (ret_t == c->t_void) LLVMBuildRetVoid(c->builder);
+        else LLVMBuildRet(c->builder, body_val);
+    }
+
+    cg_pop_scope(c);
+
+    c->current_fn = saved_fn;
+    if (saved_bb) LLVMPositionBuilderAtEnd(c->builder, saved_bb);
+
+    if (cap_types) { free(cap_types); free(cap_vals); }
+    free(param_types);
+
+    /* 4. Build return Closure struct */
+    LLVMValueRef fn_ptr_cast = LLVMBuildBitCast(c->builder, fn, c->t_i8ptr, "fncast");
+    LLVMValueRef closure_v = LLVMGetUndef(c->t_closure);
+    closure_v = LLVMBuildInsertValue(c->builder, closure_v, fn_ptr_cast, 0, "c1");
+    closure_v = LLVMBuildInsertValue(c->builder, closure_v, raw_env, 1, "c2");
+
+    LLVMValueRef size = LLVMSizeOf(c->t_closure);
+    LLVMTypeRef mparams[1] = { LLVMInt64TypeInContext(c->llvm_ctx) };
+    LLVMTypeRef m_ft = LLVMFunctionType(c->t_i8ptr, mparams, 1, 0);
+    LLVMValueRef raw_cls = LLVMBuildCall2(c->builder, m_ft, c->fn_malloc, &size, 1, "raw.cls");
+    LLVMValueRef ptr_cls = LLVMBuildBitCast(c->builder, raw_cls, c->t_closure_ptr, "clos.ptr");
+    LLVMBuildStore(c->builder, closure_v, ptr_cls);
+
+    return ptr_cls;
 }

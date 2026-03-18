@@ -140,6 +140,31 @@ HulkNode* parse_primary(ASTBuilder *b) {
         return parse_primary_tail(b, node);
     }
 
+    // FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
+    if (check(b, TOKEN_FUNCTION)) {
+        advance(b); // consume 'function'
+        
+        expect(b, TOKEN_LPAREN);
+        HulkNodeList params;
+        hulk_node_list_init(&params);
+        parse_arg_id_list(b, &params);
+        expect(b, TOKEN_RPAREN);
+
+        char *ret_type = parse_type_annotation(b);
+        FunctionExprNode *fn_expr = hulk_ast_function_expr(b->ctx, ret_type, line, col);
+        fn_expr->params = params;
+        
+        // ClosureBody → ARROW Expr | BlockStmt
+        if (check(b, TOKEN_ARROW)) {
+            advance(b);
+            fn_expr->body = parse_expr(b);
+        } else {
+            fn_expr->body = parse_block_stmt(b);
+        }
+        
+        return (HulkNode*)fn_expr;
+    }
+
     // BASE LPAREN ArgList RPAREN
     if (check(b, TOKEN_BASE)) {
         advance(b);

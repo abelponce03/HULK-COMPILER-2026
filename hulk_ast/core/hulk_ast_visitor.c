@@ -43,7 +43,8 @@ static const char* node_type_names[] = {
     "ForStmt", "BlockStmt", "BinaryOp", "UnaryOp", "NumberLit",
     "StringLit", "BoolLit", "Ident", "CallExpr", "MemberAccess",
     "NewExpr", "Assign", "DestructAssign", "AsExpr", "IsExpr",
-    "Self", "BaseCall", "DecorBlock", "DecorItem", "ConcatExpr"
+    "Self", "BaseCall", "DecorBlock", "DecorItem", "ConcatExpr",
+    "FunctionExpr"
 };
 
 _Static_assert(sizeof(node_type_names)/sizeof(node_type_names[0]) == NODE_HULK_COUNT,

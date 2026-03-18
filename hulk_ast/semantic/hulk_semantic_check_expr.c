@@ -30,6 +30,7 @@ static HulkType* check_as(SemanticContext *c, AsExprNode *n);
 static HulkType* check_is(SemanticContext *c, IsExprNode *n);
 static HulkType* check_self(SemanticContext *c, SelfNode *n);
 static HulkType* check_base(SemanticContext *c, BaseCallNode *n);
+static HulkType* check_function_expr(SemanticContext *c, FunctionExprNode *n);
 
 /* ============================================================
  *  Dispatcher principal
@@ -59,6 +60,7 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
         case NODE_IS_EXPR:         return check_is(c, (IsExprNode*)node);
         case NODE_SELF:            return check_self(c, (SelfNode*)node);
         case NODE_BASE_CALL:       return check_base(c, (BaseCallNode*)node);
+        case NODE_FUNCTION_EXPR:   return check_function_expr(c, (FunctionExprNode*)node);
         default:                   return c->t_error;
     }
 }
@@ -73,6 +75,10 @@ static HulkType* check_ident(SemanticContext *c, IdentNode *n) {
         sem_error(c, (HulkNode*)n, "nombre '%s' no definido", n->name);
         return c->t_error;
     }
+    
+    // Capturar variable si viene de un entorno léxico externo
+    sem_capture_variable(c, sym);
+    
     return sym->type ? sym->type : c->t_object;
 }
 
@@ -478,4 +484,38 @@ static HulkType* check_base(SemanticContext *c, BaseCallNode *n) {
     for (int i = 0; i < n->args.count; i++)
         sem_check_expr(c, n->args.items[i]);
     return c->enclosing_type;
+}
+
+/* ============================================================
+ *  Expresión Function: function(args)... -> devuelve un Closure (tratado como Object en HULK)
+ * ============================================================ */
+
+static HulkType* check_function_expr(SemanticContext *c, FunctionExprNode *n) {
+    sem_push_scope(c);
+    
+    // Marcar que este scope pertenece a esta función
+    c->current->func_node = (HulkNode*)n;
+
+    for (int i = 0; i < n->params.count; i++) {
+        VarBindingNode *p = (VarBindingNode*)n->params.items[i];
+        HulkType *pt = sem_resolve_annotation(c, p->type_annotation, (HulkNode*)p);
+        sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
+    }
+
+    HulkType *body_t = sem_check_expr(c, n->body);
+
+    if (n->return_type) {
+        HulkType *ret = sem_resolve_annotation(c, n->return_type, (HulkNode*)n);
+        if (ret && ret != c->t_error && !sem_type_conforms(body_t, ret))
+            sem_error(c, (HulkNode*)n,
+                "función anónima: cuerpo retorna %s, se esperaba %s",
+                body_t->name, ret->name);
+    }
+
+    sem_pop_scope(c);
+    
+    // Las funciones anónimas son tratadas dinámicamente o podríamos inferir que devuelven un Callable.
+    // HULK trata todos los callables como Object o un tipo inferido especial.
+    // Aquí devolveremos t_object por el momento.
+    return c->t_object;
 }

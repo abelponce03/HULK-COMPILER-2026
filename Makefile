@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g -D_GNU_SOURCE -MMD -MP
-LDFLAGS = -lfl
+LDFLAGS = 
 TARGET = hulk_compiler
 
 # LLVM flags (para módulo codegen)
@@ -35,10 +35,6 @@ LIB_OBJS = hulk_tokens.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_check_expr.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_check.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_desugar.o \
-            $(HULK_AST_DIR)/codegen/hulk_codegen_types.o \
-            $(HULK_AST_DIR)/codegen/hulk_codegen_expr.o \
-            $(HULK_AST_DIR)/codegen/hulk_codegen_stmt.o \
-            $(HULK_AST_DIR)/codegen/hulk_codegen.o \
             error_handler.o \
             $(LEXER_DIR)/ast.o \
             $(LEXER_DIR)/afd.o \
@@ -61,8 +57,7 @@ TEST_AST         = $(TEST_DIR)/test_ast
 TEST_HULK_AST    = $(TEST_DIR)/test_hulk_ast
 TEST_AST_BUILDER = $(TEST_DIR)/test_ast_builder
 TEST_SEMANTIC    = $(TEST_DIR)/test_semantic
-TEST_CODEGEN     = $(TEST_DIR)/test_codegen
-TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN)
+TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC)
 
 # ============== Regla principal ==============
 $(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)

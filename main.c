@@ -55,9 +55,20 @@ int main(int argc, char* argv[]) {
     HulkNode *ast = hulk_compiler_build_ast(&hc, input, &ast_ctx);
     if (ast) {
         hulk_ast_print(ast, stdout);
+        
+        // Ejecutar Análisis Semántico
+        printf("\n========== ANÁLISIS SEMÁNTICO ==========\n");
+        extern int hulk_semantic_analyze(HulkASTContext *ctx, HulkNode *program);
+        int sem_errors = hulk_semantic_analyze(&ast_ctx, ast);
+        if (sem_errors == 0) {
+            printf("Análisis semántico completado sin errores!\n");
+        } else {
+            printf("Errores semánticos detectados: %d\n", sem_errors);
+        }
+
         hulk_ast_context_free(&ast_ctx);
     }
-    printf("========== FIN AST ==========\n");
+    printf("========== FIN PROGRAMA ==========\n");
     
     // Limpiar
     if (free_input) free(input);

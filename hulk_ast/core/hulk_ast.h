@@ -57,6 +57,7 @@ typedef enum {
     NODE_DECOR_BLOCK,
     NODE_DECOR_ITEM,
     NODE_CONCAT_EXPR,
+    NODE_FUNCTION_EXPR,
     NODE_HULK_COUNT   // centinela: cantidad total de tipos
 } HulkNodeType;
 
@@ -110,7 +111,17 @@ typedef struct {
     HulkNodeList params;       // VarBindingNode (name + type)
     char *return_type;         // NULL si no tiene anotación
     HulkNode *body;            // Expr o BlockStmt
+    HulkNodeList captured_vars; // Variables capturadas del ámbito léxico exterior
 } FunctionDefNode;
+
+// function(params): ReturnType => body | { body }
+typedef struct {
+    HulkNode base;
+    HulkNodeList params;       // VarBindingNode (name + type)
+    char *return_type;         // NULL si no tiene anotación
+    HulkNode *body;            // Expr o BlockStmt
+    HulkNodeList captured_vars; // Variables capturadas del ámbito léxico exterior
+} FunctionExprNode;
 
 // type Name(params) inherits Parent(args) { body }
 typedef struct {
@@ -335,6 +346,7 @@ char* hulk_ast_strdup(HulkASTContext *ctx, const char *s);
 
 ProgramNode*        hulk_ast_program(HulkASTContext *ctx, int line, int col);
 FunctionDefNode*    hulk_ast_function_def(HulkASTContext *ctx, const char *name, const char *ret_type, int line, int col);
+FunctionExprNode*   hulk_ast_function_expr(HulkASTContext *ctx, const char *ret_type, int line, int col);
 TypeDefNode*        hulk_ast_type_def(HulkASTContext *ctx, const char *name, const char *parent, int line, int col);
 MethodDefNode*      hulk_ast_method_def(HulkASTContext *ctx, const char *name, const char *ret_type, int line, int col);
 AttributeDefNode*   hulk_ast_attribute_def(HulkASTContext *ctx, const char *name, const char *type_ann, int line, int col);

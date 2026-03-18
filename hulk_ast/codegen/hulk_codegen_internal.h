@@ -80,8 +80,10 @@ typedef struct {
     LLVMTypeRef       t_double;
     LLVMTypeRef       t_bool;       /* i1 */
     LLVMTypeRef       t_i32;
-    LLVMTypeRef       t_i8ptr;      /* i8* (string) */
+    LLVMTypeRef       t_i8ptr;      /* i8* (string/generic ptr) */
     LLVMTypeRef       t_void;
+    LLVMTypeRef       t_closure;    /* { i8* fn_ptr, i8* env_ptr } */
+    LLVMTypeRef       t_closure_ptr;
 
     /* Scope chain */
     CGScope          *current;
@@ -101,6 +103,7 @@ typedef struct {
     LLVMValueRef      current_fn;       /* función actual */
     CGTypeInfo       *enclosing_type;   /* tipo actual (para self) */
     LLVMValueRef      self_ptr;         /* puntero a self en método */
+    LLVMValueRef      env_ptr;          /* entorno léxico (closures) */
     int               error_count;
 
     /* Built-in runtime functions */
@@ -160,6 +163,8 @@ void        cg_type_add_method(CGTypeInfo *ti, const char *name,
 
 void cg_types_init(CodegenContext *c);
 void cg_context_free(CodegenContext *c);
+LLVMTypeRef cg_infer_param_type(CodegenContext *c, const char *ann);
+LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann);
 
 /* ============================================================
  *  Runtime  (hulk_codegen.c)

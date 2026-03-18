@@ -151,16 +151,37 @@ void cg_type_add_method(CGTypeInfo *ti, const char *name, LLVMValueRef fn) {
     ti->methods[ti->method_count++] = sym;
 }
 
-/* ============================================================
- *  Inicializar tipos LLVM básicos
- * ============================================================ */
-
 void cg_types_init(CodegenContext *c) {
     c->t_double = LLVMDoubleTypeInContext(c->llvm_ctx);
     c->t_bool   = LLVMInt1TypeInContext(c->llvm_ctx);
     c->t_i32    = LLVMInt32TypeInContext(c->llvm_ctx);
     c->t_i8ptr  = LLVMPointerType(LLVMInt8TypeInContext(c->llvm_ctx), 0);
     c->t_void   = LLVMVoidTypeInContext(c->llvm_ctx);
+
+    LLVMTypeRef closure_elems[] = { c->t_i8ptr, c->t_i8ptr };
+    c->t_closure = LLVMStructTypeInContext(c->llvm_ctx, closure_elems, 2, 0);
+    c->t_closure_ptr = LLVMPointerType(c->t_closure, 0);
+}
+
+LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann) {
+    if (!ann) return c->t_double;
+    if (strcmp(ann, "Number") == 0) return c->t_double;
+    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
+    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
+    if (strcmp(ann, "Void") == 0) return c->t_void;
+    CGTypeInfo *ti = cg_type_info_find(c, ann);
+    if (ti) return ti->ptr_type;
+    return c->t_double;
+}
+
+LLVMTypeRef cg_infer_param_type(CodegenContext *c, const char *ann) {
+    if (!ann) return c->t_double;
+    if (strcmp(ann, "Number") == 0) return c->t_double;
+    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
+    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
+    CGTypeInfo *ti = cg_type_info_find(c, ann);
+    if (ti) return ti->ptr_type;
+    return c->t_double;
 }
 
 /* ============================================================
