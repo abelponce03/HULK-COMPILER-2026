@@ -101,6 +101,7 @@ HulkNode* parse_block_stmt(ASTBuilder *b);
 // ============================================================
 
 HulkNode* parse_function_def(ASTBuilder *b);
+HulkNode* parse_function_expr(ASTBuilder *b);
 HulkNode* parse_type_def(ASTBuilder *b);
 HulkNode* parse_decor_block(ASTBuilder *b);
 

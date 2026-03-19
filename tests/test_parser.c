@@ -87,6 +87,10 @@ TEST(parse_function_decl) {
     ASSERT(parse_ok("function f(x: Number): Number => x + 1;"));
 }
 
+TEST(parse_function_expr) {
+    ASSERT(parse_ok("function (x: Number): Number => x + 1;"));
+}
+
 TEST(parse_if_else) {
     ASSERT(parse_ok("if (true) 1 else 2;"));
 }
@@ -182,6 +186,13 @@ TEST(decor_with_undecorated) {
         "function decorated(): Number => 2;"));
 }
 
+TEST(decor_method_inside_type) {
+    ASSERT(parse_ok(
+        "type Box(v: Number) {"
+        "  decor log get(): Number => v;"
+        "}"));
+}
+
 TEST(error_decor_no_target) {
     // decor without function/type → error
     ASSERT_GT(parse_errors("decor log 5 + 3;"), 0);
@@ -216,6 +227,7 @@ int main(void) {
     RUN_TEST(parse_let_simple);
     RUN_TEST(parse_let_in);
     RUN_TEST(parse_function_decl);
+    RUN_TEST(parse_function_expr);
     RUN_TEST(parse_if_else);
     RUN_TEST(parse_while_loop);
     RUN_TEST(parse_type_decl);
@@ -234,6 +246,7 @@ int main(void) {
     RUN_TEST(decor_on_type);
     RUN_TEST(decor_multi_arg);
     RUN_TEST(decor_with_undecorated);
+    RUN_TEST(decor_method_inside_type);
     RUN_TEST(error_decor_no_target);
     RUN_TEST(error_decor_missing_ident);
 

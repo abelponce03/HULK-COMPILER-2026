@@ -38,7 +38,7 @@ void hulk_ast_accept_list(HulkNodeList *list, HulkASTVisitor *visitor, void *dat
 // ============== NOMBRES PARA DEBUGGING ==============
 
 static const char* node_type_names[] = {
-    "Program", "FunctionDef", "TypeDef", "MethodDef", "AttributeDef",
+    "Program", "FunctionDef", "FunctionExpr", "TypeDef", "MethodDef", "AttributeDef",
     "LetExpr", "VarBinding", "IfExpr", "ElifBranch", "WhileStmt",
     "ForStmt", "BlockStmt", "BinaryOp", "UnaryOp", "NumberLit",
     "StringLit", "BoolLit", "Ident", "CallExpr", "MemberAccess",

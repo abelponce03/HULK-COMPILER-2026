@@ -48,7 +48,13 @@ HulkNode* parse_program(ASTBuilder *b) {
 // ============================================================
 
 HulkNode* parse_top_level(ASTBuilder *b) {
-    if (check(b, TOKEN_FUNCTION)) return parse_function_def(b);
+    if (check(b, TOKEN_FUNCTION)) {
+        LexerContext lookahead = b->lexer;
+        Token next = lexer_next_token(&lookahead);
+        int is_named = (next.type == TOKEN_IDENT);
+        free(next.lexeme);
+        return is_named ? parse_function_def(b) : parse_stmt(b);
+    }
     if (check(b, TOKEN_TYPE))     return parse_type_def(b);
     if (check(b, TOKEN_DECOR))    return parse_decor_block(b);
 

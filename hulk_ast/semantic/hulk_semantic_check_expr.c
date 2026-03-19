@@ -13,6 +13,7 @@
 /* ===== Forward declarations ===== */
 
 static HulkType* check_ident(SemanticContext *c, IdentNode *n);
+static HulkType* check_function_expr(SemanticContext *c, FunctionExprNode *n);
 static HulkType* check_binary_op(SemanticContext *c, BinaryOpNode *n);
 static HulkType* check_unary_op(SemanticContext *c, UnaryOpNode *n);
 static HulkType* check_concat(SemanticContext *c, ConcatExprNode *n);
@@ -42,6 +43,7 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
         case NODE_STRING_LIT:      return c->t_string;
         case NODE_BOOL_LIT:        return c->t_boolean;
         case NODE_IDENT:           return check_ident(c, (IdentNode*)node);
+        case NODE_FUNCTION_EXPR:   return check_function_expr(c, (FunctionExprNode*)node);
         case NODE_BINARY_OP:       return check_binary_op(c, (BinaryOpNode*)node);
         case NODE_UNARY_OP:        return check_unary_op(c, (UnaryOpNode*)node);
         case NODE_CONCAT_EXPR:     return check_concat(c, (ConcatExprNode*)node);
@@ -68,12 +70,94 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
  * ============================================================ */
 
 static HulkType* check_ident(SemanticContext *c, IdentNode *n) {
-    Symbol *sym = sem_lookup(c->current, n->name);
+    Symbol *sym = NULL;
+    Scope *found_scope = NULL;
+    for (Scope *s = c->current; s; s = s->parent) {
+        sym = sem_lookup_local(s, n->name);
+        if (sym) {
+            found_scope = s;
+            break;
+        }
+    }
     if (!sym) {
         sem_error(c, (HulkNode*)n, "nombre '%s' no definido", n->name);
         return c->t_error;
     }
+
+    if (c->capture_target && c->capture_scope && found_scope) {
+        Scope *limit = c->capture_scope;
+        int local_to_function = 0;
+        for (Scope *s = c->current; s; s = s->parent) {
+            if (s == found_scope) {
+                local_to_function = 1;
+                break;
+            }
+            if (s == limit) break;
+        }
+
+        if (!local_to_function && sym->kind == SYM_VARIABLE) {
+            int already_captured = 0;
+            for (int i = 0; i < c->capture_target->captures.count; i++) {
+                IdentNode *cap = (IdentNode*)c->capture_target->captures.items[i];
+                if (strcmp(cap->name, n->name) == 0) {
+                    already_captured = 1;
+                    break;
+                }
+            }
+            if (!already_captured) {
+                hulk_node_list_push(&c->capture_target->captures,
+                    (HulkNode*)hulk_ast_ident(c->ast_ctx, n->name,
+                                              n->base.line, n->base.col));
+            }
+        }
+    }
+
+    if ((sym->kind == SYM_FUNCTION || sym->kind == SYM_METHOD) && sym->callable_type)
+        return sym->callable_type;
     return sym->type ? sym->type : c->t_object;
+}
+
+static HulkType* check_function_expr(SemanticContext *c, FunctionExprNode *n) {
+    HulkType **param_types = NULL;
+    int param_count = n->params.count;
+
+    if (param_count > 0) {
+        param_types = calloc(param_count, sizeof(HulkType*));
+        if (!param_types) return c->t_error;
+    }
+
+    sem_push_scope(c);
+    Scope *fn_scope = c->current;
+
+    FunctionExprNode *prev_capture_target = c->capture_target;
+    Scope *prev_capture_scope = c->capture_scope;
+    c->capture_target = n;
+    c->capture_scope = fn_scope;
+
+    for (int i = 0; i < param_count; i++) {
+        VarBindingNode *p = (VarBindingNode*)n->params.items[i];
+        HulkType *pt = sem_resolve_annotation(c, p->type_annotation, (HulkNode*)p);
+        param_types[i] = pt;
+        sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
+    }
+
+    HulkType *body_t = sem_check_expr(c, n->body);
+    HulkType *ret_t = body_t;
+    if (n->return_type) {
+        ret_t = sem_resolve_annotation(c, n->return_type, (HulkNode*)n);
+        if (ret_t && ret_t != c->t_error && !sem_type_conforms(body_t, ret_t))
+            sem_error(c, (HulkNode*)n,
+                "closure retorna %s, se esperaba %s",
+                body_t->name, ret_t->name);
+    }
+
+    c->capture_target = prev_capture_target;
+    c->capture_scope = prev_capture_scope;
+    sem_pop_scope(c);
+
+    HulkType *fn_t = sem_function_type_new(c, param_types, param_count, ret_t);
+    free(param_types);
+    return fn_t ? fn_t : c->t_error;
 }
 
 /* ============================================================
@@ -182,6 +266,29 @@ static HulkType* verify_call_args(SemanticContext *c, CallExprNode *n,
     return sym->type ? sym->type : c->t_object;
 }
 
+static HulkType* verify_function_type_call(SemanticContext *c, CallExprNode *n,
+                                           HulkType *fn_t, const char *label) {
+    if (!fn_t || fn_t->kind != HULK_TYPE_FUNCTION)
+        return c->t_error;
+
+    if (n->args.count != fn_t->param_count) {
+        sem_error(c, (HulkNode*)n,
+            "'%s' espera %d argumentos, recibió %d",
+            label, fn_t->param_count, n->args.count);
+    }
+    int count = n->args.count < fn_t->param_count ? n->args.count : fn_t->param_count;
+    for (int i = 0; i < count; i++) {
+        HulkType *at = sem_check_expr(c, n->args.items[i]);
+        if (fn_t->param_types && !sem_type_conforms(at, fn_t->param_types[i]))
+            sem_error(c, n->args.items[i],
+                "argumento %d de '%s': se esperaba %s, recibido %s",
+                i + 1, label, fn_t->param_types[i]->name, at->name);
+    }
+    for (int i = count; i < n->args.count; i++)
+        sem_check_expr(c, n->args.items[i]);
+    return fn_t->return_type ? fn_t->return_type : c->t_object;
+}
+
 static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
     /* Caso 1: callee es un identificador → llamada a función */
     if (n->callee->type == NODE_IDENT) {
@@ -196,9 +303,14 @@ static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
         if (sym->kind == SYM_FUNCTION || sym->kind == SYM_METHOD)
             return verify_call_args(c, n, sym, id->name);
 
-        /* Variable callable — aceptar como Object */
+        if (sym->type && sym->type->kind == HULK_TYPE_FUNCTION)
+            return verify_function_type_call(c, n, sym->type, id->name);
+
         for (int i = 0; i < n->args.count; i++)
             sem_check_expr(c, n->args.items[i]);
+        if (sym->type && sym->type != c->t_object)
+            sem_error(c, (HulkNode*)n,
+                "'%s' no es invocable (es %s)", id->name, sym->type->name);
         return c->t_object;
     }
 
@@ -227,9 +339,14 @@ static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
     }
 
     /* Caso 3: expresión genérica como callee */
-    sem_check_expr(c, n->callee);
+    HulkType *callee_t = sem_check_expr(c, n->callee);
+    if (callee_t && callee_t->kind == HULK_TYPE_FUNCTION)
+        return verify_function_type_call(c, n, callee_t, "closure");
     for (int i = 0; i < n->args.count; i++)
         sem_check_expr(c, n->args.items[i]);
+    if (callee_t && callee_t != c->t_object)
+        sem_error(c, (HulkNode*)n,
+            "expresión de tipo %s no es invocable", callee_t->name);
     return c->t_object;
 }
 

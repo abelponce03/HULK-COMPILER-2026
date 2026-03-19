@@ -13,6 +13,8 @@
 
 #include "hulk_ast_builder_internal.h"
 
+static void parse_decor_items(ASTBuilder *b, HulkNodeList *decorators);
+
 // ============================================================
 //  FunctionDef
 //  FUNCTION IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
@@ -29,6 +31,24 @@ static HulkNode* parse_function_body(ASTBuilder *b) {
     return parse_block_stmt(b);
 }
 
+static HulkNode* parse_function_expr_body(ASTBuilder *b) {
+    if (check(b, TOKEN_ARROW)) {
+        advance(b);
+        return parse_expr(b);
+    }
+    return parse_block_stmt(b);
+}
+
+static HulkNodeList parse_function_params(ASTBuilder *b) {
+    HulkNodeList params;
+    hulk_node_list_init(&params);
+
+    expect(b, TOKEN_LPAREN);
+    parse_arg_id_list(b, &params);
+    expect(b, TOKEN_RPAREN);
+    return params;
+}
+
 HulkNode* parse_function_def(ASTBuilder *b) {
     int line = cur_line(b), col = cur_col(b);
     expect(b, TOKEN_FUNCTION);
@@ -36,17 +56,25 @@ HulkNode* parse_function_def(ASTBuilder *b) {
     char *name = expect_ident(b);
     if (!name) return NULL;
 
-    expect(b, TOKEN_LPAREN);
-    HulkNodeList params;
-    hulk_node_list_init(&params);
-    parse_arg_id_list(b, &params);
-    expect(b, TOKEN_RPAREN);
-
+    HulkNodeList params = parse_function_params(b);
     char *ret_type = parse_type_annotation(b);
 
     FunctionDefNode *fn = hulk_ast_function_def(b->ctx, name, ret_type, line, col);
     fn->params = params;
     fn->body   = parse_function_body(b);
+    return (HulkNode*)fn;
+}
+
+HulkNode* parse_function_expr(ASTBuilder *b) {
+    int line = cur_line(b), col = cur_col(b);
+    expect(b, TOKEN_FUNCTION);
+
+    HulkNodeList params = parse_function_params(b);
+    char *ret_type = parse_type_annotation(b);
+
+    FunctionExprNode *fn = hulk_ast_function_expr(b->ctx, ret_type, line, col);
+    fn->params = params;
+    fn->body   = parse_function_expr_body(b);
     return (HulkNode*)fn;
 }
 
@@ -58,7 +86,15 @@ HulkNode* parse_function_def(ASTBuilder *b) {
 // TypeBody → TypeMember TypeBody | ε
 // TypeMember → IDENT TypeMemberTail
 static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
-    while (check(b, TOKEN_IDENT)) {
+    while (check(b, TOKEN_IDENT) || check(b, TOKEN_DECOR)) {
+        HulkNodeList decorators;
+        hulk_node_list_init(&decorators);
+
+        while (check(b, TOKEN_DECOR)) {
+            advance(b);
+            parse_decor_items(b, &decorators);
+        }
+
         int line = cur_line(b), col = cur_col(b);
         char *member_name = expect_ident(b);
 
@@ -75,6 +111,7 @@ static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
 
             MethodDefNode *m = hulk_ast_method_def(b->ctx, member_name, ret_type, line, col);
             m->params = mparams;
+            m->decorators = decorators;
 
             // MethodBody → ARROW Expr SEMICOLON | BlockStmt
             if (check(b, TOKEN_ARROW)) {
@@ -86,6 +123,10 @@ static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
             }
             hulk_node_list_push(&td->members, (HulkNode*)m);
         } else {
+            if (decorators.count > 0) {
+                error_at(b, "los decoradores dentro de type solo pueden aplicarse a métodos");
+                hulk_node_list_free(&decorators);
+            }
             // AttributeDef: name [: Type] [= expr] ;
             char *type_ann = parse_type_annotation(b);
             AttributeDefNode *attr = hulk_ast_attribute_def(

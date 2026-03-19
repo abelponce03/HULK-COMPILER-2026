@@ -114,6 +114,11 @@ HulkNode* parse_primary(ASTBuilder *b) {
         return parse_primary_tail(b, node);
     }
 
+    // FUNCTION expr anónima
+    if (check(b, TOKEN_FUNCTION)) {
+        return parse_function_expr(b);
+    }
+
     // LPAREN Expr RPAREN
     if (check(b, TOKEN_LPAREN)) {
         advance(b);

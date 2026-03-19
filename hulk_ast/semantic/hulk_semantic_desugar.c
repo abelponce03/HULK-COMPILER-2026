@@ -5,10 +5,12 @@
  *   decor d1, d2(arg) function f(...) => body;
  * En:
  *   function f(...) => body;
- *   f := d2(d1(f), arg);
+ *   f := d1(d2(arg)(f));
  *
- * Los decoradores se aplican en orden de lectura (d1 primero, d2 después).
- * Los argumentos del decorador se pasan después de la función envuelta.
+ * Los decoradores se aplican de derecha a izquierda.
+ * Si un decorador tiene argumentos, se trata como fábrica currificada:
+ *   decor memoize(100) function f ...
+ *   => f := memoize(100)(f)
  * Los nodos nuevos se crean en la arena del HulkASTContext existente.
  *
  * SRP: Solo transformación AST → AST para decoradores.
@@ -55,28 +57,31 @@ void sem_desugar(SemanticContext *ctx, HulkNode *program) {
 
         if (!name || db->decorators.count == 0) continue;
 
-        /* 3. Construir cadena: d_n(... d_2(d_1(f), args_1) ..., args_n) */
-        /*    Empezamos con Ident(name) y envolvemos iterativamente.      */
+        /* 3. Construir cadena: d1(d2(...(f))) con fábricas currificadas */
         HulkNode *expr = (HulkNode*)hulk_ast_ident(
             ctx->ast_ctx, name, line, col);
 
-        for (int d = 0; d < db->decorators.count; d++) {
+        for (int d = db->decorators.count - 1; d >= 0; d--) {
             DecorItemNode *di = (DecorItemNode*)db->decorators.items[d];
             int dl = di->base.line, dc = di->base.col;
 
-            /* Callee: Ident(nombre_decorador) */
-            HulkNode *callee = (HulkNode*)hulk_ast_ident(
-                ctx->ast_ctx, di->name, dl, dc);
+            HulkNode *callee = (HulkNode*)hulk_ast_ident(ctx->ast_ctx, di->name,
+                                                         dl, dc);
+            if (di->args.count > 0) {
+                CallExprNode *factory = hulk_ast_call_expr(ctx->ast_ctx, callee, dl, dc);
+                for (int a = 0; a < di->args.count; a++)
+                    hulk_node_list_push(&factory->args, di->args.items[a]);
 
-            /* Call: decorator(current_expr [, args_del_decorador...]) */
-            CallExprNode *call = hulk_ast_call_expr(
-                ctx->ast_ctx, callee, dl, dc);
-            hulk_node_list_push(&call->args, expr);
-
-            for (int a = 0; a < di->args.count; a++)
-                hulk_node_list_push(&call->args, di->args.items[a]);
-
-            expr = (HulkNode*)call;
+                CallExprNode *apply = hulk_ast_call_expr(
+                    ctx->ast_ctx, (HulkNode*)factory, dl, dc);
+                hulk_node_list_push(&apply->args, expr);
+                expr = (HulkNode*)apply;
+            } else {
+                CallExprNode *apply = hulk_ast_call_expr(
+                    ctx->ast_ctx, callee, dl, dc);
+                hulk_node_list_push(&apply->args, expr);
+                expr = (HulkNode*)apply;
+            }
         }
 
         /* 4. Crear asignación destructiva: name := expr */

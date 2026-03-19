@@ -54,6 +54,7 @@ static HulkNode* build(const char *src, HulkASTContext *ctx) {
 // Helpers de casting seguros
 #define AS_PROG(n)       ((ProgramNode*)(n))
 #define AS_FUNC(n)       ((FunctionDefNode*)(n))
+#define AS_FEXPR(n)      ((FunctionExprNode*)(n))
 #define AS_TYPE(n)       ((TypeDefNode*)(n))
 #define AS_METHOD(n)     ((MethodDefNode*)(n))
 #define AS_ATTR(n)       ((AttributeDefNode*)(n))
@@ -945,6 +946,47 @@ TEST(decor_on_type) {
     hulk_ast_context_free(&ctx);
 }
 
+TEST(function_expr_simple) {
+    HulkASTContext ctx;
+    HulkNode *ast = build("function (x: Number): Number => x + 1;", &ctx);
+    ASSERT_NOT_NULL(ast);
+    HulkNode *n = PROG_DECL(ast, 0);
+    ASSERT_EQ(NODE_FUNCTION_EXPR, n->type);
+    ASSERT_EQ(1, AS_FEXPR(n)->params.count);
+    ASSERT_STR_EQ("Number", AS_FEXPR(n)->return_type);
+    ASSERT_EQ(NODE_BINARY_OP, AS_FEXPR(n)->body->type);
+    hulk_ast_context_free(&ctx);
+}
+
+TEST(function_expr_inside_let) {
+    HulkASTContext ctx;
+    HulkNode *ast = build(
+        "let n = 5, add1 = function (x: Number): Number => x + n in add1(3);",
+        &ctx);
+    ASSERT_NOT_NULL(ast);
+    HulkNode *n = PROG_DECL(ast, 0);
+    ASSERT_EQ(NODE_LET_EXPR, n->type);
+    ASSERT_EQ(NODE_FUNCTION_EXPR, AS_BIND(AS_LET(n)->bindings.items[1])->init_expr->type);
+    ASSERT_EQ(NODE_CALL_EXPR, AS_LET(n)->body->type);
+    hulk_ast_context_free(&ctx);
+}
+
+TEST(decor_method_inside_type) {
+    HulkASTContext ctx;
+    HulkNode *ast = build(
+        "type Box(v: Number) { decor log get(): Number => v; }",
+        &ctx);
+    ASSERT_NOT_NULL(ast);
+    HulkNode *td = PROG_DECL(ast, 0);
+    ASSERT_EQ(NODE_TYPE_DEF, td->type);
+    ASSERT_EQ(1, AS_TYPE(td)->members.count);
+    ASSERT_EQ(NODE_METHOD_DEF, AS_TYPE(td)->members.items[0]->type);
+    ASSERT_EQ(1, AS_METHOD(AS_TYPE(td)->members.items[0])->decorators.count);
+    ASSERT_STR_EQ("log",
+        AS_DITEM(AS_METHOD(AS_TYPE(td)->members.items[0])->decorators.items[0])->name);
+    hulk_ast_context_free(&ctx);
+}
+
 // ============================================
 //  Suite 19: Composite programs
 // ============================================
@@ -1208,6 +1250,11 @@ int main(void) {
     RUN_TEST(decor_with_args);
     RUN_TEST(decor_multiple);
     RUN_TEST(decor_on_type);
+    RUN_TEST(decor_method_inside_type);
+
+    TEST_SUITE("FunctionExpr");
+    RUN_TEST(function_expr_simple);
+    RUN_TEST(function_expr_inside_let);
 
     TEST_SUITE("Programas compuestos");
     RUN_TEST(program_multiple_decls);

@@ -62,7 +62,8 @@ TEST_HULK_AST    = $(TEST_DIR)/test_hulk_ast
 TEST_AST_BUILDER = $(TEST_DIR)/test_ast_builder
 TEST_SEMANTIC    = $(TEST_DIR)/test_semantic
 TEST_CODEGEN     = $(TEST_DIR)/test_codegen
-TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN)
+TEST_FEATURE_DECORATORS_CLOSURES = $(TEST_DIR)/test_feature_decorators_closures
+TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN) $(TEST_FEATURE_DECORATORS_CLOSURES)
 
 # ============== Regla principal ==============
 $(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
@@ -109,6 +110,9 @@ $(TEST_SEMANTIC): $(TEST_DIR)/test_semantic.c $(LIB_OBJS)
 $(TEST_CODEGEN): $(TEST_DIR)/test_codegen.c $(LIB_OBJS)
 	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
 
+$(TEST_FEATURE_DECORATORS_CLOSURES): $(TEST_DIR)/test_feature_decorators_closures.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
+
 # Ejecutar todos los tests
 test-all: test-build
 	@echo ""
@@ -147,6 +151,9 @@ test-semantic: $(TEST_SEMANTIC)
 test-codegen: $(TEST_CODEGEN)
 	./$(TEST_CODEGEN)
 
+test-feature-decorators-closures: $(TEST_FEATURE_DECORATORS_CLOSURES)
+	./$(TEST_FEATURE_DECORATORS_CLOSURES)
+
 # ============== Otros targets ==============
 # Test rápido (entrada por defecto)
 test: $(TARGET)
@@ -170,7 +177,7 @@ clean:
 # Reconstruir desde cero
 rebuild: clean $(TARGET)
 
-.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen
+.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen test-feature-decorators-closures
 
 # Auto-generated dependency files
 -include $(OBJS:.o=.d)

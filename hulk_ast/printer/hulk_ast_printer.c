@@ -61,6 +61,32 @@ static void visit_function_def(HulkNode *n, HulkASTVisitor *v, void *data) {
     }
 }
 
+static void visit_function_expr(HulkNode *n, HulkASTVisitor *v, void *data) {
+    PrinterData *d = data;
+    FunctionExprNode *f = (FunctionExprNode*)n;
+    indent(d); fprintf(d->out, "FunctionExpr");
+    if (f->return_type) fprintf(d->out, " : %s", f->return_type);
+    fprintf(d->out, " [%d:%d]\n", n->line, n->col);
+    if (f->params.count > 0) {
+        d->depth++;
+        indent(d); fprintf(d->out, "Params:\n");
+        print_children(&f->params, v, d);
+        d->depth--;
+    }
+    if (f->captures.count > 0) {
+        d->depth++;
+        indent(d); fprintf(d->out, "Captures:\n");
+        print_children(&f->captures, v, d);
+        d->depth--;
+    }
+    if (f->body) {
+        d->depth++;
+        indent(d); fprintf(d->out, "Body:\n");
+        print_child(f->body, v, d);
+        d->depth--;
+    }
+}
+
 static void visit_type_def(HulkNode *n, HulkASTVisitor *v, void *data) {
     PrinterData *d = data;
     TypeDefNode *t = (TypeDefNode*)n;
@@ -91,6 +117,12 @@ static void visit_method_def(HulkNode *n, HulkASTVisitor *v, void *data) {
         d->depth++;
         indent(d); fprintf(d->out, "Params:\n");
         print_children(&m->params, v, d);
+        d->depth--;
+    }
+    if (m->decorators.count > 0) {
+        d->depth++;
+        indent(d); fprintf(d->out, "Decorators:\n");
+        print_children(&m->decorators, v, d);
         d->depth--;
     }
     if (m->body) {
@@ -368,6 +400,7 @@ void hulk_ast_print(HulkNode *root, FILE *out) {
 
     v.visit[NODE_PROGRAM]          = visit_program;
     v.visit[NODE_FUNCTION_DEF]     = visit_function_def;
+    v.visit[NODE_FUNCTION_EXPR]    = visit_function_expr;
     v.visit[NODE_TYPE_DEF]         = visit_type_def;
     v.visit[NODE_METHOD_DEF]       = visit_method_def;
     v.visit[NODE_ATTRIBUTE_DEF]    = visit_attribute_def;

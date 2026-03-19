@@ -55,6 +55,10 @@ static void reg_builtin(SemanticContext *ctx, const char *name,
         }
         va_end(ap);
     }
+    if (sym) {
+        sym->callable_type = sem_function_type_new(ctx, sym->param_types,
+                                                   sym->param_count, ret);
+    }
     ctx->current = prev;
 }
 
@@ -68,6 +72,7 @@ void sem_types_init(SemanticContext *ctx) {
     ctx->t_number  = sem_type_new(ctx, HULK_TYPE_NUMBER,  "Number",  ctx->t_object);
     ctx->t_string  = sem_type_new(ctx, HULK_TYPE_STRING,  "String",  ctx->t_object);
     ctx->t_boolean = sem_type_new(ctx, HULK_TYPE_BOOLEAN, "Boolean", ctx->t_object);
+    sem_type_new(ctx, HULK_TYPE_FUNCTION, "<function>", ctx->t_object);
     ctx->t_void    = sem_type_new(ctx, HULK_TYPE_VOID,    "Void",    NULL);
     ctx->t_error   = sem_type_new(ctx, HULK_TYPE_ERROR,   "<error>", NULL);
 
@@ -108,6 +113,9 @@ int sem_type_conforms(HulkType *child, HulkType *ancestor) {
     /* Error type conforma con todo (error recovery) */
     if (child->kind == HULK_TYPE_ERROR ||
         ancestor->kind == HULK_TYPE_ERROR) return 1;
+    if (child->kind == HULK_TYPE_FUNCTION &&
+        ancestor->kind == HULK_TYPE_FUNCTION)
+        return sem_function_type_equals(child, ancestor);
     /* Todo conforma con Object */
     if (ancestor->kind == HULK_TYPE_OBJECT) return 1;
     /* Recorrer cadena de herencia */
@@ -147,6 +155,32 @@ HulkType* sem_type_resolve(SemanticContext *ctx, const char *name) {
     return NULL;
 }
 
+HulkType* sem_function_type_new(SemanticContext *ctx, HulkType **params,
+                                int param_count, HulkType *ret) {
+    HulkType *t = sem_type_new(ctx, HULK_TYPE_FUNCTION, "<function>", ctx->t_object);
+    if (!t) return NULL;
+    t->param_count = param_count;
+    t->return_type = ret ? ret : ctx->t_object;
+    if (param_count > 0) {
+        t->param_types = calloc(param_count, sizeof(HulkType*));
+        if (!t->param_types) return t;
+        for (int i = 0; i < param_count; i++)
+            t->param_types[i] = params ? params[i] : ctx->t_object;
+    }
+    return t;
+}
+
+int sem_function_type_equals(HulkType *a, HulkType *b) {
+    if (!a || !b) return 0;
+    if (a->kind != HULK_TYPE_FUNCTION || b->kind != HULK_TYPE_FUNCTION)
+        return 0;
+    if (a->param_count != b->param_count) return 0;
+    for (int i = 0; i < a->param_count; i++) {
+        if (a->param_types[i] != b->param_types[i]) return 0;
+    }
+    return a->return_type == b->return_type;
+}
+
 /* ============================================================
  *  Cleanup
  * ============================================================ */
@@ -165,7 +199,9 @@ void sem_context_free(SemanticContext *ctx) {
     }
     free(ctx->all_scopes);
     /* Liberar tipos */
-    for (int i = 0; i < ctx->type_count; i++)
+    for (int i = 0; i < ctx->type_count; i++) {
+        free(ctx->types[i]->param_types);
         free(ctx->types[i]);
+    }
     free(ctx->types);
 }

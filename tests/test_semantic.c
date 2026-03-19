@@ -176,6 +176,22 @@ TEST(function_no_annotation) {
     ASSERT_EQ(0, analyze("function f(x) => x; f(5);"));
 }
 
+TEST(function_expr_closure_capture) {
+    ASSERT_EQ(0, analyze(
+        "let n: Number = 5, add = function (x: Number): Number => x + n in add(3);"));
+}
+
+TEST(function_expr_returns_function) {
+    ASSERT_EQ(0, analyze(
+        "let makeAdder = function (n: Number) => function (x: Number): Number => x + n in "
+        "let add2 = makeAdder(2) in add2(5);"));
+}
+
+TEST(function_expr_undefined_capture) {
+    ASSERT_GT(analyze(
+        "let f = function (x: Number): Number => x + missing in f(1);"), 0);
+}
+
 TEST(function_wrong_arg_count) {
     ASSERT_GT(analyze("function f(x: Number): Number => x; f(1, 2);"), 0);
 }
@@ -363,6 +379,36 @@ TEST(decorator_multiple) {
         "greet();"));
 }
 
+TEST(decorator_curried) {
+    ASSERT_EQ(0, analyze(
+        "function identity(f) => f;\n"
+        "function memoize(limit: Number) => identity;\n"
+        "decor memoize(100)\n"
+        "function fib(n: Number): Number => n;\n"
+        "fib(1);"));
+}
+
+TEST(decorator_curried_factory_must_return_function) {
+    ASSERT_GT(analyze(
+        "function memoize(limit: Number): Number => limit;\n"
+        "decor memoize(100)\n"
+        "function fib(n: Number): Number => n;\n"
+        "fib(1);"), 0);
+}
+
+TEST(method_decorator_basic) {
+    ASSERT_EQ(0, analyze(
+        "function logger(f) => f;\n"
+        "type Box(v: Number) {\n"
+        "    decor logger get(): Number => v;\n"
+        "}\n"
+        "let b = new Box(3) in b.get();"));
+}
+
+TEST(call_non_callable_known_type) {
+    ASSERT_GT(analyze("let x: Number = 5 in x(1);"), 0);
+}
+
 /* ============================================================
  *  SUITE: Programas completos válidos
  * ============================================================ */
@@ -431,6 +477,9 @@ int main(void) {
     TEST_SUITE("Funciones");
     RUN_TEST(function_basic);
     RUN_TEST(function_no_annotation);
+    RUN_TEST(function_expr_closure_capture);
+    RUN_TEST(function_expr_returns_function);
+    RUN_TEST(function_expr_undefined_capture);
     RUN_TEST(function_wrong_arg_count);
     RUN_TEST(function_wrong_arg_type);
     RUN_TEST(function_undefined);
@@ -473,6 +522,10 @@ int main(void) {
     TEST_SUITE("Desugaring de decoradores");
     RUN_TEST(decorator_basic);
     RUN_TEST(decorator_multiple);
+    RUN_TEST(decorator_curried);
+    RUN_TEST(decorator_curried_factory_must_return_function);
+    RUN_TEST(method_decorator_basic);
+    RUN_TEST(call_non_callable_known_type);
 
     TEST_SUITE("Programas completos");
     RUN_TEST(program_fibonacci);

@@ -29,6 +29,7 @@ typedef enum {
     HULK_TYPE_NUMBER,
     HULK_TYPE_STRING,
     HULK_TYPE_BOOLEAN,
+    HULK_TYPE_FUNCTION,
     HULK_TYPE_VOID,      // sentencias sin valor
     HULK_TYPE_ERROR,     // centinela para error recovery
     HULK_TYPE_USER,      // tipo definido por el usuario
@@ -42,6 +43,9 @@ struct HulkType_s {
     const char  *name;
     HulkType    *parent;    // herencia (Object es raíz)
     Scope       *members;   // para tipos: scope con atributos + métodos
+    HulkType   **param_types;
+    int          param_count;
+    HulkType    *return_type;
 };
 
 /* ============================================================
@@ -60,6 +64,7 @@ typedef struct {
     const char  *name;
     SymbolKind   kind;
     HulkType    *type;          // tipo de var/attr, retorno de func/method
+    HulkType    *callable_type; // firma completa de funciones/métodos
     HulkNode    *decl_node;     // nodo AST donde se declaró (NULL built-ins)
     HulkType   **param_types;   // para func/method
     const char **param_names;   // para func/method
@@ -106,6 +111,8 @@ typedef struct {
 
     /* Estado durante verificación */
     HulkType  *enclosing_type;  // tipo actual (para self)
+    FunctionExprNode *capture_target;
+    Scope      *capture_scope;
     int        error_count;
 } SemanticContext;
 
@@ -141,6 +148,9 @@ HulkType* sem_type_new(SemanticContext *ctx, HulkTypeKind kind,
 int       sem_type_conforms(HulkType *child, HulkType *ancestor);
 HulkType* sem_type_join(SemanticContext *ctx, HulkType *a, HulkType *b);
 HulkType* sem_type_resolve(SemanticContext *ctx, const char *name);
+HulkType* sem_function_type_new(SemanticContext *ctx, HulkType **params,
+                                int param_count, HulkType *ret);
+int       sem_function_type_equals(HulkType *a, HulkType *b);
 
 /* Helper: resuelve type_annotation o retorna t_object (con error si no existe) */
 static inline HulkType* sem_resolve_annotation(SemanticContext *c,

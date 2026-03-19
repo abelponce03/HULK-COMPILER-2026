@@ -43,6 +43,16 @@ FunctionDefNode* hulk_ast_function_def(HulkASTContext *ctx, const char *name,
     return node;
 }
 
+FunctionExprNode* hulk_ast_function_expr(HulkASTContext *ctx, const char *ret_type,
+                                          int line, int col) {
+    ALLOC_NODE(ctx, FunctionExprNode, NODE_FUNCTION_EXPR, line, col);
+    node->return_type = hulk_ast_strdup(ctx, ret_type);
+    node->body        = NULL;
+    hulk_node_list_init(&node->params);
+    hulk_node_list_init(&node->captures);
+    return node;
+}
+
 TypeDefNode* hulk_ast_type_def(HulkASTContext *ctx, const char *name,
                                 const char *parent, int line, int col) {
     ALLOC_NODE(ctx, TypeDefNode, NODE_TYPE_DEF, line, col);
@@ -61,6 +71,7 @@ MethodDefNode* hulk_ast_method_def(HulkASTContext *ctx, const char *name,
     node->return_type = hulk_ast_strdup(ctx, ret_type);
     node->body        = NULL;
     hulk_node_list_init(&node->params);
+    hulk_node_list_init(&node->decorators);
     return node;
 }
 

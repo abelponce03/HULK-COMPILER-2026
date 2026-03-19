@@ -25,6 +25,9 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td);
 static void check_top_level(SemanticContext *c, HulkNode *decl);
 static void check_function_def(SemanticContext *c, FunctionDefNode *fn);
 static void check_type_def(SemanticContext *c, TypeDefNode *td);
+static HulkType* apply_decorators_to_type(SemanticContext *c, HulkNode *site,
+                                          HulkType *base_type,
+                                          HulkNodeList *decorators);
 
 /* ============================================================
  *  Pase 1 — Registrar nombres de tipos
@@ -140,6 +143,8 @@ static void collect_function(SemanticContext *c, FunctionDefNode *fn) {
             sym->param_names[i] = p->name;
         }
     }
+    sym->callable_type = sem_function_type_new(c, sym->param_types,
+                                               sym->param_count, ret);
 }
 
 /* ---------- Registrar miembros de un tipo ---------- */
@@ -192,6 +197,9 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
                     ms->param_names[j] = p->name;
                 }
             }
+            if (ms)
+                ms->callable_type = sem_function_type_new(c, ms->param_types,
+                                                          ms->param_count, ret);
         } else if (m->type == NODE_ATTRIBUTE_DEF) {
             AttributeDefNode *ad = (AttributeDefNode*)m;
             HulkType *at = sem_resolve_annotation(c, ad->type_annotation, m);
@@ -256,6 +264,7 @@ static void check_function_def(SemanticContext *c, FunctionDefNode *fn) {
         } else if (!fn->return_type) {
             /* Inferir tipo de retorno */
             sym->type = body_t;
+            if (sym->callable_type) sym->callable_type->return_type = body_t;
         }
     }
 
@@ -298,6 +307,23 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
                     sem_error(c, m,
                         "método '%s': cuerpo retorna %s, se esperaba %s",
                         md->name, body_t->name, ret->name);
+            } else {
+                Symbol *ms = sem_lookup_member(type, md->name);
+                if (ms) {
+                    ms->type = body_t;
+                    if (ms->callable_type) ms->callable_type->return_type = body_t;
+                }
+            }
+
+            if (md->decorators.count > 0) {
+                Symbol *ms = sem_lookup_member(type, md->name);
+                HulkType *method_type = ms && ms->callable_type
+                    ? ms->callable_type
+                    : sem_function_type_new(c, NULL, 0, body_t);
+                HulkType *decorated = apply_decorators_to_type(
+                    c, (HulkNode*)md, method_type, &md->decorators);
+                if (ms && decorated && decorated->kind == HULK_TYPE_FUNCTION)
+                    ms->callable_type = decorated;
             }
 
             sem_pop_scope(c);
@@ -326,6 +352,84 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
     }
 
     c->enclosing_type = prev_type;
+}
+
+static HulkType* apply_decorators_to_type(SemanticContext *c, HulkNode *site,
+                                          HulkType *base_type,
+                                          HulkNodeList *decorators) {
+    HulkType *current = base_type;
+    for (int i = decorators->count - 1; i >= 0; i--) {
+        DecorItemNode *di = (DecorItemNode*)decorators->items[i];
+        Symbol *sym = sem_lookup(c->global, di->name);
+        if (!sym) {
+            sem_error(c, (HulkNode*)di, "decorador '%s' no definido", di->name);
+            continue;
+        }
+
+        HulkType *dec_type = sym->callable_type ? sym->callable_type : sym->type;
+        if (!dec_type || dec_type->kind != HULK_TYPE_FUNCTION) {
+            sem_error(c, (HulkNode*)di, "decorador '%s' no es invocable", di->name);
+            continue;
+        }
+
+        if (di->args.count > 0) {
+            if (dec_type->param_count != di->args.count) {
+                sem_error(c, (HulkNode*)di,
+                    "fábrica decoradora '%s' espera %d argumentos, recibió %d",
+                    di->name, dec_type->param_count, di->args.count);
+            }
+            int cnt = di->args.count < dec_type->param_count
+                ? di->args.count : dec_type->param_count;
+            for (int a = 0; a < cnt; a++) {
+                HulkType *at = sem_check_expr(c, di->args.items[a]);
+                if (dec_type->param_types &&
+                    !sem_type_conforms(at, dec_type->param_types[a]))
+                    sem_error(c, di->args.items[a],
+                        "argumento %d de '%s': se esperaba %s, recibido %s",
+                        a + 1, di->name, dec_type->param_types[a]->name, at->name);
+            }
+            for (int a = cnt; a < di->args.count; a++)
+                sem_check_expr(c, di->args.items[a]);
+
+            dec_type = dec_type->return_type;
+            if (!dec_type) {
+                continue;
+            }
+            if (dec_type->kind == HULK_TYPE_OBJECT) {
+                current = c->t_object;
+                continue;
+            }
+            if (dec_type->kind != HULK_TYPE_FUNCTION) {
+                sem_error(c, (HulkNode*)di,
+                    "fábrica decoradora '%s' debe retornar una función", di->name);
+                continue;
+            }
+        }
+
+        if (dec_type->kind == HULK_TYPE_OBJECT) {
+            current = c->t_object;
+            continue;
+        }
+        if (dec_type->param_count != 1) {
+            sem_error(c, (HulkNode*)di,
+                "decorador '%s' debe aceptar exactamente una función objetivo", di->name);
+            continue;
+        }
+        if (dec_type->param_types &&
+            !sem_type_conforms(current, dec_type->param_types[0])) {
+            sem_error(c, site,
+                "decorador '%s' no acepta la firma de la función objetivo", di->name);
+        }
+
+        current = dec_type->return_type ? dec_type->return_type : c->t_object;
+        if (current->kind == HULK_TYPE_OBJECT) continue;
+        if (current->kind != HULK_TYPE_FUNCTION) {
+            sem_error(c, (HulkNode*)di,
+                "decorador '%s' debe retornar una función", di->name);
+            break;
+        }
+    }
+    return current;
 }
 
 /* ============================================================

@@ -156,6 +156,18 @@ TEST(create_function_def_no_return_type) {
     hulk_ast_context_free(&ctx);
 }
 
+TEST(create_function_expr_node) {
+    HulkASTContext ctx;
+    hulk_ast_context_init(&ctx);
+    FunctionExprNode *f = hulk_ast_function_expr(&ctx, "Number", 2, 3);
+    ASSERT_NOT_NULL(f);
+    ASSERT_EQ(NODE_FUNCTION_EXPR, f->base.type);
+    ASSERT_STR_EQ("Number", f->return_type);
+    ASSERT_EQ(0, f->params.count);
+    ASSERT_EQ(0, f->captures.count);
+    hulk_ast_context_free(&ctx);
+}
+
 TEST(create_type_def_node) {
     HulkASTContext ctx;
     hulk_ast_context_init(&ctx);
@@ -185,6 +197,7 @@ TEST(create_method_def_node) {
     ASSERT_EQ(NODE_METHOD_DEF, m->base.type);
     ASSERT_STR_EQ("speak", m->name);
     ASSERT_STR_EQ("String", m->return_type);
+    ASSERT_EQ(0, m->decorators.count);
     hulk_ast_context_free(&ctx);
 }
 
@@ -632,6 +645,7 @@ TEST(printer_handles_null) {
 TEST(node_type_names_correct) {
     ASSERT_STR_EQ("Program", hulk_node_type_name(NODE_PROGRAM));
     ASSERT_STR_EQ("FunctionDef", hulk_node_type_name(NODE_FUNCTION_DEF));
+    ASSERT_STR_EQ("FunctionExpr", hulk_node_type_name(NODE_FUNCTION_EXPR));
     ASSERT_STR_EQ("TypeDef", hulk_node_type_name(NODE_TYPE_DEF));
     ASSERT_STR_EQ("NumberLit", hulk_node_type_name(NODE_NUMBER_LIT));
     ASSERT_STR_EQ("DecorBlock", hulk_node_type_name(NODE_DECOR_BLOCK));
@@ -735,6 +749,7 @@ int main(void) {
     RUN_TEST(create_program_node);
     RUN_TEST(create_function_def_node);
     RUN_TEST(create_function_def_no_return_type);
+    RUN_TEST(create_function_expr_node);
     RUN_TEST(create_type_def_node);
     RUN_TEST(create_type_def_no_parent);
     RUN_TEST(create_method_def_node);

@@ -1,8 +1,11 @@
 Program      -> TopLevel Program | ε
-TopLevel     -> FunctionDef | TypeDef | TerminatedStmt | DecorBlock
+TopLevel     -> FUNCTION TopLevelFunctionTail | TypeDef | TerminatedStmt | DecorBlock
+TopLevelFunctionTail -> IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
+                      | LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody SEMICOLON
 TerminatedStmt -> Stmt SEMICOLON
 Stmt         -> Expr | WhileStmt | ForStmt | BlockStmt
 FunctionDef  -> FUNCTION IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
+FunctionExpr -> FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody
 TypeDef      -> TYPE IDENT TypeParams TypeInheritance LBRACE TypeBody RBRACE
 # ============== Decoradores ==============
 # decor log, memoize(100)
@@ -19,7 +22,8 @@ TypeParams   -> LPAREN ArgIdList RPAREN | ε
 TypeInheritance -> INHERITS IDENT TypeBaseArgs | ε
 TypeBaseArgs -> LPAREN ArgList RPAREN | ε
 TypeBody     -> TypeMember TypeBody | ε
-TypeMember   -> IDENT TypeMemberTail
+TypeMember   -> DecorItemsMethod | IDENT TypeMemberTail
+DecorItemsMethod -> DECOR DecorItems DecorItemsMethod | IDENT TypeMemberTail
 TypeMemberTail -> TypeAnnotation TypeMemberTail' | LPAREN ArgIdList RPAREN TypeAnnotation MethodBody
 TypeMemberTail' -> SEMICOLON | ASSIGN Expr SEMICOLON
 AttributeDef -> IDENT ASSIGN Expr SEMICOLON
@@ -31,6 +35,7 @@ ArgIdList    -> ArgId ArgIdListTail | ε
 ArgIdListTail-> COMMA ArgId ArgIdListTail | ε
 ArgId        -> IDENT TypeAnnotation
 FunctionBody -> ARROW Expr SEMICOLON | BlockStmt
+FunctionExprBody -> ARROW Expr | BlockStmt
 WhileStmt    -> WHILE Expr WhileBody
 WhileBody    -> BlockStmt | Expr
 ForStmt      -> FOR LPAREN IDENT IN Expr RPAREN ForBody
@@ -86,6 +91,7 @@ Primary      -> NUMBER
               | TRUE
               | FALSE
               | IDENT PrimaryTail
+              | FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody
               | LPAREN Expr RPAREN
               | NEW IDENT LPAREN ArgList RPAREN
               | SELF PrimaryTail
@@ -99,4 +105,3 @@ ArgList      -> Expr ArgListTail
               | ε
 ArgListTail  -> COMMA Expr ArgListTail
               | ε
-

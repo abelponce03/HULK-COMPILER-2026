@@ -51,6 +51,9 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             return LLVMConstInt(c->t_bool, n->value ? 1 : 0, 0);
         }
         case NODE_IDENT:           return emit_ident(c, (IdentNode*)node);
+        case NODE_FUNCTION_EXPR:
+            cg_error(c, node, "codegen de closures no implementado");
+            return LLVMConstReal(c->t_double, 0.0);
         case NODE_BINARY_OP:       return emit_binary_op(c, (BinaryOpNode*)node);
         case NODE_UNARY_OP:        return emit_unary_op(c, (UnaryOpNode*)node);
         case NODE_CONCAT_EXPR:     return emit_concat(c, (ConcatExprNode*)node);
