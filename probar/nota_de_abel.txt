@@ -1,0 +1,17 @@
+aqui te deje una guia con los comandos 
+basicos para correr todos los test
+no hay que volverse loco yo creo que lo habia orientado todo al makefile
+y bueno los comandos estan ahi 
+el principal para saber si el proyecto pincha es 
+make clean primero para quitarte todo el codigo compilado y luego 
+make test-all que prueba todas la areas hay otros que son para test especificos pero este los corre todos
+ahora mismo vi que fue quedando un error en la construccion del ast hay que revisar eso para ver que pasa
+pero bueno la idea es que cada vez que le pidas a la ia que cree test tiens que decir que queden integrados al makefile
+para evitar regueros y bueno seguir inventando test para cuando los profes manden el conjunto de test de ellos probar y ver si el compilador esta perfecto 
+construyyo  casos extremos de prueba y multiples casos de polimorfismo en el que se evalue todo el flujo del compilador 
+y la otra cosa que no me queda claro si esta implementada es que en el generador de analizadores sintacticos no veo donde se esta guardano la tabla q esa tabla una vez que se crea no tiene que 
+crearse mas, pero yo creo que esa parte estaba bien revisalo con cuidado para romper lo menos posible 
+yo creo que por ahora por arribita es todo 
+
+para pruebas prioriza el makefile dicelo a la ia 
+;) dale 

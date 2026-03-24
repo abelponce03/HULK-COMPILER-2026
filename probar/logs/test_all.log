@@ -1,0 +1,749 @@
+
+═══════════════════════════════════════
+  Ejecutando todos los tests...
+═══════════════════════════════════════
+
+🧪 HULK Compiler — Lexer Unit Tests
+
+[1m━━━ Keywords ━━━[0m
+  keyword_let                                        
+========== CONSTRUCCIÓN DEL LEXER ==========
+[Pipeline] Asignar contextos...
+[Pipeline] Construir AST...
+Tabla LL(1) exportada a CSV: output/regex_ll1_table.csv
+[Pipeline] Calcular funciones...
+[Pipeline] Construir DFA...
+DFA construido con 102 estados
+[Pipeline] Exportar DFA...
+DFA exportado a DOT: output/lexer_dfa.dot
+  Para visualizar: dot -Tpng output/lexer_dfa.dot -o dfa.png
+DFA exportado a CSV: output/lexer_dfa.csv
+[32mPASS[0m
+  keyword_function                                   [32mPASS[0m
+  keyword_if_else                                    [32mPASS[0m
+  keyword_while_for_in                               [32mPASS[0m
+  keyword_type_inherits_new                          [32mPASS[0m
+  keyword_true_false                                 [32mPASS[0m
+  keyword_self_base_is_as                            [32mPASS[0m
+  keyword_decor                                      [32mPASS[0m
+  decor_not_identifier                               [32mPASS[0m
+
+[1m━━━ Identifiers ━━━[0m
+  simple_identifier                                  [32mPASS[0m
+  identifier_with_underscore                         [32mPASS[0m
+  identifier_not_keyword                             [32mPASS[0m
+
+[1m━━━ Numbers ━━━[0m
+  integer_number                                     [32mPASS[0m
+  decimal_number                                     [32mPASS[0m
+  number_zero                                        [32mPASS[0m
+
+[1m━━━ Strings ━━━[0m
+  simple_string                                      [32mPASS[0m
+
+[1m━━━ Operators ━━━[0m
+  arithmetic_operators                               [32mPASS[0m
+  comparison_operators                               [32mPASS[0m
+  assignment_operators                               [32mPASS[0m
+  logical_operators                                  [32mPASS[0m
+  concat_operators                                   [32mPASS[0m
+  power_operator                                     [32mPASS[0m
+  arrow_operator                                     [32mPASS[0m
+
+[1m━━━ Delimiters ━━━[0m
+  delimiters                                         [32mPASS[0m
+
+[1m━━━ Whitespace & Comments ━━━[0m
+  whitespace_ignored                                 [32mPASS[0m
+  comments_ignored                                   [32mPASS[0m
+
+[1m━━━ Line/Column Tracking ━━━[0m
+  line_col_tracking                                  [32mPASS[0m
+
+[1m━━━ Compound Expressions ━━━[0m
+  let_expression                                     [32mPASS[0m
+  function_declaration                               [32mPASS[0m
+  empty_input                                        [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 30  |  [32mPassed: 30[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+[WARN][ll1] Conflicto LL(1) en M[TopLevel, t3]: prod 2 vs 4
+[WARN][ll1] Conflicto LL(1) en M[TypeMember, t48]: prod 34 vs 35
+[WARN][ll1] Conflicto LL(1) en M[OrExpr', t43]: prod 85 vs 86
+[WARN][ll1] Conflicto LL(1) en M[AndExpr', t44]: prod 88 vs 89
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t37]: prod 91 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t38]: prod 92 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t39]: prod 93 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t40]: prod 94 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t41]: prod 95 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t42]: prod 96 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t19]: prod 97 vs 98
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t45]: prod 100 vs 102
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t46]: prod 101 vs 102
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t32]: prod 105 vs 106
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t31]: prod 104 vs 106
+[WARN][ll1] Conflicto LL(1) en M[Term', t33]: prod 108 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t34]: prod 109 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t35]: prod 110 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Factor', t36]: prod 113 vs 114
+[WARN][ll1] Conflicto LL(1) en M[AsExpr, t18]: prod 118 vs 119
+[WARN][ll1] Conflicto LL(1) en M[PrimaryTail, t22]: prod 130 vs 134
+[ERROR][parser] [1:11] no hay producción para [DecorArgs, NUMBER]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] [1:17] no hay producción para [DecorArgs, $]
+[ERROR][parser] Demasiados errores (50), abortando análisis
+[ERROR][parser] [1:7] no hay producción para [DecorItems, FUNCTION]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] [1:10] no hay producción para [AsExpr, $]
+[ERROR][parser] Demasiados errores (50), abortando análisis
+[ERROR][parser] [1:7] no hay producción para [TypeAnnotation, NUMBER]
+[ERROR][parser] [1:8] se esperaba 'ASSIGN', se encontró 'SEMICOLON'
+[ERROR][parser] [1:8] no hay producción para [Expr, SEMICOLON]
+[ERROR][parser] [1:8] no hay producción para [VarBindingListTail, SEMICOLON]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] [1:9] no hay producción para [VarBindingListTail, $]
+[ERROR][parser] Demasiados errores (50), abortando análisis
+
+🧪 HULK Compiler — Parser Unit Tests
+
+[1m━━━ Valid Programs ━━━[0m
+  parse_let_simple                                   
+========== CONSTRUCCIÓN DEL LEXER ==========
+[Pipeline] Asignar contextos...
+[Pipeline] Construir AST...
+Tabla LL(1) exportada a CSV: output/regex_ll1_table.csv
+[Pipeline] Calcular funciones...
+[Pipeline] Construir DFA...
+DFA construido con 102 estados
+[Pipeline] Exportar DFA...
+DFA exportado a DOT: output/lexer_dfa.dot
+  Para visualizar: dot -Tpng output/lexer_dfa.dot -o dfa.png
+DFA exportado a CSV: output/lexer_dfa.csv
+Gramática HULK cargada: 68 no-terminales, 48 terminales, 139 producciones
+[32mPASS[0m
+  parse_let_in                                       [32mPASS[0m
+  parse_function_decl                                [32mPASS[0m
+  parse_function_expr                                [32mPASS[0m
+  parse_if_else                                      [32mPASS[0m
+  parse_while_loop                                   [32mPASS[0m
+  parse_type_decl                                    [32mPASS[0m
+  parse_arithmetic                                   [32mPASS[0m
+  parse_boolean_expr                                 [32mPASS[0m
+  parse_comparison                                   [32mPASS[0m
+  parse_method_call                                  [32mPASS[0m
+  parse_nested_let                                   [32mPASS[0m
+  parse_string_concat                                [32mPASS[0m
+
+[1m━━━ Decorators (decor keyword) ━━━[0m
+  decor_single_function                              [32mPASS[0m
+  decor_parametrized                                 [32mPASS[0m
+  decor_comma_list                                   [32mPASS[0m
+  decor_stacked                                      [32mPASS[0m
+  decor_on_type                                      [32mPASS[0m
+  decor_multi_arg                                    [32mPASS[0m
+  decor_with_undecorated                             [32mPASS[0m
+  decor_method_inside_type                           [32mPASS[0m
+  error_decor_no_target                              [32mPASS[0m
+  error_decor_missing_ident                          [32mPASS[0m
+
+[1m━━━ Edge Cases ━━━[0m
+  parse_empty_input                                  [32mPASS[0m
+
+[1m━━━ Syntax Errors ━━━[0m
+  error_missing_semicolon                            [32mPASS[0m
+  error_missing_assign                               [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 26  |  [32mPassed: 26[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+
+🧪 HULK Compiler — AST Unit Tests
+
+[1m━━━ PositionSet (bitset) ━━━[0m
+  posset_empty                                       [32mPASS[0m
+  posset_add_contains                                [32mPASS[0m
+  posset_multiple                                    [32mPASS[0m
+  posset_union                                       [32mPASS[0m
+  posset_boundary                                    [32mPASS[0m
+
+[1m━━━ ASTContext ━━━[0m
+  context_init_free                                  [32mPASS[0m
+  context_positions                                  [32mPASS[0m
+
+[1m━━━ Node Creation ━━━[0m
+  create_leaf                                        [32mPASS[0m
+  create_concat                                      [32mPASS[0m
+  create_or                                          [32mPASS[0m
+  create_star                                        [32mPASS[0m
+  create_plus                                        [32mPASS[0m
+  create_question                                    [32mPASS[0m
+
+[1m━━━ Compute Functions (nullable, firstpos, lastpos) ━━━[0m
+  compute_concat_functions                           [32mPASS[0m
+  compute_or_functions                               [32mPASS[0m
+  compute_star_nullable                              [32mPASS[0m
+
+[1m━━━ Visitor Pattern ━━━[0m
+  visitor_postorder                                  [32mPASS[0m
+
+[1m━━━ Object Pool ━━━[0m
+  pool_grows                                         [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 18  |  [32mPassed: 18[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+
+╔═══════════════════════════════════════╗
+║    HULK AST — Tests Unitarios         ║
+╚═══════════════════════════════════════╝
+
+[1m━━━ Arena / Object Pool ━━━[0m
+  arena_init_and_free                                [32mPASS[0m
+  arena_alloc_registers_blocks                       [32mPASS[0m
+  arena_strdup_copies_string                         [32mPASS[0m
+  arena_strdup_null_returns_null                     [32mPASS[0m
+  arena_many_allocs                                  [32mPASS[0m
+
+[1m━━━ HulkNodeList ━━━[0m
+  node_list_init_empty                               [32mPASS[0m
+  node_list_push_and_count                           [32mPASS[0m
+  node_list_grows_capacity                           [32mPASS[0m
+
+[1m━━━ Creación de nodos ━━━[0m
+  create_program_node                                [32mPASS[0m
+  create_function_def_node                           [32mPASS[0m
+  create_function_def_no_return_type                 [32mPASS[0m
+  create_function_expr_node                          [32mPASS[0m
+  create_type_def_node                               [32mPASS[0m
+  create_type_def_no_parent                          [32mPASS[0m
+  create_method_def_node                             [32mPASS[0m
+  create_attribute_def_node                          [32mPASS[0m
+  create_let_expr_with_bindings                      [32mPASS[0m
+  create_if_expr_with_elifs                          [32mPASS[0m
+  create_while_stmt_node                             [32mPASS[0m
+  create_for_stmt_node                               [32mPASS[0m
+  create_block_stmt_node                             [32mPASS[0m
+  create_binary_op_node                              [32mPASS[0m
+  create_unary_op_node                               [32mPASS[0m
+  create_number_lit_value                            [32mPASS[0m
+  create_string_lit_node                             [32mPASS[0m
+  create_bool_lit_true                               [32mPASS[0m
+  create_bool_lit_false                              [32mPASS[0m
+  create_ident_node                                  [32mPASS[0m
+  create_call_expr_node                              [32mPASS[0m
+  create_member_access_node                          [32mPASS[0m
+  create_new_expr_node                               [32mPASS[0m
+  create_assign_node                                 [32mPASS[0m
+  create_destruct_assign_node                        [32mPASS[0m
+  create_as_expr_node                                [32mPASS[0m
+  create_is_expr_node                                [32mPASS[0m
+  create_self_node                                   [32mPASS[0m
+  create_base_call_node                              [32mPASS[0m
+  create_decor_block_node                            [32mPASS[0m
+  create_decor_item_with_args                        [32mPASS[0m
+  create_concat_expr_node                            [32mPASS[0m
+
+[1m━━━ Visitor dispatch ━━━[0m
+  visitor_dispatches_correct_type                    [32mPASS[0m
+  visitor_accept_null_safe                           [32mPASS[0m
+  visitor_accept_list_visits_all                     [32mPASS[0m
+  visitor_passes_data                                [32mPASS[0m
+
+[1m━━━ AST Printer ━━━[0m
+  printer_outputs_program                            [32mPASS[0m
+  printer_handles_binary_op                          [32mPASS[0m
+  printer_handles_null                               [32mPASS[0m
+
+[1m━━━ Debugging names ━━━[0m
+  node_type_names_correct                            [32mPASS[0m
+  node_type_name_unknown                             [32mPASS[0m
+  binary_op_names_correct                            [32mPASS[0m
+
+[1m━━━ Composite AST Trees ━━━[0m
+  composite_tree_let_with_binary                     [32mPASS[0m
+  composite_tree_type_with_methods                   [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 52  |  [32mPassed: 52[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+
+╔═══════════════════════════════════════╗
+║   Tests: AST Builder                  ║
+╚═══════════════════════════════════════╝
+
+[1m━━━ Literales ━━━[0m
+  number_lit_integer                                 [32mPASS[0m
+  number_lit_decimal                                 [32mPASS[0m
+  string_lit_basic                                   [32mPASS[0m
+  string_lit_empty                                   [32mPASS[0m
+  bool_lit_true                                      [32mPASS[0m
+  bool_lit_false                                     [32mPASS[0m
+  ident_simple                                       [32mPASS[0m
+
+[1m━━━ Operadores aritméticos ━━━[0m
+  binary_add                                         [32mPASS[0m
+  binary_sub                                         [32mPASS[0m
+  binary_mul                                         [32mPASS[0m
+  binary_div                                         [32mPASS[0m
+  binary_mod                                         [32mPASS[0m
+  binary_pow                                         [32mPASS[0m
+
+[1m━━━ Precedencia y asociatividad ━━━[0m
+  precedence_mul_over_add                            [32mPASS[0m
+  left_assoc_add_sub                                 [32mPASS[0m
+  right_assoc_pow                                    [32mPASS[0m
+  parenthesized_expr                                 [32mPASS[0m
+
+[1m━━━ Comparación y lógicos ━━━[0m
+  cmp_less_than                                      [32mPASS[0m
+  cmp_equal                                          [32mPASS[0m
+  cmp_not_equal                                      [32mPASS[0m
+  logical_and                                        [32mPASS[0m
+  logical_or                                         [32mPASS[0m
+  and_binds_tighter_than_or                          [32mPASS[0m
+
+[1m━━━ Concatenación ━━━[0m
+  concat_at                                          [32mPASS[0m
+  concat_at_at                                       [32mPASS[0m
+  concat_chain_left_assoc                            [32mPASS[0m
+
+[1m━━━ Unary ━━━[0m
+  unary_minus                                        [32mPASS[0m
+  unary_double_minus                                 [32mPASS[0m
+
+[1m━━━ LetExpr ━━━[0m
+  let_simple                                         [32mPASS[0m
+  let_with_type_annotation                           [32mPASS[0m
+  let_multiple_bindings                              [32mPASS[0m
+
+[1m━━━ IfExpr ━━━[0m
+  if_else_simple                                     [32mPASS[0m
+  if_elif_else                                       [32mPASS[0m
+
+[1m━━━ WhileStmt ━━━[0m
+  while_basic                                        [32mPASS[0m
+  while_with_block                                   [32mPASS[0m
+
+[1m━━━ ForStmt ━━━[0m
+  for_basic                                          [32mPASS[0m
+  for_with_block                                     [32mPASS[0m
+
+[1m━━━ BlockStmt ━━━[0m
+  block_multiple_stmts                               [32mPASS[0m
+  block_empty                                        [32mPASS[0m
+
+[1m━━━ FunctionDef ━━━[0m
+  function_arrow_body                                [32mPASS[0m
+  function_block_body                                [32mPASS[0m
+  function_no_params_no_return                       [32mPASS[0m
+
+[1m━━━ TypeDef ━━━[0m
+  type_simple                                        [32mPASS[0m
+  type_with_inheritance                              [32mPASS[0m
+  type_with_method                                   [32mPASS[0m
+  type_with_attribute                                [32mPASS[0m
+
+[1m━━━ Calls, Members, New ━━━[0m
+  call_simple                                        [32mPASS[0m
+  call_multiple_args                                 [3[ERROR][ast_builder] [1:38] expresión no válida (encontrado ';')
+[WARN][ast_builder] AST construido con errores (puede estar incompleto)
+2mPASS[0m
+  call_no_args                                       [32mPASS[0m
+  member_access                                      [32mPASS[0m
+  member_chain                                       [32mPASS[0m
+  method_call                                        [32mPASS[0m
+  new_expr                                           [32mPASS[0m
+
+[1m━━━ Asignación ━━━[0m
+  destruct_assign                                    [32mPASS[0m
+  regular_assign                                     [32mPASS[0m
+
+[1m━━━ Is / As ━━━[0m
+  is_expr                                            [32mPASS[0m
+  as_expr                                            [32mPASS[0m
+  as_chain                                           [32mPASS[0m
+
+[1m━━━ Self / Base ━━━[0m
+  self_expr                                          [32mPASS[0m
+  self_member_access                                 [32mPASS[0m
+  base_call                                          [32mPASS[0m
+
+[1m━━━ Decoradores ━━━[0m
+  decor_simple                                       [32mPASS[0m
+  decor_with_args                                    [32mPASS[0m
+  decor_multiple                                     [32mPASS[0m
+  decor_on_type                                      [32mPASS[0m
+  decor_method_inside_type                           [32mPASS[0m
+
+[1m━━━ FunctionExpr ━━━[0m
+  function_expr_simple                               [31mFAIL[0m
+    [31m✗ ASSERT_NOT_NULL(ast)[0m
+      at tests/test_ast_builder.c:952
+  function_expr_inside_let                           [32mPASS[0m
+
+[1m━━━ Programas compuestos ━━━[0m
+  program_multiple_decls                             [32mPASS[0m
+  program_empty                                      [32mPASS[0m
+  factorial_recursive                                [32mPASS[0m
+  type_with_inheritance_and_methods                  [32mPASS[0m
+  let_in_if_nested                                   [32mPASS[0m
+  new_with_method_call                               [32mPASS[0m
+
+[1m━━━ Manejo de errores ━━━[0m
+  error_returns_null                                 [32mPASS[0m
+  error_missing_semicolon                            [32mPASS[0m
+  error_null_input                                   [32mPASS[0m
+
+[1m━━━ Posiciones ━━━[0m
+  position_tracking                                  [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 78  |  [32mPassed: 77[0m  |  [31mFailed: 1[0m
+═══════════════════════════════════════[0m
+
+
+[1m━━━ Literales y expresiones simples ━━━[0m
+  number_literal                                     [32mPASS[0m
+  string_literal                                     [32mPASS[0m
+  bool_literal                                       [32mPASS[0m
+  arithmetic_valid                                   [32mPASS[0m
+  comparison_valid                                   [32mPASS[0m
+  logical_valid                                      [32mPASS[0m
+  unary_minus_valid                                  [32mPASS[0m
+  concat_valid                                       [32mPASS[0m
+  concat_with_number                                 [32mPASS[0m
+
+[1m━━━ Resolución de nombres ━━━[0m
+  let_binding_basic                                  [32mPASS[0m
+  let_multiple_bindings                              [32mPASS[0m
+  let_with_type_annotation                           [32mPASS[0m
+  undefined_variable                                 [32mPASS[0m
+  undefined_in_let_body                              [32mPASS[0m
+  variable_out_of_scope                              [32mPASS[0m
+
+[1m━━━ Verificación de tipos — errores ━━━[0m
+  arithmetic_with_string                             [32mPASS[0m
+  arithmetic_with_bool                               [32mPASS[0m
+  comparison_with_string                             [32mPASS[0m
+  logical_with_number                                [32mPASS[0m
+  unary_minus_string                                 [32mPASS[0m
+  let_type_mismatch                                  [32mPASS[0m
+
+[1m━━━ Funciones ━━━[0m
+  function_basic                                     [32mPASS[0m
+  function_no_annotation                             [32mPASS[0m
+  function_expr_closure_capture                      [32mPASS[0m
+  function_expr_returns_function                     [32mPASS[0m
+  function_expr_undefined_capture                    [32mPASS[0m
+  function_wrong_arg_count                           [32mPASS[0m
+  function_wrong_arg_type                            [32mPASS[0m
+  function_undefined                                 [32mPASS[0m
+  function_return_type_mismatch                      [32mPASS[0m
+  builtin_print                                      [32mPASS[0m
+  builtin_sqrt                                       [32mPASS[0m
+  builtin_wrong_args                                 [32mPASS[0m
+
+[1m━━━ Tipos ━━━[0m
+  type_basic                                         [32mPASS[0m
+  type_with_method                                   [32mPASS[0m
+  type_with_attribute                                [32mPASS[0m
+  type_inheritance                                   [32mPASS[0m
+  type_self_valid                                    [32mPASS[0m
+  self_outside_type                                  [32mPASS[0m
+  base_outside_type                                  [32mPASS[0m
+  type_constructor_wrong_args                        [32mPASS[0m
+  undefined_type_in_new                              [32mPASS[0m
+  member_undefined                                   [32mPASS[0m
+
+[1m━━━ Control de flujo ━━━[0m
+  if_else_valid                                      [32mPASS[0m
+  if_condition_not_bool                              [32mPASS[0m
+  while_valid                                        [32mPASS[0m
+  while_condition_not_bool                           [32mPASS[0m
+  for_valid                                          [32mPASS[0m
+  block_valid                                        [32mPASS[0m
+
+[1m━━━ Operadores especiales ━━━[0m
+  equality_valid                                     [32mPASS[0m
+  is_expr_valid                                      [32mPASS[0m
+  as_expr_valid                                      [32mPASS[0m
+  is_expr_undefined_type                             [32mPASS[0m
+  as_expr_undefined_type                             [32mPASS[0m
+
+[1m━━━ Asignación ━━━[0m
+  assign_valid                                       [32mPASS[0m
+  assign_undefined                                   [32mPASS[0m
+
+[1m━━━ Desugaring de decoradores ━━━[0m
+  decorator_basic                                    [32mPASS[0m
+  decorator_multiple                                 [32mPASS[0m
+  decorator_curried                                  [32mPASS[0m
+  decorator_curried_factory_must_return_function     [32mPASS[0m
+  method_decorator_basic                             [32mPASS[0m
+  call_non_callable_known_type                       [32mPASS[0m
+
+[1m━━━ Programas completos ━━━[0m
+  program_fibonacci                                  [32mPASS[0m
+  program_type_hierarchy                             [32mPASS[0m
+  program_let_chain                                  [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 65  |  [32mPassed: 65[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+
+[1m╔═══════════════════════════════════════╗[0m
+[1m║   HULK Compiler — Codegen Tests       ║[0m
+[1m╚═══════════════════════════════════════╝[0m
+
+[1m━━━ Literales ━━━[0m
+  cg_number_literal                                  [32mPASS[0m
+  cg_string_literal                                  [32mPASS[0m
+  cg_bool_literal                                    [32mPASS[0m
+  cg_negative_number                                 [32mPASS[0m
+
+[1m━━━ Aritmética y lógica ━━━[0m
+  cg_arithmetic                                      [32mPASS[0m
+  cg_division                                        [32mPASS[0m
+  cg_modulo                                          [32mPASS[0m
+  cg_power                                           [32mPASS[0m
+  cg_comparison                                      [32mPASS[0m
+  cg_logical_and                                     [32mPASS[0m
+  cg_logical_or                                      [32mPASS[0m
+
+[1m━━━ Funciones ━━━[0m
+  cg_function_simple                                 [32mPASS[0m
+  cg_function_two_params                             [32mPASS[0m
+  cg_function_ir_has_define                          [32mPASS[0m
+  cg_function_call_builtin_sqrt                      [32mPASS[0m
+  cg_function_call_builtin_sin                       [32mPASS[0m
+  cg_function_call_print                             [32mPASS[0m
+  cg_ir_has_main                                     [32mPASS[0m
+
+[1m━━━ Let bindings ━━━[0m
+  cg_let_simple                                      [32mPASS[0m
+  cg_let_multiple                                    [32mPASS[0m
+  cg_let_nested                                      [32mPASS[0m
+
+[1m━━━ Control de flujo ━━━[0m
+  cg_if_else                                         [32mPASS[0m
+  cg_if_elif_else                                    [32mPASS[0m
+  cg_while_loop                                      [32mPASS[0m
+
+[1m━━━ Concatenación ━━━[0m
+  cg_concat_strings                                  [32mPASS[0m
+  cg_concat_with_space                               [32mPASS[0m
+  cg_concat_mixed                                    [32mPASS[0m
+
+[1m━━━ Tipos de usuario ━━━[0m
+  cg_type_simple                                     [32mPASS[0m
+  cg_type_ir_has_struct                              [32mPASS[0m
+
+[1m━━━ Bloques ━━━[0m
+  cg_block                                           [32mPASS[0m
+
+[1m━━━ Runtime en IR ━━━[0m
+  cg_ir_has_printf                                   [32mPASS[0m
+  cg_ir_has_hulk_print                               [32mPASS[0m
+  cg_ir_has_hulk_concat                              [32mPASS[0m
+  cg_ir_has_hulk_num_to_str                          [32mPASS[0m
+  cg_ir_has_hulk_bool_to_str                         [32mPASS[0m
+
+[1m━━━ Módulo LLVM válido ━━━[0m
+  cg_module_valid_arithmetic                         [32mPASS[0m
+  cg_module_valid_func_calls                         [32mPASS[0m
+  cg_module_valid_let_if                             [32mPASS[0m
+  cg_module_valid_nested                             [32mPASS[0m
+  cg_module_valid_string_ops                         [32mPASS[0m
+
+[1m━━━ Archivo de salida ━━━[0m
+  cg_file_output                                     [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 41  |  [32mPassed: 41[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+[WARN][ll1] Conflicto LL(1) en M[TopLevel, t3]: prod 2 vs 4
+[WARN][ll1] Conflicto LL(1) en M[TypeMember, t48]: prod 34 vs 35
+[WARN][ll1] Conflicto LL(1) en M[OrExpr', t43]: prod 85 vs 86
+[WARN][ll1] Conflicto LL(1) en M[AndExpr', t44]: prod 88 vs 89
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t37]: prod 91 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t38]: prod 92 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t39]: prod 93 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t40]: prod 94 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t41]: prod 95 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t42]: prod 96 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t19]: prod 97 vs 98
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t45]: prod 100 vs 102
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t46]: prod 101 vs 102
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t32]: prod 105 vs 106
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t31]: prod 104 vs 106
+[WARN][ll1] Conflicto LL(1) en M[Term', t33]: prod 108 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t34]: prod 109 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t35]: prod 110 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Factor', t36]: prod 113 vs 114
+[WARN][ll1] Conflicto LL(1) en M[AsExpr, t18]: prod 118 vs 119
+[WARN][ll1] Conflicto LL(1) en M[PrimaryTail, t22]: prod 130 vs 134
+
+╔═══════════════════════════════════════╗
+║  Feature: Closures + Decorators       ║
+╚═══════════════════════════════════════╝
+
+[1m━━━ Parser ━━━[0m
+  parser_accepts_function_expr_and_concat_regression Gramática HULK cargada: 68 no-terminales, 48 terminales, 139 producciones
+[32mPASS[0m
+
+[1m━━━ AST ━━━[0m
+  ast_tracks_closure_capture_candidates              [32mPASS[0m
+  ast_parses_method_decorator                        [32mPASS[0m
+
+[1m━━━ Semantic ━━━[0m
+  semantic_accepts_closure_capture                   [32mPASS[0m
+  semantic_accepts_curried_decorator                 [32mPASS[0m
+  semantic_rejects_bad_curried_decorator             [32mPASS[0m
+  semantic_accepts_method_decorator                  [32mPASS[0m
+
+[1m═══════════════════════════════════════
+  Total: 7  |  [32mPassed: 7[0m  |  [31mFailed: 0[0m
+═══════════════════════════════════════[0m
+
+❌ Algunos tests fallaron
+make: *** [Makefile:122: test-all] Error 1

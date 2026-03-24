@@ -1,0 +1,486 @@
+===========================================
+   HULK Compiler - Lexer + Parser LL(1)
+===========================================
+
+========== CONSTRUCCIÓN DEL LEXER ==========
+[Pipeline] Asignar contextos...
+[Pipeline] Construir AST...
+Tabla LL(1) exportada a CSV: output/regex_ll1_table.csv
+[Pipeline] Calcular funciones...
+[Pipeline] Construir DFA...
+DFA construido con 102 estados
+[Pipeline] Exportar DFA...
+DFA exportado a DOT: output/lexer_dfa.dot
+  Para visualizar: dot -Tpng output/lexer_dfa.dot -o dfa.png
+DFA exportado a CSV: output/lexer_dfa.csv
+
+========== TEST LEXER ==========
+
+--- INPUT ---
+let x = 5 in x;
+
+--- TOKENS ---
+[1:1] LET          "let"
+[1:5] IDENT        "x"
+[1:7] ASSIGN       "="
+[1:9] NUMBER       "5"
+[1:11] IN           "in"
+[1:14] IDENT        "x"
+[1:15] SEMICOLON    ";"
+[EOF]
+
+========== FIN TEST LEXER ==========
+
+========== TEST PARSER SINTÁCTICO ==========
+
+--- Cargando gramática desde grammar.ll1 ---
+Gramática HULK cargada: 68 no-terminales, 48 terminales, 139 producciones
+=== Gramática: hulk ===
+Símbolo inicial: Program
+
+No terminales (68):
+  [0] Program
+  [1] TopLevel
+  [2] TopLevelFunctionTail
+  [3] TypeDef
+  [4] TerminatedStmt
+  [5] DecorBlock
+  [6] ArgIdList
+  [7] TypeAnnotation
+  [8] FunctionBody
+  [9] FunctionExprBody
+  [10] Stmt
+  [11] Expr
+  [12] WhileStmt
+  [13] ForStmt
+  [14] BlockStmt
+  [15] FunctionDef
+  [16] FunctionExpr
+  [17] TypeParams
+  [18] TypeInheritance
+  [19] TypeBody
+  [20] DecorItems
+  [21] DecorNext
+  [22] DecorItem
+  [23] DecorItemsTail
+  [24] DecorArgs
+  [25] ArgList
+  [26] TypeBaseArgs
+  [27] TypeMember
+  [28] DecorItemsMethod
+  [29] TypeMemberTail
+  [30] TypeMemberTail'
+  [31] MethodBody
+  [32] AttributeDef
+  [33] MethodDef
+  [34] ArgId
+  [35] ArgIdListTail
+  [36] WhileBody
+  [37] ForBody
+  [38] StmtList
+  [39] OrExpr
+  [40] IfExpr
+  [41] LetExpr
+  [42] VarBindingList
+  [43] LetBody
+  [44] VarBinding
+  [45] VarBindingListTail
+  [46] IfBody
+  [47] ElifList
+  [48] ElifBranch
+  [49] AndExpr
+  [50] OrExpr'
+  [51] CmpExpr
+  [52] AndExpr'
+  [53] ConcatExpr
+  [54] CmpExpr'
+  [55] AddExpr
+  [56] ConcatExpr'
+  [57] Term
+  [58] AddExpr'
+  [59] Factor
+  [60] Term'
+  [61] Power
+  [62] Factor'
+  [63] Unary
+  [64] Primary
+  [65] AsExpr
+  [66] PrimaryTail
+  [67] ArgListTail
+
+Terminales (48):
+  [0] FUNCTION (token=3)
+  [1] IDENT (token=48)
+  [2] LPAREN (token=22)
+  [3] RPAREN (token=23)
+  [4] SEMICOLON (token=21)
+  [5] TYPE (token=4)
+  [6] LBRACE (token=24)
+  [7] RBRACE (token=25)
+  [8] DECOR (token=20)
+  [9] COMMA (token=26)
+  [10] INHERITS (token=5)
+  [11] ASSIGN (token=29)
+  [12] ARROW (token=47)
+  [13] WHILE (token=6)
+  [14] FOR (token=7)
+  [15] IN (token=8)
+  [16] LET (token=12)
+  [17] COLON (token=27)
+  [18] IF (token=9)
+  [19] ELSE (token=11)
+  [20] ELIF (token=10)
+  [21] OR (token=43)
+  [22] AND (token=44)
+  [23] LT (token=37)
+  [24] GT (token=38)
+  [25] LE (token=39)
+  [26] GE (token=40)
+  [27] EQ (token=41)
+  [28] NEQ (token=42)
+  [29] IS (token=19)
+  [30] CONCAT (token=45)
+  [31] CONCAT_WS (token=46)
+  [32] PLUS (token=31)
+  [33] MINUS (token=32)
+  [34] MULT (token=33)
+  [35] DIV (token=34)
+  [36] MOD (token=35)
+  [37] POW (token=36)
+  [38] AS (token=18)
+  [39] NUMBER (token=49)
+  [40] STRING (token=50)
+  [41] TRUE (token=13)
+  [42] FALSE (token=14)
+  [43] NEW (token=15)
+  [44] SELF (token=16)
+  [45] BASE (token=17)
+  [46] DOT (token=28)
+  [47] ASSIGN_DESTRUCT (token=30)
+
+Producciones (139):
+  [0] Program -> TopLevel Program
+  [1] Program -> ε
+  [2] TopLevel -> FUNCTION TopLevelFunctionTail
+  [3] TopLevel -> TypeDef
+  [4] TopLevel -> TerminatedStmt
+  [5] TopLevel -> DecorBlock
+  [6] TopLevelFunctionTail -> IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
+  [7] TopLevelFunctionTail -> LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody SEMICOLON
+  [8] TerminatedStmt -> Stmt SEMICOLON
+  [9] Stmt -> Expr
+  [10] Stmt -> WhileStmt
+  [11] Stmt -> ForStmt
+  [12] Stmt -> BlockStmt
+  [13] FunctionDef -> FUNCTION IDENT LPAREN ArgIdList RPAREN TypeAnnotation FunctionBody
+  [14] FunctionExpr -> FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody
+  [15] TypeDef -> TYPE IDENT TypeParams TypeInheritance LBRACE TypeBody RBRACE
+  [16] DecorBlock -> DECOR DecorItems DecorNext
+  [17] DecorNext -> DECOR DecorItems DecorNext
+  [18] DecorNext -> FunctionDef
+  [19] DecorNext -> TypeDef
+  [20] DecorItems -> DecorItem DecorItemsTail
+  [21] DecorItemsTail -> COMMA DecorItem DecorItemsTail
+  [22] DecorItemsTail -> ε
+  [23] DecorItem -> IDENT DecorArgs
+  [24] DecorArgs -> LPAREN ArgList RPAREN
+  [25] DecorArgs -> ε
+  [26] TypeParams -> LPAREN ArgIdList RPAREN
+  [27] TypeParams -> ε
+  [28] TypeInheritance -> INHERITS IDENT TypeBaseArgs
+  [29] TypeInheritance -> ε
+  [30] TypeBaseArgs -> LPAREN ArgList RPAREN
+  [31] TypeBaseArgs -> ε
+  [32] TypeBody -> TypeMember TypeBody
+  [33] TypeBody -> ε
+  [34] TypeMember -> DecorItemsMethod
+  [35] TypeMember -> IDENT TypeMemberTail
+  [36] DecorItemsMethod -> DECOR DecorItems DecorItemsMethod
+  [37] DecorItemsMethod -> IDENT TypeMemberTail
+  [38] TypeMemberTail -> TypeAnnotation TypeMemberTail'
+  [39] TypeMemberTail -> LPAREN ArgIdList RPAREN TypeAnnotation MethodBody
+  [40] TypeMemberTail' -> SEMICOLON
+  [41] TypeMemberTail' -> ASSIGN Expr SEMICOLON
+  [42] AttributeDef -> IDENT ASSIGN Expr SEMICOLON
+  [43] MethodDef -> IDENT LPAREN ArgIdList RPAREN FunctionBody
+  [44] MethodBody -> ARROW Expr SEMICOLON
+  [45] MethodBody -> BlockStmt
+  [46] ArgIdList -> ArgId ArgIdListTail
+  [47] ArgIdList -> ε
+  [48] ArgIdListTail -> COMMA ArgId ArgIdListTail
+  [49] ArgIdListTail -> ε
+  [50] ArgId -> IDENT TypeAnnotation
+  [51] FunctionBody -> ARROW Expr SEMICOLON
+  [52] FunctionBody -> BlockStmt
+  [53] FunctionExprBody -> ARROW Expr
+  [54] FunctionExprBody -> BlockStmt
+  [55] WhileStmt -> WHILE Expr WhileBody
+  [56] WhileBody -> BlockStmt
+  [57] WhileBody -> Expr
+  [58] ForStmt -> FOR LPAREN IDENT IN Expr RPAREN ForBody
+  [59] ForBody -> BlockStmt
+  [60] ForBody -> Expr
+  [61] BlockStmt -> LBRACE StmtList RBRACE
+  [62] StmtList -> TerminatedStmt StmtList
+  [63] StmtList -> ε
+  [64] Expr -> OrExpr
+  [65] Expr -> IfExpr
+  [66] Expr -> LetExpr
+  [67] LetExpr -> LET VarBindingList IN LetBody
+  [68] LetBody -> Expr
+  [69] LetBody -> WhileStmt
+  [70] LetBody -> ForStmt
+  [71] LetBody -> BlockStmt
+  [72] VarBindingList -> VarBinding VarBindingListTail
+  [73] VarBindingListTail -> COMMA VarBinding VarBindingListTail
+  [74] VarBindingListTail -> ε
+  [75] VarBinding -> IDENT TypeAnnotation ASSIGN Expr
+  [76] TypeAnnotation -> COLON IDENT
+  [77] TypeAnnotation -> ε
+  [78] IfExpr -> IF LPAREN Expr RPAREN IfBody ElifList ELSE IfBody
+  [79] ElifList -> ElifBranch ElifList
+  [80] ElifList -> ε
+  [81] ElifBranch -> ELIF LPAREN Expr RPAREN IfBody
+  [82] IfBody -> BlockStmt
+  [83] IfBody -> Expr
+  [84] OrExpr -> AndExpr OrExpr'
+  [85] OrExpr' -> OR AndExpr OrExpr'
+  [86] OrExpr' -> ε
+  [87] AndExpr -> CmpExpr AndExpr'
+  [88] AndExpr' -> AND CmpExpr AndExpr'
+  [89] AndExpr' -> ε
+  [90] CmpExpr -> ConcatExpr CmpExpr'
+  [91] CmpExpr' -> LT ConcatExpr CmpExpr'
+  [92] CmpExpr' -> GT ConcatExpr CmpExpr'
+  [93] CmpExpr' -> LE ConcatExpr CmpExpr'
+  [94] CmpExpr' -> GE ConcatExpr CmpExpr'
+  [95] CmpExpr' -> EQ ConcatExpr CmpExpr'
+  [96] CmpExpr' -> NEQ ConcatExpr CmpExpr'
+  [97] CmpExpr' -> IS IDENT CmpExpr'
+  [98] CmpExpr' -> ε
+  [99] ConcatExpr -> AddExpr ConcatExpr'
+  [100] ConcatExpr' -> CONCAT AddExpr ConcatExpr'
+  [101] ConcatExpr' -> CONCAT_WS AddExpr ConcatExpr'
+  [102] ConcatExpr' -> ε
+  [103] AddExpr -> Term AddExpr'
+  [104] AddExpr' -> PLUS Term AddExpr'
+  [105] AddExpr' -> MINUS Term AddExpr'
+  [106] AddExpr' -> ε
+  [107] Term -> Factor Term'
+  [108] Term' -> MULT Factor Term'
+  [109] Term' -> DIV Factor Term'
+  [110] Term' -> MOD Factor Term'
+  [111] Term' -> ε
+  [112] Factor -> Power Factor'
+  [113] Factor' -> POW Power Factor'
+  [114] Factor' -> ε
+  [115] Power -> Unary
+  [116] Unary -> MINUS Unary
+  [117] Unary -> Primary AsExpr
+  [118] AsExpr -> AS IDENT AsExpr
+  [119] AsExpr -> ε
+  [120] Primary -> NUMBER
+  [121] Primary -> STRING
+  [122] Primary -> TRUE
+  [123] Primary -> FALSE
+  [124] Primary -> IDENT PrimaryTail
+  [125] Primary -> FUNCTION LPAREN ArgIdList RPAREN TypeAnnotation FunctionExprBody
+  [126] Primary -> LPAREN Expr RPAREN
+  [127] Primary -> NEW IDENT LPAREN ArgList RPAREN
+  [128] Primary -> SELF PrimaryTail
+  [129] Primary -> BASE LPAREN ArgList RPAREN
+  [130] PrimaryTail -> LPAREN ArgList RPAREN PrimaryTail
+  [131] PrimaryTail -> DOT IDENT PrimaryTail
+  [132] PrimaryTail -> ASSIGN_DESTRUCT Expr
+  [133] PrimaryTail -> ASSIGN Expr
+  [134] PrimaryTail -> ε
+  [135] ArgList -> Expr ArgListTail
+  [136] ArgList -> ε
+  [137] ArgListTail -> COMMA Expr ArgListTail
+  [138] ArgListTail -> ε
+
+--- Calculando FIRST y FOLLOW ---
+
+=== FIRST Sets ===
+FIRST(Program) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, ε}
+FIRST(TopLevel) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE}
+FIRST(TopLevelFunctionTail) = {IDENT, LPAREN}
+FIRST(TypeDef) = {TYPE}
+FIRST(TerminatedStmt) = {WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(DecorBlock) = {DECOR}
+FIRST(ArgIdList) = {IDENT, ε}
+FIRST(TypeAnnotation) = {COLON, ε}
+FIRST(FunctionBody) = {ARROW, LBRACE}
+FIRST(FunctionExprBody) = {ARROW, LBRACE}
+FIRST(Stmt) = {WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(Expr) = {IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(WhileStmt) = {WHILE}
+FIRST(ForStmt) = {FOR}
+FIRST(BlockStmt) = {LBRACE}
+FIRST(FunctionDef) = {FUNCTION}
+FIRST(FunctionExpr) = {FUNCTION}
+FIRST(TypeParams) = {LPAREN, ε}
+FIRST(TypeInheritance) = {INHERITS, ε}
+FIRST(TypeBody) = {IDENT, DECOR, ε}
+FIRST(DecorItems) = {IDENT}
+FIRST(DecorNext) = {DECOR, FUNCTION, TYPE}
+FIRST(DecorItem) = {IDENT}
+FIRST(DecorItemsTail) = {COMMA, ε}
+FIRST(DecorArgs) = {LPAREN, ε}
+FIRST(ArgList) = {IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, ε}
+FIRST(TypeBaseArgs) = {LPAREN, ε}
+FIRST(TypeMember) = {IDENT, DECOR}
+FIRST(DecorItemsMethod) = {DECOR, IDENT}
+FIRST(TypeMemberTail) = {LPAREN, COLON, SEMICOLON, ASSIGN}
+FIRST(TypeMemberTail') = {SEMICOLON, ASSIGN}
+FIRST(MethodBody) = {ARROW, LBRACE}
+FIRST(AttributeDef) = {IDENT}
+FIRST(MethodDef) = {IDENT}
+FIRST(ArgId) = {IDENT}
+FIRST(ArgIdListTail) = {COMMA, ε}
+FIRST(WhileBody) = {LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(ForBody) = {LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(StmtList) = {WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, ε}
+FIRST(OrExpr) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(IfExpr) = {IF}
+FIRST(LetExpr) = {LET}
+FIRST(VarBindingList) = {IDENT}
+FIRST(LetBody) = {WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(VarBinding) = {IDENT}
+FIRST(VarBindingListTail) = {COMMA, ε}
+FIRST(IfBody) = {LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(ElifList) = {ELIF, ε}
+FIRST(ElifBranch) = {ELIF}
+FIRST(AndExpr) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(OrExpr') = {OR, ε}
+FIRST(CmpExpr) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(AndExpr') = {AND, ε}
+FIRST(ConcatExpr) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(CmpExpr') = {LT, GT, LE, GE, EQ, NEQ, IS, ε}
+FIRST(AddExpr) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(ConcatExpr') = {CONCAT, CONCAT_WS, ε}
+FIRST(Term) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(AddExpr') = {PLUS, MINUS, ε}
+FIRST(Factor) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(Term') = {MULT, DIV, MOD, ε}
+FIRST(Power) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(Factor') = {POW, ε}
+FIRST(Unary) = {MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(Primary) = {NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE}
+FIRST(AsExpr) = {AS, ε}
+FIRST(PrimaryTail) = {LPAREN, DOT, ASSIGN_DESTRUCT, ASSIGN, ε}
+FIRST(ArgListTail) = {COMMA, ε}
+
+=== FOLLOW Sets ===
+FOLLOW(Program) = {$}
+FOLLOW(TopLevel) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(TopLevelFunctionTail) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(TypeDef) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(TerminatedStmt) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $, RBRACE}
+FOLLOW(DecorBlock) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(ArgIdList) = {RPAREN}
+FOLLOW(TypeAnnotation) = {ARROW, LBRACE, SEMICOLON, ASSIGN, COMMA, RPAREN}
+FOLLOW(FunctionBody) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(FunctionExprBody) = {SEMICOLON, AS, POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE}
+FOLLOW(Stmt) = {SEMICOLON}
+FOLLOW(Expr) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(WhileStmt) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(ForStmt) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(BlockStmt) = {SEMICOLON, IDENT, DECOR, RBRACE, FUNCTION, TYPE, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, LPAREN, NEW, SELF, BASE, $, RPAREN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, COMMA, IN}
+FOLLOW(FunctionDef) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(FunctionExpr) = {}
+FOLLOW(TypeParams) = {INHERITS, LBRACE}
+FOLLOW(TypeInheritance) = {LBRACE}
+FOLLOW(TypeBody) = {RBRACE}
+FOLLOW(DecorItems) = {DECOR, FUNCTION, TYPE, IDENT}
+FOLLOW(DecorNext) = {FUNCTION, TYPE, DECOR, WHILE, FOR, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, LPAREN, NEW, SELF, BASE, $}
+FOLLOW(DecorItem) = {COMMA, DECOR, FUNCTION, TYPE, IDENT}
+FOLLOW(DecorItemsTail) = {DECOR, FUNCTION, TYPE, IDENT}
+FOLLOW(DecorArgs) = {COMMA, DECOR, FUNCTION, TYPE, IDENT}
+FOLLOW(ArgList) = {RPAREN}
+FOLLOW(TypeBaseArgs) = {LBRACE}
+FOLLOW(TypeMember) = {IDENT, DECOR, RBRACE}
+FOLLOW(DecorItemsMethod) = {IDENT, DECOR, RBRACE}
+FOLLOW(TypeMemberTail) = {IDENT, DECOR, RBRACE}
+FOLLOW(TypeMemberTail') = {IDENT, DECOR, RBRACE}
+FOLLOW(MethodBody) = {IDENT, DECOR, RBRACE}
+FOLLOW(AttributeDef) = {}
+FOLLOW(MethodDef) = {}
+FOLLOW(ArgId) = {COMMA, RPAREN}
+FOLLOW(ArgIdListTail) = {RPAREN}
+FOLLOW(WhileBody) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(ForBody) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(StmtList) = {RBRACE}
+FOLLOW(OrExpr) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(IfExpr) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(LetExpr) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(VarBindingList) = {IN}
+FOLLOW(LetBody) = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(VarBinding) = {COMMA, IN}
+FOLLOW(VarBindingListTail) = {IN}
+FOLLOW(IfBody) = {ELIF, ELSE, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(ElifList) = {ELSE}
+FOLLOW(ElifBranch) = {ELIF, ELSE}
+FOLLOW(AndExpr) = {OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND}
+FOLLOW(OrExpr') = {SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR}
+FOLLOW(CmpExpr) = {AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS}
+FOLLOW(AndExpr') = {OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND}
+FOLLOW(ConcatExpr) = {LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS}
+FOLLOW(CmpExpr') = {AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS}
+FOLLOW(AddExpr) = {CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS}
+FOLLOW(ConcatExpr') = {LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS, CONCAT, CONCAT_WS}
+FOLLOW(Term) = {PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD}
+FOLLOW(AddExpr') = {CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, MINUS, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD, PLUS}
+FOLLOW(Factor) = {MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT,[WARN][ll1] Conflicto LL(1) en M[TopLevel, t3]: prod 2 vs 4
+[WARN][ll1] Conflicto LL(1) en M[TypeMember, t48]: prod 34 vs 35
+[WARN][ll1] Conflicto LL(1) en M[OrExpr', t43]: prod 85 vs 86
+[WARN][ll1] Conflicto LL(1) en M[AndExpr', t44]: prod 88 vs 89
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t37]: prod 91 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t38]: prod 92 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t39]: prod 93 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t40]: prod 94 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t41]: prod 95 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t42]: prod 96 vs 98
+[WARN][ll1] Conflicto LL(1) en M[CmpExpr', t19]: prod 97 vs 98
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t45]: prod 100 vs 102
+[WARN][ll1] Conflicto LL(1) en M[ConcatExpr', t46]: prod 101 vs 102
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t32]: prod 105 vs 106
+[WARN][ll1] Conflicto LL(1) en M[AddExpr', t31]: prod 104 vs 106
+[WARN][ll1] Conflicto LL(1) en M[Term', t33]: prod 108 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t34]: prod 109 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Term', t35]: prod 110 vs 111
+[WARN][ll1] Conflicto LL(1) en M[Factor', t36]: prod 113 vs 114
+[WARN][ll1] Conflicto LL(1) en M[AsExpr, t18]: prod 118 vs 119
+[WARN][ll1] Conflicto LL(1) en M[PrimaryTail, t22]: prod 130 vs 134
+[WARN][parser] La gramática NO es LL(1). Hay conflictos.
+ GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW}
+FOLLOW(Term') = {PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW, MULT, DIV, MOD}
+FOLLOW(Power) = {POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS}
+FOLLOW(Factor') = {MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS, POW}
+FOLLOW(Unary) = {POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS}
+FOLLOW(Primary) = {AS, POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE}
+FOLLOW(AsExpr) = {POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE, AS}
+FOLLOW(PrimaryTail) = {AS, POW, MULT, DIV, MOD, PLUS, MINUS, CONCAT, CONCAT_WS, LT, GT, LE, GE, EQ, NEQ, IS, AND, OR, SEMICOLON, LBRACE, IF, LET, NUMBER, STRING, TRUE, FALSE, IDENT, FUNCTION, LPAREN, NEW, SELF, BASE, RPAREN, COMMA, IN, ELIF, ELSE}
+FOLLOW(ArgListTail) = {RPAREN}
+
+--- Construyendo tabla LL(1) ---
+Tabla LL(1) exportada a CSV: output/hulk_ll1_table.csv
+
+--- Analizando entrada ---
+INPUT: let x = 5 in x;
+
+✓ ANÁLISIS SINTÁCTICO EXITOSO
+
+========== FIN TEST PARSER ==========
+
+========== CONSTRUCCIÓN DEL AST ==========
+
+✓ AST construido exitosamente
+Program [1:1]
+  LetExpr [1:1]
+    Bindings:
+      VarBinding 'x' [1:5]
+        NumberLit 5 [1:9]
+    In:
+      Ident 'x' [1:14]
+========== FIN AST ==========

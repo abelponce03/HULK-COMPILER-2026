@@ -1,0 +1,4 @@
+build: OK
+test_file: OK
+inline_valid: OK
+test_all: FAIL (exit 2)
