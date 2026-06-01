@@ -124,6 +124,8 @@ typedef struct {
 
     /* HULK runtime wrappers */
     LLVMValueRef      fn_hulk_print;
+    LLVMValueRef      fn_hulk_print_str;
+    LLVMValueRef      fn_hulk_print_bool;
     LLVMValueRef      fn_hulk_concat;
     LLVMValueRef      fn_hulk_concat_ws;
     LLVMValueRef      fn_hulk_num_to_str;

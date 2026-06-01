@@ -304,10 +304,40 @@ static LLVMValueRef emit_to_string(CodegenContext *c, HulkNode *node) {
  *  Llamada a función
  * ============================================================ */
 
+/* Helper: print polimórfico. Despacha al runtime apropiado según el
+ * LLVMType del argumento. Retorna el call instruction (siempre void). */
+static LLVMValueRef emit_polymorphic_print(CodegenContext *c, LLVMValueRef val) {
+    LLVMTypeRef vt = LLVMTypeOf(val);
+
+    if (vt == c->t_double) {
+        LLVMTypeRef params[1] = { c->t_double };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_void, params, 1, 0);
+        return LLVMBuildCall2(c->builder, ft, c->fn_hulk_print, &val, 1, "");
+    }
+    if (vt == c->t_bool) {
+        LLVMTypeRef params[1] = { c->t_bool };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_void, params, 1, 0);
+        return LLVMBuildCall2(c->builder, ft, c->fn_hulk_print_bool, &val, 1, "");
+    }
+    /* i8* / opaque ptr — cubre strings y objetos */
+    LLVMTypeRef params[1] = { c->t_i8ptr };
+    LLVMTypeRef ft = LLVMFunctionType(c->t_void, params, 1, 0);
+    return LLVMBuildCall2(c->builder, ft, c->fn_hulk_print_str, &val, 1, "");
+}
+
 static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
     /* Caso 1: callee es identificador → llamada directa */
     if (n->callee->type == NODE_IDENT) {
         IdentNode *id = (IdentNode*)n->callee;
+
+        /* print intercept: despacho polimórfico por tipo del argumento.
+         * Retornamos el call void para que callers (top-level eval, etc.)
+         * lo filtren como void y no intenten re-imprimir el residuo. */
+        if (strcmp(id->name, "print") == 0 && n->args.count == 1) {
+            LLVMValueRef arg = cg_emit_expr(c, n->args.items[0]);
+            return emit_polymorphic_print(c, arg);
+        }
+
         CGSymbol *sym = cg_lookup(c->current, id->name);
         if (!sym) {
             cg_error(c, (HulkNode*)n, "función '%s' no definida", id->name);

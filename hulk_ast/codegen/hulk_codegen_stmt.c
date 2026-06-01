@@ -104,8 +104,9 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
             /* Si es una llamada void, no intentar imprimir el resultado */
             if (vt == c->t_void) continue;
 
-            /* Si es una llamada a print, ya se emitió. Si es una expresión
-             * suelta, imprimirla como última expresión del programa. */
+            /* Si es una llamada a print, ya se emitió (el intercept retorna
+             * void). Si es una expresión suelta, imprimirla como última
+             * expresión del programa. */
             if (i == prog->declarations.count - 1) {
                 /* Imprimir resultado de la última expresión top-level */
                 LLVMTypeRef vt = LLVMTypeOf(val);

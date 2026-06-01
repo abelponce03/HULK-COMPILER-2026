@@ -42,6 +42,10 @@ TokenRegex hulk_tokens[] = {
     { TOKEN_CONCAT_WS,      "@@" },
     { TOKEN_CONCAT,         "@" },
     { TOKEN_POW,            "\\*\\*" },
+    /* NOTE: la spec del PDF usa `^` para potencia, pero el meta-lexer
+     * de regex tiene un bug latente al procesar `\^` en char class y
+     * en escape; mientras no se arregle, el operador soportado es `**`
+     * (sintaxis tipo Python). Ver CLAUDE.md > "Alcance vigente". */
     
     // ===== OPERADORES SIMPLES =====
     { TOKEN_SEMICOLON,  ";" },

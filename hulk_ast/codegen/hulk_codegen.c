@@ -188,6 +188,50 @@ void cg_define_runtime_helpers(CodegenContext *c) {
         cg_define_in(c, c->global, "print", fn, ft, 1);
     }
 
+    /* ---- hulk_print_str: void hulk_print_str(i8* val) ---- */
+    {
+        LLVMTypeRef params[] = { c->t_i8ptr };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_void, params, 1, 0);
+        LLVMValueRef fn = LLVMAddFunction(c->module, "hulk_print_str", ft);
+        c->fn_hulk_print_str = fn;
+
+        LLVMBasicBlockRef bb = LLVMAppendBasicBlockInContext(
+            c->llvm_ctx, fn, "entry");
+        LLVMPositionBuilderAtEnd(c->builder, bb);
+
+        LLVMValueRef val = LLVMGetParam(fn, 0);
+        LLVMValueRef fmt = LLVMBuildGlobalStringPtr(c->builder, "%s\n", "psfmt");
+        LLVMValueRef args[] = { fmt, val };
+        LLVMTypeRef printf_params[] = { c->t_i8ptr };
+        LLVMTypeRef printf_ft = LLVMFunctionType(c->t_i32, printf_params, 1, 1);
+        LLVMBuildCall2(c->builder, printf_ft, c->fn_printf, args, 2, "");
+        LLVMBuildRetVoid(c->builder);
+    }
+
+    /* ---- hulk_print_bool: void hulk_print_bool(i1 val) ---- */
+    {
+        LLVMTypeRef params[] = { c->t_bool };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_void, params, 1, 0);
+        LLVMValueRef fn = LLVMAddFunction(c->module, "hulk_print_bool", ft);
+        c->fn_hulk_print_bool = fn;
+
+        LLVMBasicBlockRef bb = LLVMAppendBasicBlockInContext(
+            c->llvm_ctx, fn, "entry");
+        LLVMPositionBuilderAtEnd(c->builder, bb);
+
+        LLVMValueRef val = LLVMGetParam(fn, 0);
+        LLVMValueRef str_true  = LLVMBuildGlobalStringPtr(c->builder, "true",  "ptrue");
+        LLVMValueRef str_false = LLVMBuildGlobalStringPtr(c->builder, "false", "pfalse");
+        LLVMValueRef chosen = LLVMBuildSelect(c->builder, val,
+                                              str_true, str_false, "bsel");
+        LLVMValueRef fmt = LLVMBuildGlobalStringPtr(c->builder, "%s\n", "pbfmt");
+        LLVMValueRef args[] = { fmt, chosen };
+        LLVMTypeRef printf_params[] = { c->t_i8ptr };
+        LLVMTypeRef printf_ft = LLVMFunctionType(c->t_i32, printf_params, 1, 1);
+        LLVMBuildCall2(c->builder, printf_ft, c->fn_printf, args, 2, "");
+        LLVMBuildRetVoid(c->builder);
+    }
+
     /* ---- hulk_num_to_str: i8* hulk_num_to_str(double val) ---- */
     {
         LLVMTypeRef params[] = { c->t_double };
@@ -448,7 +492,7 @@ int hulk_codegen_to_executable(HulkNode *program, const char *out_file) {
     LLVMTargetMachineRef tm = LLVMCreateTargetMachine(
         target, triple, "generic", "",
         LLVMCodeGenLevelDefault,
-        LLVMRelocDefault,
+        LLVMRelocPIC,           /* PIC para que el .o linkee con cc PIE */
         LLVMCodeModelDefault);
     LLVMDisposeMessage(triple);
 
