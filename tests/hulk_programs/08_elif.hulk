@@ -1,0 +1,6 @@
+let a = 7, m = a % 3 in
+    print(
+        if (m == 0) "magic"
+        elif (m == 1) "woke"
+        else "dumb"
+    );

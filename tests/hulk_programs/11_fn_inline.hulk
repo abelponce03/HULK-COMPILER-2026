@@ -1,0 +1,2 @@
+function sq(x) => x * x;
+print(sq(7));

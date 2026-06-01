@@ -1,0 +1,16 @@
+type Animal {
+    speak() => 1;
+}
+
+type Dog inherits Animal {
+    speak() => 2;
+}
+
+type Cat inherits Animal {
+    speak() => 3;
+}
+
+function announce(a : Animal) => print(a.speak());
+
+announce(new Dog());
+announce(new Cat());

@@ -1,0 +1,15 @@
+type A {
+    who() => 1;
+}
+type B inherits A {
+    who() => 2;
+}
+type C inherits B {
+    who() => 3;
+}
+
+function announce(x : A) => print(x.who());
+
+announce(new A());
+announce(new B());
+announce(new C());

@@ -1,0 +1,14 @@
+type A(x) {
+    x = x;
+    getX() => self.x;
+}
+
+type B(x, y) inherits A(x) {
+    y = y;
+    getY() => self.y;
+}
+
+let b = new B(10, 20) in {
+    print(b.getX());
+    print(b.getY());
+};

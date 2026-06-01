@@ -1,0 +1,45 @@
+┌─────┬──────────────────────────────────────┬──────────────┐
+│  #  │ test                                 │ resultado    │
+├─────┼──────────────────────────────────────┼──────────────┤
+│   1 │ 01_arith                             │ PASS         │
+│   2 │ 02_strings                           │ CODEGEN_FAIL │  (codegen rc=1)
+│   3 │ 03_let_simple                        │ PASS         │
+│   4 │ 04_let_multi                         │ PASS         │
+│   5 │ 05_let_shadow                        │ PASS         │
+│   6 │ 06_destruct                          │ PASS         │
+│   7 │ 07_if_expr                           │ CODEGEN_FAIL │  (codegen rc=1)
+│   8 │ 08_elif                              │ CODEGEN_FAIL │  (codegen rc=1)
+│   9 │ 09_while                             │ MISMATCH     │
+│     │   esperado:  3
+2
+1                                                       
+│     │   obtenido:  3
+2
+1
+0                                                     
+│  10 │ 10_for_range                         │ SEM_FAIL     │  (1 error(es) semántico(s))
+│  11 │ 11_fn_inline                         │ SEM_FAIL     │  (2 error(es) semántico(s))
+│  12 │ 12_fn_recursion                      │ SEM_FAIL     │  (3 error(es) semántico(s))
+│  13 │ 13_builtins                          │ CODEGEN_FAIL │  (codegen rc=1)
+│  14 │ 14_type_basic                        │ CODEGEN_FAIL │  (codegen rc=2)
+│  15 │ 15_inherit_attrs                     │ CODEGEN_FAIL │  (codegen rc=3)
+│  16 │ 16_poly_static                       │ CODEGEN_FAIL │  (codegen rc=1)
+│  17 │ 17_poly_dynamic_annot                │ CODEGEN_FAIL │  (codegen rc=1)
+│  18 │ 18_poly_via_func                     │ CODEGEN_FAIL │  (codegen rc=2)
+│  19 │ 19_poly_branches_if                  │ SEM_FAIL     │  (4 error(es) semántico(s))
+│  20 │ 20_base_call                         │ CODEGEN_FAIL │  (codegen rc=3)
+│  21 │ 21_is_op                             │ PASS         │
+│  22 │ 22_as_downcast                       │ PARSE_FAIL   │  (build_ast retornó NULL)
+│  23 │ 23_protocol                          │ PARSE_FAIL   │  (build_ast retornó NULL)
+│  24 │ 24_vector_literal                    │ PARSE_FAIL   │  (build_ast retornó NULL)
+│  25 │ 25_lambda                            │ PARSE_FAIL   │  (build_ast retornó NULL)
+│  26 │ 26_poly_chain3                       │ CODEGEN_FAIL │  (codegen rc=2)
+└─────┴──────────────────────────────────────┴──────────────┘
+
+Resumen: 6/26 PASS
+  PASS          6
+  PARSE_FAIL    4
+  SEM_FAIL      4
+  CODEGEN_FAIL  11
+  RUN_FAIL      0
+  MISMATCH      1

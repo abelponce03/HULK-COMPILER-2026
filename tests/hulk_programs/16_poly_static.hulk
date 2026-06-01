@@ -1,0 +1,9 @@
+type Animal {
+    speak() => 1;
+}
+
+type Dog inherits Animal {
+    speak() => 2;
+}
+
+let d = new Dog() in print(d.speak());

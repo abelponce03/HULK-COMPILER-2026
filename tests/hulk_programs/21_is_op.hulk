@@ -1,0 +1,10 @@
+type Animal { }
+type Dog inherits Animal { }
+type Cat inherits Animal { }
+
+let x = new Dog() in
+    print(
+        if (x is Dog) 1
+        elif (x is Cat) 2
+        else 0
+    );
