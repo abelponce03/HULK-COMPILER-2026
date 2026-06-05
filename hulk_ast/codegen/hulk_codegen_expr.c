@@ -673,13 +673,33 @@ static LLVMValueRef emit_while(CodegenContext *c, WhileStmtNode *n) {
  * ============================================================ */
 
 static LLVMValueRef emit_for(CodegenContext *c, ForStmtNode *n) {
-    /* Simple approach: for (x in iterable) body
-     * Tratamos iterable como un Number (range), iteramos 0..iterable-1 */
+    /* Soportamos dos formas de iterable:
+     *   1. Llamada sintáctica a range(start, end) — usamos [start, end)
+     *   2. Cualquier otra expresión que evalúe a Number N — iteramos [0, N)
+     * Esto evita necesitar el protocolo Iterable mientras tanto. */
     cg_push_scope(c);
 
-    LLVMValueRef iter_val = cg_emit_expr(c, n->iterable);
+    LLVMValueRef start_val = LLVMConstReal(c->t_double, 0.0);
+    LLVMValueRef end_val;
+
+    int handled_as_range = 0;
+    if (n->iterable && n->iterable->type == NODE_CALL_EXPR) {
+        CallExprNode *ce = (CallExprNode*)n->iterable;
+        if (ce->callee && ce->callee->type == NODE_IDENT) {
+            IdentNode *idn = (IdentNode*)ce->callee;
+            if (idn->name && strcmp(idn->name, "range") == 0 &&
+                ce->args.count == 2) {
+                start_val = cg_emit_expr(c, ce->args.items[0]);
+                end_val   = cg_emit_expr(c, ce->args.items[1]);
+                handled_as_range = 1;
+            }
+        }
+    }
+    if (!handled_as_range)
+        end_val = cg_emit_expr(c, n->iterable);
+
     LLVMValueRef counter = cg_create_entry_alloca(c, c->t_double, n->var_name);
-    LLVMBuildStore(c->builder, LLVMConstReal(c->t_double, 0.0), counter);
+    LLVMBuildStore(c->builder, start_val, counter);
     cg_define(c, n->var_name, counter, c->t_double, 0);
 
     LLVMValueRef fn = c->current_fn;
@@ -696,17 +716,19 @@ static LLVMValueRef emit_for(CodegenContext *c, ForStmtNode *n) {
 
     LLVMBuildBr(c->builder, cond_bb);
 
-    /* Condition: counter < iterable */
+    /* Condition: counter < end_val */
     LLVMPositionBuilderAtEnd(c->builder, cond_bb);
     LLVMValueRef cur = LLVMBuildLoad2(c->builder, c->t_double, counter, "cur");
     LLVMValueRef cond = LLVMBuildFCmp(c->builder, LLVMRealOLT,
-                                       cur, iter_val, "forcond");
+                                       cur, end_val, "forcond");
     LLVMBuildCondBr(c->builder, cond, body_bb, end_bb);
 
     /* Body */
     LLVMPositionBuilderAtEnd(c->builder, body_bb);
     LLVMValueRef body_val = cg_emit_expr(c, n->body);
-    if (LLVMTypeOf(body_val) == c->t_double)
+    LLVMTypeRef body_t = LLVMTypeOf(body_val);
+    int body_is_void = (body_t == c->t_void);
+    if (!body_is_void && body_t == c->t_double)
         LLVMBuildStore(c->builder, body_val, result_ptr);
     /* Increment counter */
     cur = LLVMBuildLoad2(c->builder, c->t_double, counter, "cur");
@@ -717,6 +739,16 @@ static LLVMValueRef emit_for(CodegenContext *c, ForStmtNode *n) {
 
     LLVMPositionBuilderAtEnd(c->builder, end_bb);
     cg_pop_scope(c);
+    /* Si el body produjo valores void, el for entero es void — así el
+     * top-level no intenta imprimir un valor sin sentido. */
+    if (body_is_void) {
+        /* Emitir un call void dummy para que el caller vea LLVMTypeOf == void.
+         * Reutilizamos hulk_print de double con un valor que se descarte:
+         * no, mejor un bitcast. La forma más limpia es un store-then-noop
+         * y retornar el call void de un noop. Para no inflar el IR,
+         * usamos directamente LLVMGetUndef del void. */
+        return LLVMGetUndef(c->t_void);
+    }
     return LLVMBuildLoad2(c->builder, c->t_double, result_ptr, "for.res");
 }
 

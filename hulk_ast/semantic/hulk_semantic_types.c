@@ -101,6 +101,8 @@ void sem_types_init(SemanticContext *ctx) {
     reg_builtin(ctx, "rand", ctx->t_number, 0);
     reg_builtin(ctx, "parse", ctx->t_number, 1,
                 "s", ctx->t_string);
+    reg_builtin(ctx, "range", ctx->t_number, 2,
+                "min", ctx->t_number, "max", ctx->t_number);
 }
 
 /* ============================================================
