@@ -27,6 +27,7 @@ static LLVMValueRef emit_new(CodegenContext *c, NewExprNode *n);
 static LLVMValueRef emit_assign(CodegenContext *c, AssignNode *n);
 static LLVMValueRef emit_destruct(CodegenContext *c, DestructAssignNode *n);
 static LLVMValueRef emit_self(CodegenContext *c, SelfNode *n);
+static CGTypeInfo*  cg_static_type_of(CodegenContext *c, HulkNode *expr);
 
 /* ============================================================
  *  Dispatcher
@@ -69,17 +70,24 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
         case NODE_DESTRUCT_ASSIGN: return emit_destruct(c, (DestructAssignNode*)node);
         case NODE_SELF:            return emit_self(c, (SelfNode*)node);
         case NODE_AS_EXPR: {
-            /* as es un no-op en IR (el tipo estático cambia, no el runtime) */
+            /* as es un no-op en IR con opaque pointers; el caller usa
+             * cg_static_type_of para conocer el tipo destino vía AsExpr. */
             AsExprNode *n = (AsExprNode*)node;
             return cg_emit_expr(c, n->expr);
         }
         case NODE_IS_EXPR: {
-            /* is: comprueba type tag contra el tag del tipo objetivo */
+            /* is dinámico:
+             *   target_tag = constante del tipo objetivo
+             *   cur_tag    = load tag de val
+             *   while cur_tag != -1:
+             *     if cur_tag == target_tag → true
+             *     cur_tag = parent_table[cur_tag]
+             *   return false */
             IsExprNode *n = (IsExprNode*)node;
             LLVMValueRef val = cg_emit_expr(c, n->expr);
             CGTypeInfo *target_ti = cg_type_info_find(c, n->type_name);
-            if (!target_ti) {
-                /* Tipo no registrado como user type — check LLVM type */
+            if (!target_ti || !c->parent_table) {
+                /* Comparación con tipos primitivos / fallback estático */
                 LLVMTypeRef vt = LLVMTypeOf(val);
                 int result = 0;
                 if (n->type_name) {
@@ -89,31 +97,82 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
                         result = (vt == c->t_i8ptr);
                     else if (strcmp(n->type_name, "Boolean") == 0)
                         result = (vt == c->t_bool);
-                    else result = 1; /* Object matches everything */
+                    else result = 1;
                 }
                 return LLVMConstInt(c->t_bool, result ? 1 : 0, 0);
             }
-            /* For user types: check if the LLVM ptr type matches any
-             * type in the inheritance chain of the target */
-            LLVMTypeRef vt = LLVMTypeOf(val);
-            int match = 0;
-            for (CGTypeInfo *ti = target_ti; ti; ti = ti->parent) {
-                if (vt == ti->ptr_type) { match = 1; break; }
-            }
-            /* Also check if val's type conforms to target (child is target) */
-            if (!match) {
-                for (int i = 0; i < c->type_info_count; i++) {
-                    CGTypeInfo *vti = c->type_infos[i];
-                    if (vt == vti->ptr_type) {
-                        /* Walk vti's parents to see if target_ti is ancestor */
-                        for (CGTypeInfo *p = vti; p; p = p->parent) {
-                            if (p == target_ti) { match = 1; break; }
-                        }
-                        break;
-                    }
-                }
-            }
-            return LLVMConstInt(c->t_bool, match ? 1 : 0, 0);
+
+            /* Cargar el tag del objeto: gep(obj, 0, 0) → i32 */
+            CGTypeInfo *static_ti = target_ti;  /* layout para gep tag */
+            LLVMValueRef tag_ptr = LLVMBuildStructGEP2(
+                c->builder, static_ti->struct_type, val, 0, "is.tag.ptr");
+            LLVMValueRef tag0 = LLVMBuildLoad2(c->builder, c->t_i32,
+                                                tag_ptr, "is.tag0");
+
+            int tcount = c->type_info_count;
+            int target_tag = target_ti->type_tag;
+
+            LLVMValueRef fn = c->current_fn;
+            LLVMBasicBlockRef cur_bb  = LLVMGetInsertBlock(c->builder);
+            LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "is.loop");
+            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "is.body");
+            LLVMBasicBlockRef true_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "is.true");
+            LLVMBasicBlockRef step_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "is.step");
+            LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "is.end");
+            LLVMBuildBr(c->builder, loop_bb);
+
+            /* loop: cur = phi [tag0, entry], [parent_tag, step] */
+            LLVMPositionBuilderAtEnd(c->builder, loop_bb);
+            LLVMValueRef cur_phi = LLVMBuildPhi(c->builder, c->t_i32, "is.cur");
+            LLVMValueRef neg1 = LLVMConstInt(c->t_i32, (unsigned)-1, 1);
+            LLVMValueRef stop = LLVMBuildICmp(c->builder, LLVMIntEQ,
+                                              cur_phi, neg1, "is.stop");
+            LLVMBuildCondBr(c->builder, stop, end_bb, body_bb);
+
+            /* body: if cur == target → true */
+            LLVMPositionBuilderAtEnd(c->builder, body_bb);
+            LLVMValueRef hit = LLVMBuildICmp(c->builder, LLVMIntEQ,
+                cur_phi, LLVMConstInt(c->t_i32, target_tag, 0), "is.hit");
+            LLVMBuildCondBr(c->builder, hit, true_bb, step_bb);
+
+            /* step: cur = parent_table[cur] */
+            LLVMPositionBuilderAtEnd(c->builder, step_bb);
+            LLVMTypeRef parent_arr_t = LLVMArrayType(c->t_i32, tcount);
+            LLVMValueRef pidxs[2] = {
+                LLVMConstInt(c->t_i32, 0, 0),
+                cur_phi
+            };
+            LLVMValueRef pent = LLVMBuildInBoundsGEP2(
+                c->builder, parent_arr_t, c->parent_table, pidxs, 2, "p.ent");
+            LLVMValueRef next_tag = LLVMBuildLoad2(c->builder, c->t_i32,
+                                                    pent, "is.next");
+            LLVMBasicBlockRef step_end = LLVMGetInsertBlock(c->builder);
+            LLVMBuildBr(c->builder, loop_bb);
+
+            /* true */
+            LLVMPositionBuilderAtEnd(c->builder, true_bb);
+            LLVMBuildBr(c->builder, end_bb);
+
+            /* phi income */
+            LLVMValueRef phi_vals[2] = { tag0, next_tag };
+            LLVMBasicBlockRef phi_bbs[2] = { cur_bb, step_end };
+            LLVMAddIncoming(cur_phi, phi_vals, phi_bbs, 2);
+
+            /* end: phi result bool */
+            LLVMPositionBuilderAtEnd(c->builder, end_bb);
+            LLVMValueRef rphi = LLVMBuildPhi(c->builder, c->t_bool, "is.res");
+            LLVMValueRef rvals[2] = {
+                LLVMConstInt(c->t_bool, 0, 0),  /* del end-from-loop */
+                LLVMConstInt(c->t_bool, 1, 0)   /* del true */
+            };
+            LLVMBasicBlockRef rbbs[2] = { loop_bb, true_bb };
+            LLVMAddIncoming(rphi, rvals, rbbs, 2);
+            return rphi;
         }
         case NODE_BASE_CALL: {
             /* base() — llamar al constructor padre */
@@ -378,65 +437,77 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
         return result;
     }
 
-    /* Caso 2: callee es member access → llamada a método */
+    /* Caso 2: callee es member access → llamada a método (vtable dispatch) */
     if (n->callee->type == NODE_MEMBER_ACCESS) {
         MemberAccessNode *ma = (MemberAccessNode*)n->callee;
         LLVMValueRef obj = cg_emit_expr(c, ma->object);
 
-        /* Descubrir el tipo del objeto por su LLVMTypeRef */
-        LLVMTypeRef obj_type = LLVMTypeOf(obj);
-        CGTypeInfo *ti = NULL;
-        for (int i = 0; i < c->type_info_count; i++) {
-            if (c->type_infos[i]->ptr_type == obj_type) {
-                ti = c->type_infos[i];
-                break;
-            }
-        }
+        /* Tipo estático para conocer la firma (tipo de retorno y args) */
+        CGTypeInfo *ti = cg_static_type_of(c, ma->object);
         if (!ti && c->enclosing_type && obj == c->self_ptr)
             ti = c->enclosing_type;
 
-        /* Buscar método caminando herencia */
-        char fname[256];
-        CGSymbol *msym = NULL;
-        if (ti) {
-            for (CGTypeInfo *cur = ti; cur && !msym; cur = cur->parent) {
-                snprintf(fname, sizeof(fname), "%s_%s", cur->name, ma->member);
-                msym = cg_lookup(c->global, fname);
-            }
+        /* La firma del método se toma del tipo estático (válida en la
+         * cadena de herencia gracias al layout compatible). */
+        LLVMValueRef static_fn = ti ? cg_type_resolve_method(ti, ma->member)
+                                     : NULL;
+        if (!static_fn) {
+            cg_error(c, (HulkNode*)n, "método '%s' no encontrado", ma->member);
+            return LLVMConstReal(c->t_double, 0.0);
         }
-        if (!msym) {
-            /* Fallback: buscar por nombre plano */
-            snprintf(fname, sizeof(fname), "%s", ma->member);
-            msym = cg_lookup(c->global, fname);
-        }
+        LLVMTypeRef fn_type = LLVMGlobalGetValueType(static_fn);
 
-        /* Build args: self + user args */
+        /* Construir args: self + user args */
         int argc = n->args.count + 1;
         LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
         argv[0] = obj;
         for (int i = 0; i < n->args.count; i++)
             argv[i + 1] = cg_emit_expr(c, n->args.items[i]);
 
-        LLVMValueRef fn_val;
-        LLVMTypeRef  fn_type;
-        if (msym && msym->value) {
-            fn_val  = msym->value;
-            fn_type = LLVMGlobalGetValueType(fn_val);
-        } else {
-            /* Fallback: buscar como método en type_infos */
-            /* Construir tipo genérico */
-            LLVMTypeRef *argt = calloc(argc, sizeof(LLVMTypeRef));
-            for (int i = 0; i < argc; i++)
-                argt[i] = LLVMTypeOf(argv[i]);
-            fn_type = LLVMFunctionType(c->t_double, argt, argc, 0);
-            free(argt);
-            cg_error(c, (HulkNode*)n, "método '%s' no encontrado", fname);
+        /* Dispatch dinámico vía vtable:
+         *   tag      = load i32 from obj.gep(0,0)
+         *   vtable   = load ptr from gep(@hulk_vtables, 0, tag)
+         *   fn_ptr   = load ptr from gep(vtable, 0, slot)
+         *   call fn_ptr(argv) */
+        int slot = cg_method_slot(c, ma->member);
+        if (slot < 0 || !c->vtables_table) {
+            /* Fallback: dispatch estático */
+            LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
+                                                  static_fn, argv, argc, "scall");
             free(argv);
-            return LLVMConstReal(c->t_double, 0.0);
+            return result;
         }
 
+        LLVMValueRef tag_ptr = LLVMBuildStructGEP2(
+            c->builder, ti->struct_type, obj, 0, "tag.ptr");
+        LLVMValueRef tag = LLVMBuildLoad2(c->builder, c->t_i32,
+                                          tag_ptr, "tag");
+
+        /* @hulk_vtables[tag] — array de ptr indexado por tag */
+        LLVMTypeRef vt_table_t = LLVMArrayType(c->t_i8ptr, c->type_info_count);
+        LLVMValueRef idxs1[2] = {
+            LLVMConstInt(c->t_i32, 0, 0),
+            tag
+        };
+        LLVMValueRef vt_entry = LLVMBuildInBoundsGEP2(
+            c->builder, vt_table_t, c->vtables_table, idxs1, 2, "vt.entry");
+        LLVMValueRef vt = LLVMBuildLoad2(c->builder, c->t_i8ptr,
+                                          vt_entry, "vt");
+
+        /* vt[slot] — array de ptr, asumimos longitud == method_slot_count */
+        LLVMTypeRef vt_t = LLVMArrayType(c->t_i8ptr,
+            c->method_slot_count > 0 ? c->method_slot_count : 1);
+        LLVMValueRef idxs2[2] = {
+            LLVMConstInt(c->t_i32, 0, 0),
+            LLVMConstInt(c->t_i32, slot, 0)
+        };
+        LLVMValueRef fn_slot_ptr = LLVMBuildInBoundsGEP2(
+            c->builder, vt_t, vt, idxs2, 2, "fn.slot");
+        LLVMValueRef fn_ptr = LLVMBuildLoad2(c->builder, c->t_i8ptr,
+                                              fn_slot_ptr, "fn");
+
         LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type,
-                                              fn_val, argv, argc, "mcall");
+                                              fn_ptr, argv, argc, "vcall");
         free(argv);
         return result;
     }
@@ -462,28 +533,46 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
  *  Acceso a miembro: obj.field
  * ============================================================ */
 
+/* Helper: dado un nodo expresión que produce un objeto, intenta
+ * determinar su CGTypeInfo* estático sin emitir IR adicional. Usa el
+ * scope (Ident), el enclosing_type (self), o el nombre del tipo (new).
+ * Retorna NULL si no se puede determinar. */
+static CGTypeInfo* cg_static_type_of(CodegenContext *c, HulkNode *expr) {
+    if (!expr) return NULL;
+    switch (expr->type) {
+        case NODE_SELF:
+            return c->enclosing_type;
+        case NODE_IDENT: {
+            IdentNode *id = (IdentNode*)expr;
+            CGSymbol *sym = cg_lookup(c->current, id->name);
+            return sym ? sym->hulk_type : NULL;
+        }
+        case NODE_NEW_EXPR: {
+            NewExprNode *ne = (NewExprNode*)expr;
+            return cg_type_info_find(c, ne->type_name);
+        }
+        case NODE_AS_EXPR: {
+            AsExprNode *ae = (AsExprNode*)expr;
+            return cg_type_info_find(c, ae->type_name);
+        }
+        default: return NULL;
+    }
+}
+
 static LLVMValueRef emit_member_access(CodegenContext *c, MemberAccessNode *n) {
     LLVMValueRef obj = cg_emit_expr(c, n->object);
-    LLVMTypeRef obj_type = LLVMTypeOf(obj);
 
-    /* Buscar el CGTypeInfo que corresponde al tipo del objeto */
-    CGTypeInfo *ti = NULL;
-    for (int t = 0; t < c->type_info_count; t++) {
-        if (c->type_infos[t]->ptr_type == obj_type) {
-            ti = c->type_infos[t];
-            break;
-        }
-    }
-    /* Si estamos dentro de un tipo y obj es self, usar enclosing_type */
+    /* Determinar el CGTypeInfo del receiver de forma estática. */
+    CGTypeInfo *ti = cg_static_type_of(c, n->object);
     if (!ti && c->enclosing_type && obj == c->self_ptr)
         ti = c->enclosing_type;
 
-    /* Buscar campo caminando la cadena de herencia */
+    /* Buscar campo en la jerarquía: como nuestro layout incluye los
+     * fields del padre al inicio, ti->field_names tiene todos. */
     if (ti) {
         for (CGTypeInfo *cur = ti; cur; cur = cur->parent) {
             for (int f = 0; f < cur->field_count; f++) {
                 if (strcmp(cur->field_names[f], n->member) == 0) {
-                    /* Si cur != ti, necesitamos cast a la struct padre */
                     LLVMValueRef target_obj = obj;
                     if (cur != ti)
                         target_obj = LLVMBuildBitCast(c->builder, obj,
@@ -510,6 +599,16 @@ static LLVMValueRef emit_let(CodegenContext *c, LetExprNode *n) {
 
     for (int i = 0; i < n->bindings.count; i++) {
         VarBindingNode *vb = (VarBindingNode*)n->bindings.items[i];
+
+        /* Determinar el hulk_type estático del valor:
+         *   - Si vb->type_annotation es un user type, usar ese
+         *   - Si no, intentar inferir del init expr */
+        CGTypeInfo *binding_ti = NULL;
+        if (vb->type_annotation)
+            binding_ti = cg_type_info_find(c, vb->type_annotation);
+        if (!binding_ti && vb->init_expr)
+            binding_ti = cg_static_type_of(c, vb->init_expr);
+
         LLVMValueRef init_val = vb->init_expr
             ? cg_emit_expr(c, vb->init_expr)
             : LLVMConstReal(c->t_double, 0.0);
@@ -517,7 +616,8 @@ static LLVMValueRef emit_let(CodegenContext *c, LetExprNode *n) {
         LLVMTypeRef val_type = LLVMTypeOf(init_val);
         LLVMValueRef alloca = cg_create_entry_alloca(c, val_type, vb->name);
         LLVMBuildStore(c->builder, init_val, alloca);
-        cg_define(c, vb->name, alloca, val_type, 0);
+        CGSymbol *vsym = cg_define(c, vb->name, alloca, val_type, 0);
+        if (vsym) vsym->hulk_type = binding_ti;
     }
 
     LLVMValueRef result = cg_emit_expr(c, n->body);

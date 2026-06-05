@@ -151,6 +151,44 @@ void cg_type_add_method(CGTypeInfo *ti, const char *name, LLVMValueRef fn) {
     ti->methods[ti->method_count++] = sym;
 }
 
+LLVMValueRef cg_type_resolve_method(CGTypeInfo *ti, const char *name) {
+    for (CGTypeInfo *cur = ti; cur; cur = cur->parent) {
+        for (int i = 0; i < cur->method_count; i++) {
+            if (cur->methods[i]->name &&
+                strcmp(cur->methods[i]->name, name) == 0)
+                return cur->methods[i]->value;
+        }
+    }
+    return NULL;
+}
+
+int cg_type_field_index(CGTypeInfo *ti, const char *name) {
+    if (!ti || !name) return -1;
+    for (int i = 0; i < ti->field_count; i++) {
+        if (ti->field_names[i] && strcmp(ti->field_names[i], name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+int cg_method_slot(CodegenContext *c, const char *name) {
+    if (!c || !name) return -1;
+    for (int i = 0; i < c->method_slot_count; i++) {
+        if (c->method_slot_names[i] &&
+            strcmp(c->method_slot_names[i], name) == 0)
+            return i;
+    }
+    if (c->method_slot_count >= c->method_slot_cap) {
+        int nc = c->method_slot_cap == 0 ? 16 : c->method_slot_cap * 2;
+        const char **tmp = realloc(c->method_slot_names, sizeof(char*) * nc);
+        if (!tmp) return -1;
+        c->method_slot_names = tmp;
+        c->method_slot_cap = nc;
+    }
+    c->method_slot_names[c->method_slot_count] = name;
+    return c->method_slot_count++;
+}
+
 /* ============================================================
  *  Inicializar tipos LLVM básicos
  * ============================================================ */
@@ -222,9 +260,11 @@ void cg_context_free(CodegenContext *c) {
             free(ti->methods[j]);
         free(ti->methods);
         free(ti->field_names);
+        free(ti->field_types_arr);
         free(ti);
     }
     free(c->type_infos);
+    free(c->method_slot_names);
 
     /* LLVM resources */
     if (c->builder) LLVMDisposeBuilder(c->builder);
