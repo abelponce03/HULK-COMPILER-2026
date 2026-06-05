@@ -803,13 +803,17 @@ static LLVMValueRef emit_while(CodegenContext *c, WhileStmtNode *n) {
     /* Body */
     LLVMPositionBuilderAtEnd(c->builder, body_bb);
     LLVMValueRef body_val = cg_emit_expr(c, n->body);
-    /* Store body result if it's a double */
-    if (LLVMTypeOf(body_val) == c->t_double)
+    LLVMTypeRef body_t = LLVMTypeOf(body_val);
+    int body_is_void = (body_t == c->t_void);
+    if (!body_is_void && body_t == c->t_double)
         LLVMBuildStore(c->builder, body_val, result_ptr);
     LLVMBuildBr(c->builder, cond_bb);
 
     /* End */
     LLVMPositionBuilderAtEnd(c->builder, end_bb);
+    /* Si el body es void, el while entero es void (evita imprimir 0
+     * espurio al final cuando es top-level). */
+    if (body_is_void) return LLVMGetUndef(c->t_void);
     return LLVMBuildLoad2(c->builder, c->t_double, result_ptr, "while.res");
 }
 

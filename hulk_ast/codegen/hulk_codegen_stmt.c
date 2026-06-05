@@ -104,6 +104,22 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
         if (decl->type != NODE_FUNCTION_DEF &&
             decl->type != NODE_TYPE_DEF &&
             decl->type != NODE_DECOR_BLOCK) {
+            /* Descender en let/block para detectar si la expresión
+             * efectiva final es un loop — en ese caso no imprimimos
+             * el while.res / for.res residual al top-level. */
+            HulkNode *effective = decl;
+            while (effective) {
+                if (effective->type == NODE_LET_EXPR)
+                    effective = ((LetExprNode*)effective)->body;
+                else if (effective->type == NODE_BLOCK_STMT) {
+                    BlockStmtNode *b = (BlockStmtNode*)effective;
+                    if (b->statements.count == 0) break;
+                    effective = b->statements.items[b->statements.count - 1];
+                } else break;
+            }
+            int is_loop_top = effective && (
+                effective->type == NODE_WHILE_STMT ||
+                effective->type == NODE_FOR_STMT);
             LLVMValueRef val = cg_emit_expr(c, decl);
             LLVMTypeRef vt = LLVMTypeOf(val);
 
@@ -113,7 +129,7 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
             /* Si es una llamada a print, ya se emitió (el intercept retorna
              * void). Si es una expresión suelta, imprimirla como última
              * expresión del programa. */
-            if (i == prog->declarations.count - 1) {
+            if (i == prog->declarations.count - 1 && !is_loop_top) {
                 /* Imprimir resultado de la última expresión top-level */
                 LLVMTypeRef vt = LLVMTypeOf(val);
                 if (vt == c->t_double) {
