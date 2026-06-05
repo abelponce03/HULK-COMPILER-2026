@@ -172,6 +172,44 @@ static LLVMTypeRef infer_return_type(CodegenContext *c, const char *ann) {
     return c->t_double;
 }
 
+/* Heurística: detecta si el cuerpo de una función produce void en
+ * el último statement. Evita el bug clásico de `f(x) => print(x)`
+ * declarado con return double pero cuyo body emite void. */
+static int body_is_likely_void(HulkNode *body) {
+    if (!body) return 0;
+    switch (body->type) {
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)body;
+            if (ce->callee && ce->callee->type == NODE_IDENT) {
+                IdentNode *id = (IdentNode*)ce->callee;
+                if (id->name && strcmp(id->name, "print") == 0)
+                    return 1;
+            }
+            return 0;
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)body;
+            if (b->statements.count == 0) return 0;
+            return body_is_likely_void(
+                b->statements.items[b->statements.count - 1]);
+        }
+        case NODE_LET_EXPR:
+            return body_is_likely_void(((LetExprNode*)body)->body);
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)body;
+            if (!body_is_likely_void(iff->then_body)) return 0;
+            if (iff->else_body && !body_is_likely_void(iff->else_body))
+                return 0;
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                if (!body_is_likely_void(e->body)) return 0;
+            }
+            return 1;
+        }
+        default: return 0;
+    }
+}
+
 static LLVMTypeRef infer_param_type(CodegenContext *c, const char *ann) {
     if (!ann) return c->t_double;
     if (strcmp(ann, "Number") == 0) return c->t_double;
@@ -191,7 +229,14 @@ static void forward_declare_function(CodegenContext *c, FunctionDefNode *n) {
         param_types[i] = infer_param_type(c, p->type_annotation);
     }
 
-    LLVMTypeRef ret_t = infer_return_type(c, n->return_type);
+    LLVMTypeRef ret_t;
+    if (n->return_type) {
+        ret_t = infer_return_type(c, n->return_type);
+    } else if (body_is_likely_void(n->body)) {
+        ret_t = c->t_void;
+    } else {
+        ret_t = c->t_double;
+    }
     LLVMTypeRef fn_type = LLVMFunctionType(ret_t, param_types, argc, 0);
     LLVMValueRef fn = LLVMAddFunction(c->module, n->name, fn_type);
 
