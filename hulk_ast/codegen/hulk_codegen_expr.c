@@ -175,29 +175,35 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             return rphi;
         }
         case NODE_BASE_CALL: {
-            /* base() — llamar al constructor padre */
+            /* base() — llamar a la implementación del método padre con
+             * el mismo nombre que el enclosing method. Caminamos la
+             * cadena de herencia hasta encontrar la implementación. */
             BaseCallNode *bn = (BaseCallNode*)node;
-            if (c->enclosing_type && c->enclosing_type->parent) {
-                char ctor_name[256];
-                snprintf(ctor_name, sizeof(ctor_name), "%s_new",
-                         c->enclosing_type->parent->name);
-                CGSymbol *psym = cg_lookup(c->global, ctor_name);
-                if (psym && psym->value) {
-                    int argc = bn->args.count;
-                    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1,
-                                                sizeof(LLVMValueRef));
-                    for (int i = 0; i < argc; i++)
-                        argv[i] = cg_emit_expr(c, bn->args.items[i]);
-                    LLVMTypeRef fn_type = LLVMGlobalGetValueType(psym->value);
-                    LLVMValueRef result = LLVMBuildCall2(
-                        c->builder, fn_type, psym->value, argv, argc, "base");
-                    free(argv);
-                    return result;
-                }
+            if (!c->enclosing_type || !c->enclosing_type->parent ||
+                !c->current_method_name || !c->self_ptr) {
+                cg_error(c, node, "base() sin tipo padre o método válido");
+                return LLVMConstReal(c->t_double, 0.0);
             }
-            /* Fallback si no hay padre */
-            cg_error(c, node, "base() sin tipo padre válido");
-            return LLVMConstReal(c->t_double, 0.0);
+            LLVMValueRef parent_fn = cg_type_resolve_method(
+                c->enclosing_type->parent, c->current_method_name);
+            if (!parent_fn) {
+                cg_error(c, node, "base(): padre no implementa '%s'",
+                         c->current_method_name);
+                return LLVMConstReal(c->t_double, 0.0);
+            }
+            LLVMTypeRef parent_fn_type = LLVMGlobalGetValueType(parent_fn);
+
+            /* args = self + user args. Aunque el caller no pase nada,
+             * self siempre va. */
+            int argc = bn->args.count + 1;
+            LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
+            argv[0] = c->self_ptr;
+            for (int i = 0; i < bn->args.count; i++)
+                argv[i + 1] = cg_emit_expr(c, bn->args.items[i]);
+            LLVMValueRef result = LLVMBuildCall2(
+                c->builder, parent_fn_type, parent_fn, argv, argc, "base");
+            free(argv);
+            return result;
         }
         default:
             cg_error(c, node, "nodo no soportado en codegen: %d", node->type);

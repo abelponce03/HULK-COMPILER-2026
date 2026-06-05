@@ -172,43 +172,67 @@ static LLVMTypeRef infer_return_type(CodegenContext *c, const char *ann) {
     return c->t_double;
 }
 
-/* Heurística: detecta si el cuerpo de una función produce void en
- * el último statement. Evita el bug clásico de `f(x) => print(x)`
- * declarado con return double pero cuyo body emite void. */
-static int body_is_likely_void(HulkNode *body) {
-    if (!body) return 0;
+/* Heurística para inferir el LLVMTypeRef de retorno de una función a
+ * partir de su body. Cubre los casos comunes:
+ *   - CallExpr a "print" → void
+ *   - StringLit / ConcatExpr → i8*
+ *   - BoolLit / comparadores / lógicos → i1
+ *   - NumberLit / aritmética → double
+ *   - BlockStmt / LetExpr / IfExpr → recursión sobre el / los body(ies)
+ *   - new T(...) → T_ptr
+ * Retorna NULL si no se puede determinar (caller deja default = double). */
+static LLVMTypeRef infer_body_return_type(CodegenContext *c, HulkNode *body) {
+    if (!body) return NULL;
     switch (body->type) {
         case NODE_CALL_EXPR: {
             CallExprNode *ce = (CallExprNode*)body;
             if (ce->callee && ce->callee->type == NODE_IDENT) {
                 IdentNode *id = (IdentNode*)ce->callee;
                 if (id->name && strcmp(id->name, "print") == 0)
-                    return 1;
+                    return c->t_void;
             }
-            return 0;
+            return NULL;
+        }
+        case NODE_STRING_LIT: return c->t_i8ptr;
+        case NODE_CONCAT_EXPR: return c->t_i8ptr;
+        case NODE_BOOL_LIT: return c->t_bool;
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)body;
+            switch (b->op) {
+                case OP_LT: case OP_GT: case OP_LE: case OP_GE:
+                case OP_EQ: case OP_NEQ: case OP_AND: case OP_OR:
+                    return c->t_bool;
+                default: return c->t_double;
+            }
+        }
+        case NODE_NUMBER_LIT: return c->t_double;
+        case NODE_NEW_EXPR: {
+            NewExprNode *ne = (NewExprNode*)body;
+            CGTypeInfo *ti = cg_type_info_find(c, ne->type_name);
+            return ti ? ti->ptr_type : NULL;
         }
         case NODE_BLOCK_STMT: {
             BlockStmtNode *b = (BlockStmtNode*)body;
-            if (b->statements.count == 0) return 0;
-            return body_is_likely_void(
+            if (b->statements.count == 0) return NULL;
+            return infer_body_return_type(c,
                 b->statements.items[b->statements.count - 1]);
         }
         case NODE_LET_EXPR:
-            return body_is_likely_void(((LetExprNode*)body)->body);
+            return infer_body_return_type(c, ((LetExprNode*)body)->body);
         case NODE_IF_EXPR: {
             IfExprNode *iff = (IfExprNode*)body;
-            if (!body_is_likely_void(iff->then_body)) return 0;
-            if (iff->else_body && !body_is_likely_void(iff->else_body))
-                return 0;
-            for (int i = 0; i < iff->elifs.count; i++) {
-                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
-                if (!body_is_likely_void(e->body)) return 0;
+            LLVMTypeRef t = infer_body_return_type(c, iff->then_body);
+            if (iff->else_body) {
+                LLVMTypeRef te = infer_body_return_type(c, iff->else_body);
+                if (t != te) return NULL;
             }
-            return 1;
+            return t;
         }
-        default: return 0;
+        case NODE_BASE_CALL: return NULL;
+        default: return NULL;
     }
 }
+
 
 static LLVMTypeRef infer_param_type(CodegenContext *c, const char *ann) {
     if (!ann) return c->t_double;
@@ -217,6 +241,104 @@ static LLVMTypeRef infer_param_type(CodegenContext *c, const char *ann) {
     if (strcmp(ann, "Boolean") == 0) return c->t_bool;
     CGTypeInfo *ti = cg_type_info_find(c, ann);
     if (ti) return ti->ptr_type;
+    return c->t_double;
+}
+
+/* Walker mínimo: ¿el nombre `member` aparece como `self.member` en
+ * algún operador `@`/`@@` dentro de los método-bodies del TypeDef?
+ * Si sí → t_i8ptr (string). Análogo para aritmético → t_double. */
+static int self_member_used_as_string(HulkNode *n, const char *member) {
+    if (!n) return 0;
+    switch (n->type) {
+        case NODE_CONCAT_EXPR: {
+            ConcatExprNode *ce = (ConcatExprNode*)n;
+            if (ce->left && ce->left->type == NODE_MEMBER_ACCESS) {
+                MemberAccessNode *ma = (MemberAccessNode*)ce->left;
+                if (ma->object && ma->object->type == NODE_SELF &&
+                    ma->member && strcmp(ma->member, member) == 0)
+                    return 1;
+            }
+            if (ce->right && ce->right->type == NODE_MEMBER_ACCESS) {
+                MemberAccessNode *ma = (MemberAccessNode*)ce->right;
+                if (ma->object && ma->object->type == NODE_SELF &&
+                    ma->member && strcmp(ma->member, member) == 0)
+                    return 1;
+            }
+            return self_member_used_as_string(ce->left, member) ||
+                   self_member_used_as_string(ce->right, member);
+        }
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)n;
+            return self_member_used_as_string(b->left, member) ||
+                   self_member_used_as_string(b->right, member);
+        }
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)n;
+            if (self_member_used_as_string(iff->condition, member)) return 1;
+            if (self_member_used_as_string(iff->then_body, member)) return 1;
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                if (self_member_used_as_string(e->condition, member)) return 1;
+                if (self_member_used_as_string(e->body, member)) return 1;
+            }
+            return self_member_used_as_string(iff->else_body, member);
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)n;
+            for (int i = 0; i < b->statements.count; i++)
+                if (self_member_used_as_string(b->statements.items[i], member))
+                    return 1;
+            return 0;
+        }
+        case NODE_LET_EXPR: {
+            LetExprNode *l = (LetExprNode*)n;
+            for (int i = 0; i < l->bindings.count; i++) {
+                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
+                if (self_member_used_as_string(vb->init_expr, member)) return 1;
+            }
+            return self_member_used_as_string(l->body, member);
+        }
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)n;
+            for (int i = 0; i < ce->args.count; i++)
+                if (self_member_used_as_string(ce->args.items[i], member))
+                    return 1;
+            return 0;
+        }
+        default: return 0;
+    }
+}
+
+static LLVMTypeRef infer_ctor_param_type(CodegenContext *c,
+                                          TypeDefNode *td,
+                                          const char *param_name) {
+    /* Heurística 1: si self.param se usa en concat → String. */
+    for (int i = 0; i < td->members.count; i++) {
+        HulkNode *m = td->members.items[i];
+        if (m->type != NODE_METHOD_DEF) continue;
+        if (self_member_used_as_string(((MethodDefNode*)m)->body, param_name))
+            return c->t_i8ptr;
+    }
+    /* Heurística 2: si el param se pasa como parent_arg i-ésimo a un
+     * padre ya conocido, hereda el tipo del field correspondiente del
+     * padre (saltando tag en index 0). */
+    if (td->parent) {
+        CGTypeInfo *parent_ti = cg_type_info_find(c, td->parent);
+        if (parent_ti) {
+            for (int i = 0; i < td->parent_args.count; i++) {
+                HulkNode *a = td->parent_args.items[i];
+                if (a && a->type == NODE_IDENT &&
+                    ((IdentNode*)a)->name &&
+                    strcmp(((IdentNode*)a)->name, param_name) == 0) {
+                    /* el (i+1)-ésimo field del padre (después del tag) */
+                    int parent_field = 1 + i;
+                    if (parent_field < parent_ti->field_count &&
+                        parent_ti->field_types_arr)
+                        return parent_ti->field_types_arr[parent_field];
+                }
+            }
+        }
+    }
     return c->t_double;
 }
 
@@ -232,10 +354,9 @@ static void forward_declare_function(CodegenContext *c, FunctionDefNode *n) {
     LLVMTypeRef ret_t;
     if (n->return_type) {
         ret_t = infer_return_type(c, n->return_type);
-    } else if (body_is_likely_void(n->body)) {
-        ret_t = c->t_void;
     } else {
-        ret_t = c->t_double;
+        LLVMTypeRef inferred = infer_body_return_type(c, n->body);
+        ret_t = inferred ? inferred : c->t_double;
     }
     LLVMTypeRef fn_type = LLVMFunctionType(ret_t, param_types, argc, 0);
     LLVMValueRef fn = LLVMAddFunction(c->module, n->name, fn_type);
@@ -345,14 +466,18 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     int idx = parent_field_count;
     for (int i = 0; i < n->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        field_types[idx] = infer_param_type(c, p->type_annotation);
+        field_types[idx] = p->type_annotation
+            ? infer_param_type(c, p->type_annotation)
+            : infer_ctor_param_type(c, n, p->name);
         ti->field_names[idx] = p->name;
         idx++;
     }
     for (int i = 0; i < n->members.count; i++) {
         if (n->members.items[i]->type == NODE_ATTRIBUTE_DEF) {
             AttributeDefNode *a = (AttributeDefNode*)n->members.items[i];
-            field_types[idx] = infer_param_type(c, a->type_annotation);
+            field_types[idx] = a->type_annotation
+                ? infer_param_type(c, a->type_annotation)
+                : infer_ctor_param_type(c, n, a->name);
             ti->field_names[idx] = a->name;
             idx++;
         }
@@ -371,7 +496,9 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     init_params[0] = ti->ptr_type;
     for (int i = 0; i < param_argc; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        init_params[i + 1] = infer_param_type(c, p->type_annotation);
+        init_params[i + 1] = p->type_annotation
+            ? infer_param_type(c, p->type_annotation)
+            : infer_ctor_param_type(c, n, p->name);
     }
     char init_name[256];
     snprintf(init_name, sizeof(init_name), "%s_init", n->name);
@@ -411,7 +538,13 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
                 VarBindingNode *p = (VarBindingNode*)m->params.items[j];
                 m_params[j + 1] = infer_param_type(c, p->type_annotation);
             }
-            LLVMTypeRef m_ret = infer_return_type(c, m->return_type);
+            LLVMTypeRef m_ret;
+            if (m->return_type) {
+                m_ret = infer_return_type(c, m->return_type);
+            } else {
+                LLVMTypeRef inferred = infer_body_return_type(c, m->body);
+                m_ret = inferred ? inferred : c->t_double;
+            }
             char mname[256];
             snprintf(mname, sizeof(mname), "%s_%s", n->name, m->name);
             LLVMTypeRef m_ft = LLVMFunctionType(m_ret, m_params, m_argc, 0);
@@ -582,6 +715,8 @@ static void emit_type_def(CodegenContext *c, TypeDefNode *n) {
 
             /* self es el primer parámetro */
             c->self_ptr = LLVMGetParam(m_fn, 0);
+            const char *prev_method_name = c->current_method_name;
+            c->current_method_name = m->name;
 
             /* Registrar self en scope con su hulk_type */
             CGSymbol *self_sym = cg_define(c, "self", c->self_ptr,
@@ -618,6 +753,7 @@ static void emit_type_def(CodegenContext *c, TypeDefNode *n) {
             cg_pop_scope(c);
             c->current_fn = saved_fn;
             c->self_ptr = NULL;
+            c->current_method_name = prev_method_name;
         }
     }
 

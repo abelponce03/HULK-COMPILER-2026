@@ -127,9 +127,10 @@ typedef struct {
     LLVMValueRef      parent_table;
 
     /* Estado durante emisión */
-    LLVMValueRef      current_fn;       /* función actual */
-    CGTypeInfo       *enclosing_type;   /* tipo actual (para self) */
-    LLVMValueRef      self_ptr;         /* puntero a self en método */
+    LLVMValueRef      current_fn;          /* función actual */
+    CGTypeInfo       *enclosing_type;      /* tipo actual (para self) */
+    LLVMValueRef      self_ptr;            /* puntero a self en método */
+    const char       *current_method_name; /* para resolver base() */
     int               error_count;
 
     /* Built-in runtime functions */

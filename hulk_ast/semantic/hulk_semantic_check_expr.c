@@ -20,13 +20,13 @@
  *  Si ninguna ocurrencia revela tipo, retorna NULL (caller deja Object).
  * ============================================================ */
 
-typedef enum { INF_NONE = 0, INF_NUMBER, INF_BOOLEAN } InferTag;
+typedef enum { INF_NONE = 0, INF_NUMBER, INF_BOOLEAN, INF_STRING } InferTag;
 
 static InferTag join_inf(InferTag a, InferTag b) {
     if (a == b) return a;
     if (a == INF_NONE) return b;
     if (b == INF_NONE) return a;
-    return INF_NUMBER;  /* Number gana en conflicto */
+    return INF_NUMBER;  /* Number gana en conflicto numérico */
 }
 
 static int is_param_ident(HulkNode *n, const char *name) {
@@ -229,8 +229,13 @@ static InferTag walk_self_member(HulkNode *n, const char *member) {
             return walk_self_member(((AssignNode*)n)->value, member);
         case NODE_CONCAT_EXPR: {
             ConcatExprNode *ce = (ConcatExprNode*)n;
-            return join_inf(walk_self_member(ce->left, member),
-                             walk_self_member(ce->right, member));
+            InferTag here = INF_NONE;
+            if (is_self_dot(ce->left, member) ||
+                is_self_dot(ce->right, member))
+                here = INF_STRING;
+            return join_inf(here,
+                join_inf(walk_self_member(ce->left, member),
+                          walk_self_member(ce->right, member)));
         }
         default: return INF_NONE;
     }
@@ -249,6 +254,7 @@ HulkType* sem_infer_self_member_type(SemanticContext *c, const char *member,
     switch (agg) {
         case INF_NUMBER:  return c->t_number;
         case INF_BOOLEAN: return c->t_boolean;
+        case INF_STRING:  return c->t_string;
         default:          return NULL;
     }
 }
