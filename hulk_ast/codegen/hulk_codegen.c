@@ -141,7 +141,6 @@ void cg_declare_runtime(CodegenContext *c) {
         cg_define_in(c, c->global, "sin",  c->fn_sin,  ft1, 1);
         cg_define_in(c, c->global, "cos",  c->fn_cos,  ft1, 1);
         cg_define_in(c, c->global, "exp",  c->fn_exp,  ft1, 1);
-        cg_define_in(c, c->global, "log",  c->fn_log,  ft1, 1);
 
         LLVMTypeRef p2[] = { c->t_double, c->t_double };
         LLVMTypeRef ft2 = LLVMFunctionType(c->t_double, p2, 2, 0);
@@ -206,6 +205,33 @@ void cg_define_runtime_helpers(CodegenContext *c) {
         LLVMTypeRef printf_ft = LLVMFunctionType(c->t_i32, printf_params, 1, 1);
         LLVMBuildCall2(c->builder, printf_ft, c->fn_printf, args, 2, "");
         LLVMBuildRetVoid(c->builder);
+    }
+
+    /* ---- hulk_log: double hulk_log(double base, double value)
+     * Implementa log_base(value) = log(value) / log(base), siguiendo
+     * la firma de la spec HULK A.2.3. */
+    {
+        LLVMTypeRef params[] = { c->t_double, c->t_double };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_double, params, 2, 0);
+        LLVMValueRef fn = LLVMAddFunction(c->module, "hulk_log", ft);
+
+        LLVMBasicBlockRef bb = LLVMAppendBasicBlockInContext(
+            c->llvm_ctx, fn, "entry");
+        LLVMPositionBuilderAtEnd(c->builder, bb);
+
+        LLVMValueRef base = LLVMGetParam(fn, 0);
+        LLVMValueRef val  = LLVMGetParam(fn, 1);
+
+        LLVMTypeRef log_params[] = { c->t_double };
+        LLVMTypeRef log_ft = LLVMFunctionType(c->t_double, log_params, 1, 0);
+        LLVMValueRef ln_val  = LLVMBuildCall2(c->builder, log_ft,
+                                               c->fn_log, &val,  1, "lnv");
+        LLVMValueRef ln_base = LLVMBuildCall2(c->builder, log_ft,
+                                               c->fn_log, &base, 1, "lnb");
+        LLVMValueRef result = LLVMBuildFDiv(c->builder, ln_val, ln_base, "div");
+        LLVMBuildRet(c->builder, result);
+
+        cg_define_in(c, c->global, "log", fn, ft, 1);
     }
 
     /* ---- hulk_print_bool: void hulk_print_bool(i1 val) ---- */
