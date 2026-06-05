@@ -165,6 +165,30 @@ static inline HulkType* sem_resolve_annotation(SemanticContext *c,
     return t;
 }
 
+/* Inferencia ad-hoc del tipo de un parámetro sin anotación, examinando
+ * cómo se usa el identificador `param_name` dentro del body. Versión
+ * sintáctica heurística (no completa):
+ *   - Operadores aritméticos / de comparación numérica  → Number
+ *   - Operadores lógicos                                → Boolean
+ *   - En cualquier otro contexto, o si no se usa       → Object
+ * El caller decide si llamarla; si retorna NULL, mantener Object. */
+HulkType* sem_infer_param_type(SemanticContext *c, const char *param_name,
+                                HulkNode *body);
+
+/* Helper: resuelve type_annotation; si no hay, intenta inferir vía
+ * sem_infer_param_type, y si tampoco, defaultea a Object. */
+static inline HulkType* sem_param_annotation_for(SemanticContext *c,
+                                                  VarBindingNode *p,
+                                                  HulkNode *body) {
+    if (p->type_annotation)
+        return sem_resolve_annotation(c, p->type_annotation, (HulkNode*)p);
+    if (body) {
+        HulkType *inferred = sem_infer_param_type(c, p->name, body);
+        if (inferred) return inferred;
+    }
+    return c->t_object;
+}
+
 /* ============================================================
  *  Verificación  (hulk_semantic_check.c / check_expr.c)
  * ============================================================ */

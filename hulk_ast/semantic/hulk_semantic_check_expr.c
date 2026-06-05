@@ -10,6 +10,134 @@
 
 #include "hulk_semantic_internal.h"
 
+/* ============================================================
+ *  Inferencia ad-hoc del tipo de un parámetro
+ *
+ *  Walker sintáctico que escanea el body buscando ocurrencias del
+ *  identificador `param_name` en contextos que disambiguan el tipo:
+ *    - Operandos de + - * / ^ % < > <= >=      → Number
+ *    - Operandos de & | !                       → Boolean
+ *  Si ninguna ocurrencia revela tipo, retorna NULL (caller deja Object).
+ * ============================================================ */
+
+typedef enum { INF_NONE = 0, INF_NUMBER, INF_BOOLEAN } InferTag;
+
+static InferTag join_inf(InferTag a, InferTag b) {
+    if (a == b) return a;
+    if (a == INF_NONE) return b;
+    if (b == INF_NONE) return a;
+    return INF_NUMBER;  /* Number gana en conflicto */
+}
+
+static int is_param_ident(HulkNode *n, const char *name) {
+    return n && n->type == NODE_IDENT &&
+           strcmp(((IdentNode*)n)->name, name) == 0;
+}
+
+static InferTag walk_infer(HulkNode *n, const char *name) {
+    if (!n) return INF_NONE;
+    switch (n->type) {
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)n;
+            InferTag here = INF_NONE;
+            switch (b->op) {
+                case OP_ADD: case OP_SUB: case OP_MUL:
+                case OP_DIV: case OP_MOD: case OP_POW:
+                case OP_LT: case OP_GT: case OP_LE: case OP_GE:
+                    if (is_param_ident(b->left, name) ||
+                        is_param_ident(b->right, name))
+                        here = INF_NUMBER;
+                    break;
+                case OP_AND: case OP_OR:
+                    if (is_param_ident(b->left, name) ||
+                        is_param_ident(b->right, name))
+                        here = INF_BOOLEAN;
+                    break;
+                default: break;
+            }
+            return join_inf(here,
+                join_inf(walk_infer(b->left, name),
+                          walk_infer(b->right, name)));
+        }
+        case NODE_UNARY_OP: {
+            UnaryOpNode *u = (UnaryOpNode*)n;
+            InferTag here = INF_NONE;
+            if (is_param_ident(u->operand, name)) here = INF_NUMBER;
+            return join_inf(here, walk_infer(u->operand, name));
+        }
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)n;
+            InferTag a = walk_infer(iff->condition, name);
+            a = join_inf(a, walk_infer(iff->then_body, name));
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                a = join_inf(a, walk_infer(e->condition, name));
+                a = join_inf(a, walk_infer(e->body, name));
+            }
+            a = join_inf(a, walk_infer(iff->else_body, name));
+            return a;
+        }
+        case NODE_WHILE_STMT: {
+            WhileStmtNode *w = (WhileStmtNode*)n;
+            return join_inf(walk_infer(w->condition, name),
+                             walk_infer(w->body, name));
+        }
+        case NODE_FOR_STMT: {
+            ForStmtNode *f = (ForStmtNode*)n;
+            return join_inf(walk_infer(f->iterable, name),
+                             walk_infer(f->body, name));
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)n;
+            InferTag a = INF_NONE;
+            for (int i = 0; i < b->statements.count; i++)
+                a = join_inf(a, walk_infer(b->statements.items[i], name));
+            return a;
+        }
+        case NODE_LET_EXPR: {
+            LetExprNode *l = (LetExprNode*)n;
+            InferTag a = INF_NONE;
+            for (int i = 0; i < l->bindings.count; i++) {
+                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
+                a = join_inf(a, walk_infer(vb->init_expr, name));
+            }
+            a = join_inf(a, walk_infer(l->body, name));
+            return a;
+        }
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)n;
+            InferTag a = INF_NONE;
+            for (int i = 0; i < ce->args.count; i++)
+                a = join_inf(a, walk_infer(ce->args.items[i], name));
+            return a;
+        }
+        case NODE_ASSIGN: {
+            AssignNode *as = (AssignNode*)n;
+            return walk_infer(as->value, name);
+        }
+        case NODE_DESTRUCT_ASSIGN: {
+            DestructAssignNode *as = (DestructAssignNode*)n;
+            return walk_infer(as->value, name);
+        }
+        case NODE_CONCAT_EXPR: {
+            ConcatExprNode *ce = (ConcatExprNode*)n;
+            return join_inf(walk_infer(ce->left, name),
+                             walk_infer(ce->right, name));
+        }
+        default: return INF_NONE;
+    }
+}
+
+HulkType* sem_infer_param_type(SemanticContext *c, const char *param_name,
+                                HulkNode *body) {
+    if (!param_name || !body) return NULL;
+    switch (walk_infer(body, param_name)) {
+        case INF_NUMBER:  return c->t_number;
+        case INF_BOOLEAN: return c->t_boolean;
+        default:          return NULL;
+    }
+}
+
 /* ===== Forward declarations ===== */
 
 static HulkType* check_ident(SemanticContext *c, IdentNode *n);
@@ -136,7 +264,7 @@ static HulkType* check_function_expr(SemanticContext *c, FunctionExprNode *n) {
 
     for (int i = 0; i < param_count; i++) {
         VarBindingNode *p = (VarBindingNode*)n->params.items[i];
-        HulkType *pt = sem_resolve_annotation(c, p->type_annotation, (HulkNode*)p);
+        HulkType *pt = sem_param_annotation_for(c, p, n->body);
         param_types[i] = pt;
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
     }

@@ -110,8 +110,84 @@ static void collect_pass2_resolve(SemanticContext *c, ProgramNode *prog) {
 
 /* ---------- Registrar una función ---------- */
 
+/* Detecta si el ident `name` aparece como callee en el body — i.e., si
+ * la función es recursiva. Walker sintáctico simple. */
+static int body_calls_name(HulkNode *n, const char *name) {
+    if (!n || !name) return 0;
+    switch (n->type) {
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)n;
+            if (ce->callee && ce->callee->type == NODE_IDENT) {
+                IdentNode *idn = (IdentNode*)ce->callee;
+                if (idn->name && strcmp(idn->name, name) == 0) return 1;
+            }
+            if (body_calls_name(ce->callee, name)) return 1;
+            for (int i = 0; i < ce->args.count; i++)
+                if (body_calls_name(ce->args.items[i], name)) return 1;
+            return 0;
+        }
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)n;
+            return body_calls_name(b->left, name) ||
+                   body_calls_name(b->right, name);
+        }
+        case NODE_UNARY_OP:
+            return body_calls_name(((UnaryOpNode*)n)->operand, name);
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)n;
+            if (body_calls_name(iff->condition, name)) return 1;
+            if (body_calls_name(iff->then_body, name)) return 1;
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                if (body_calls_name(e->condition, name)) return 1;
+                if (body_calls_name(e->body, name)) return 1;
+            }
+            return body_calls_name(iff->else_body, name);
+        }
+        case NODE_WHILE_STMT: {
+            WhileStmtNode *w = (WhileStmtNode*)n;
+            return body_calls_name(w->condition, name) ||
+                   body_calls_name(w->body, name);
+        }
+        case NODE_FOR_STMT: {
+            ForStmtNode *f = (ForStmtNode*)n;
+            return body_calls_name(f->iterable, name) ||
+                   body_calls_name(f->body, name);
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)n;
+            for (int i = 0; i < b->statements.count; i++)
+                if (body_calls_name(b->statements.items[i], name)) return 1;
+            return 0;
+        }
+        case NODE_LET_EXPR: {
+            LetExprNode *l = (LetExprNode*)n;
+            for (int i = 0; i < l->bindings.count; i++) {
+                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
+                if (body_calls_name(vb->init_expr, name)) return 1;
+            }
+            return body_calls_name(l->body, name);
+        }
+        case NODE_ASSIGN:
+            return body_calls_name(((AssignNode*)n)->value, name);
+        case NODE_DESTRUCT_ASSIGN:
+            return body_calls_name(((DestructAssignNode*)n)->value, name);
+        case NODE_CONCAT_EXPR: {
+            ConcatExprNode *ce = (ConcatExprNode*)n;
+            return body_calls_name(ce->left, name) ||
+                   body_calls_name(ce->right, name);
+        }
+        default: return 0;
+    }
+}
+
 static void collect_function(SemanticContext *c, FunctionDefNode *fn) {
+    /* Default Object salvo para funciones recursivas sin anotación,
+     * donde Number es el caso útil para que el chequeo del cuerpo no
+     * vea Object en la autollamada. */
     HulkType *ret = c->t_object;
+    if (!fn->return_type && body_calls_name(fn->body, fn->name))
+        ret = c->t_number;
     if (fn->return_type) {
         ret = sem_type_resolve(c, fn->return_type);
         if (!ret) {
@@ -137,8 +213,7 @@ static void collect_function(SemanticContext *c, FunctionDefNode *fn) {
         sym->param_names = calloc(sym->param_count, sizeof(const char*));
         for (int i = 0; i < fn->params.count; i++) {
             VarBindingNode *p = (VarBindingNode*)fn->params.items[i];
-            HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                    (HulkNode*)p);
+            HulkType *pt = sem_param_annotation_for(c, p, fn->body);
             sym->param_types[i] = pt;
             sym->param_names[i] = p->name;
         }
@@ -164,6 +239,7 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
         tsym->param_names = calloc(td->params.count, sizeof(const char*));
         for (int i = 0; i < td->params.count; i++) {
             VarBindingNode *p = (VarBindingNode*)td->params.items[i];
+            /* Constructor de tipo: default Object (string-friendly) */
             HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
                                                     (HulkNode*)p);
             tsym->param_types[i] = pt;
@@ -191,8 +267,7 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
                 ms->param_names = calloc(ms->param_count, sizeof(const char*));
                 for (int j = 0; j < md->params.count; j++) {
                     VarBindingNode *p = (VarBindingNode*)md->params.items[j];
-                    HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                            (HulkNode*)p);
+                    HulkType *pt = sem_param_annotation_for(c, p, md->body);
                     ms->param_types[j] = pt;
                     ms->param_names[j] = p->name;
                 }
@@ -218,6 +293,7 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
 static void inject_ctor_params(SemanticContext *c, TypeDefNode *td) {
     for (int j = 0; j < td->params.count; j++) {
         VarBindingNode *p = (VarBindingNode*)td->params.items[j];
+        /* Constructor de tipo: default Object (string-friendly) */
         HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
                                                 (HulkNode*)p);
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
@@ -246,8 +322,7 @@ static void check_function_def(SemanticContext *c, FunctionDefNode *fn) {
 
     for (int i = 0; i < fn->params.count; i++) {
         VarBindingNode *p = (VarBindingNode*)fn->params.items[i];
-        HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                (HulkNode*)p);
+        HulkType *pt = sem_param_annotation_for(c, p, fn->body);
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
     }
 
@@ -292,8 +367,7 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
             inject_ctor_params(c, td);
             for (int j = 0; j < md->params.count; j++) {
                 VarBindingNode *p = (VarBindingNode*)md->params.items[j];
-                HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                        (HulkNode*)p);
+                HulkType *pt = sem_param_annotation_for(c, p, md->body);
                 sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
             }
 
