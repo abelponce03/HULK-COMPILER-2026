@@ -175,6 +175,12 @@ static inline HulkType* sem_resolve_annotation(SemanticContext *c,
 HulkType* sem_infer_param_type(SemanticContext *c, const char *param_name,
                                 HulkNode *body);
 
+/* Inferencia ad-hoc del tipo de un atributo/param del tipo a partir
+ * del uso de `self.X` en los método-bodies. Retorna NULL si no hay
+ * señal aritmética en el uso. */
+HulkType* sem_infer_self_member_type(SemanticContext *c, const char *member,
+                                      TypeDefNode *td);
+
 /* Helper: resuelve type_annotation; si no hay, intenta inferir vía
  * sem_infer_param_type, y si tampoco, defaultea a Object. */
 static inline HulkType* sem_param_annotation_for(SemanticContext *c,

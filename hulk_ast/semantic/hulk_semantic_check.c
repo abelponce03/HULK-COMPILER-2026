@@ -239,9 +239,16 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
         tsym->param_names = calloc(td->params.count, sizeof(const char*));
         for (int i = 0; i < td->params.count; i++) {
             VarBindingNode *p = (VarBindingNode*)td->params.items[i];
-            /* Constructor de tipo: default Object (string-friendly) */
-            HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                    (HulkNode*)p);
+            HulkType *pt = NULL;
+            if (p->type_annotation) {
+                pt = sem_resolve_annotation(c, p->type_annotation,
+                                              (HulkNode*)p);
+            } else {
+                /* Inferir desde uso de self.X en métodos cuando el attr
+                 * X se inicializa con este param (alias param→attr). */
+                pt = sem_infer_self_member_type(c, p->name, td);
+                if (!pt) pt = c->t_object;
+            }
             tsym->param_types[i] = pt;
             tsym->param_names[i] = p->name;
         }
@@ -277,7 +284,13 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
                                                           ms->param_count, ret);
         } else if (m->type == NODE_ATTRIBUTE_DEF) {
             AttributeDefNode *ad = (AttributeDefNode*)m;
-            HulkType *at = sem_resolve_annotation(c, ad->type_annotation, m);
+            HulkType *at = NULL;
+            if (ad->type_annotation) {
+                at = sem_resolve_annotation(c, ad->type_annotation, m);
+            } else {
+                at = sem_infer_self_member_type(c, ad->name, td);
+                if (!at) at = c->t_object;
+            }
             sem_define(c, ad->name, SYM_ATTRIBUTE, at, m);
         }
     }
@@ -293,9 +306,14 @@ static void collect_type_members(SemanticContext *c, TypeDefNode *td) {
 static void inject_ctor_params(SemanticContext *c, TypeDefNode *td) {
     for (int j = 0; j < td->params.count; j++) {
         VarBindingNode *p = (VarBindingNode*)td->params.items[j];
-        /* Constructor de tipo: default Object (string-friendly) */
-        HulkType *pt = sem_resolve_annotation(c, p->type_annotation,
-                                                (HulkNode*)p);
+        HulkType *pt = NULL;
+        if (p->type_annotation) {
+            pt = sem_resolve_annotation(c, p->type_annotation,
+                                          (HulkNode*)p);
+        } else {
+            pt = sem_infer_self_member_type(c, p->name, td);
+            if (!pt) pt = c->t_object;
+        }
         sem_define(c, p->name, SYM_VARIABLE, pt, (HulkNode*)p);
     }
 }

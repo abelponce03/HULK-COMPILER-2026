@@ -533,6 +533,26 @@ static LLVMValueRef emit_call(CodegenContext *c, CallExprNode *n) {
  *  Acceso a miembro: obj.field
  * ============================================================ */
 
+/* Helper: ancestro común más específico de dos tipos HULK. Si uno
+ * conforma al otro, retorna el ancestro. Si no, sube por la cadena. */
+static CGTypeInfo* cg_type_lca(CGTypeInfo *a, CGTypeInfo *b) {
+    if (!a) return b;
+    if (!b) return a;
+    if (a == b) return a;
+    /* Si a desciende de b */
+    for (CGTypeInfo *t = a; t; t = t->parent)
+        if (t == b) return b;
+    /* Si b desciende de a */
+    for (CGTypeInfo *t = b; t; t = t->parent)
+        if (t == a) return a;
+    /* Subir por a buscando un ancestro común con b */
+    for (CGTypeInfo *ta = a->parent; ta; ta = ta->parent) {
+        for (CGTypeInfo *tb = b; tb; tb = tb->parent)
+            if (ta == tb) return ta;
+    }
+    return NULL;
+}
+
 /* Helper: dado un nodo expresión que produce un objeto, intenta
  * determinar su CGTypeInfo* estático sin emitir IR adicional. Usa el
  * scope (Ident), el enclosing_type (self), o el nombre del tipo (new).
@@ -555,6 +575,25 @@ static CGTypeInfo* cg_static_type_of(CodegenContext *c, HulkNode *expr) {
             AsExprNode *ae = (AsExprNode*)expr;
             return cg_type_info_find(c, ae->type_name);
         }
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)expr;
+            CGTypeInfo *agg = cg_static_type_of(c, iff->then_body);
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                agg = cg_type_lca(agg, cg_static_type_of(c, e->body));
+            }
+            if (iff->else_body)
+                agg = cg_type_lca(agg, cg_static_type_of(c, iff->else_body));
+            return agg;
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)expr;
+            if (b->statements.count == 0) return NULL;
+            return cg_static_type_of(c,
+                b->statements.items[b->statements.count - 1]);
+        }
+        case NODE_LET_EXPR:
+            return cg_static_type_of(c, ((LetExprNode*)expr)->body);
         default: return NULL;
     }
 }
