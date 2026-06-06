@@ -65,11 +65,86 @@ HulkNode* parse_primary_tail(ASTBuilder *b, HulkNode *left) {
 }
 
 // ============================================================
+//  Lookahead helper: detecta si estamos en el comienzo de un
+//  lambda  (args) => body  o  (args): RetType => body
+//  Sin avanzar el estado del builder/lexer.
+// ============================================================
+
+static int peek_is_lambda_start(ASTBuilder *b) {
+    if (!check(b, TOKEN_LPAREN)) return 0;
+
+    /* Guardamos el estado completo del lexer y el token actual */
+    LexerContext saved_lexer = b->lexer;
+    Token        saved_current = b->current;
+
+    int result = 0;
+    advance(b);  /* consume LPAREN */
+
+    /* Caso trivial: () => ... */
+    if (check(b, TOKEN_RPAREN)) {
+        advance(b);
+        if (check(b, TOKEN_ARROW)) { result = 1; }
+        else if (check(b, TOKEN_COLON)) result = 1;
+        goto restore;
+    }
+
+    /* Esperamos al menos un IDENT. Permitimos ',' o ':' o ')' después */
+    for (;;) {
+        if (!check(b, TOKEN_IDENT)) { result = 0; goto restore; }
+        advance(b);
+        if (check(b, TOKEN_COLON)) {
+            /* Anotación de tipo: salta IDENT */
+            advance(b);
+            if (!check(b, TOKEN_IDENT)) { result = 0; goto restore; }
+            advance(b);
+        }
+        if (check(b, TOKEN_COMMA)) { advance(b); continue; }
+        break;
+    }
+    if (!check(b, TOKEN_RPAREN)) { result = 0; goto restore; }
+    advance(b);
+
+    /* Después del ): puede venir : TipoRetorno luego => */
+    if (check(b, TOKEN_COLON)) {
+        advance(b);
+        if (!check(b, TOKEN_IDENT)) { result = 0; goto restore; }
+        advance(b);
+    }
+    result = check(b, TOKEN_ARROW) ? 1 : 0;
+
+restore:
+    b->lexer = saved_lexer;
+    b->current = saved_current;
+    return result;
+}
+
+/* Parsea una lambda (args) => body  o  (args): T => body.
+ * El builder ya debe apuntar a LPAREN. */
+static HulkNode* parse_lambda_expr(ASTBuilder *b) {
+    int line = cur_line(b), col = cur_col(b);
+    expect(b, TOKEN_LPAREN);
+
+    HulkNodeList params;
+    hulk_node_list_init(&params);
+    parse_arg_id_list(b, &params);
+    expect(b, TOKEN_RPAREN);
+
+    char *ret_type = parse_type_annotation(b);
+    expect(b, TOKEN_ARROW);
+
+    FunctionExprNode *fn = hulk_ast_function_expr(b->ctx, ret_type, line, col);
+    fn->params = params;
+    fn->body = parse_expr(b);
+    return (HulkNode*)fn;
+}
+
+// ============================================================
 //  Primary
 // ============================================================
 
 HulkNode* parse_primary(ASTBuilder *b) {
     int line = cur_line(b), col = cur_col(b);
+    (void)line; (void)col;
 
     // NUMBER
     if (check(b, TOKEN_NUMBER)) {
@@ -119,12 +194,16 @@ HulkNode* parse_primary(ASTBuilder *b) {
         return parse_function_expr(b);
     }
 
-    // LPAREN Expr RPAREN
+    // LPAREN: o lambda  (args) => body  o expr parentizada
     if (check(b, TOKEN_LPAREN)) {
+        if (peek_is_lambda_start(b)) {
+            HulkNode *lam = parse_lambda_expr(b);
+            return parse_primary_tail(b, lam);
+        }
         advance(b);
         HulkNode *expr = parse_expr(b);
         expect(b, TOKEN_RPAREN);
-        return expr;
+        return parse_primary_tail(b, expr);
     }
 
     // NEW IDENT LPAREN ArgList RPAREN

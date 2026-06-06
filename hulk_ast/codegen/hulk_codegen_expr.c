@@ -52,9 +52,70 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             return LLVMConstInt(c->t_bool, n->value ? 1 : 0, 0);
         }
         case NODE_IDENT:           return emit_ident(c, (IdentNode*)node);
-        case NODE_FUNCTION_EXPR:
-            cg_error(c, node, "codegen de closures no implementado");
-            return LLVMConstReal(c->t_double, 0.0);
+        case NODE_FUNCTION_EXPR: {
+            /* Emitimos la lambda como una función global con nombre único
+             * y retornamos su LLVMValueRef. El caller (típicamente let)
+             * la propaga como if were is_func=1. */
+            FunctionExprNode *fn_n = (FunctionExprNode*)node;
+            static int lambda_counter = 0;
+            char lname[32];
+            snprintf(lname, sizeof(lname), "lambda.%d", lambda_counter++);
+
+            int argc = fn_n->params.count;
+            LLVMTypeRef *ptypes = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
+            for (int i = 0; i < argc; i++) {
+                VarBindingNode *p = (VarBindingNode*)fn_n->params.items[i];
+                if (p->type_annotation) {
+                    if (strcmp(p->type_annotation, "String") == 0)
+                        ptypes[i] = c->t_i8ptr;
+                    else if (strcmp(p->type_annotation, "Boolean") == 0)
+                        ptypes[i] = c->t_bool;
+                    else
+                        ptypes[i] = c->t_double;
+                } else {
+                    ptypes[i] = c->t_double;  /* default */
+                }
+            }
+            LLVMTypeRef ret_t = c->t_double;
+            if (fn_n->return_type && strcmp(fn_n->return_type, "Boolean") == 0)
+                ret_t = c->t_bool;
+            else if (fn_n->return_type && strcmp(fn_n->return_type, "String") == 0)
+                ret_t = c->t_i8ptr;
+            LLVMTypeRef fn_type = LLVMFunctionType(ret_t, ptypes, argc, 0);
+            LLVMValueRef fn = LLVMAddFunction(c->module, lname, fn_type);
+
+            /* Emitir el cuerpo */
+            LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(c->builder);
+            LLVMValueRef saved_fn = c->current_fn;
+            c->current_fn = fn;
+
+            LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "entry");
+            LLVMPositionBuilderAtEnd(c->builder, entry);
+
+            cg_push_scope(c);
+            for (int i = 0; i < argc; i++) {
+                VarBindingNode *p = (VarBindingNode*)fn_n->params.items[i];
+                LLVMValueRef pv = LLVMGetParam(fn, i);
+                LLVMTypeRef pt = LLVMTypeOf(pv);
+                LLVMValueRef alloca = cg_create_entry_alloca(c, pt, p->name);
+                LLVMBuildStore(c->builder, pv, alloca);
+                cg_define(c, p->name, alloca, pt, 0);
+            }
+
+            LLVMValueRef body_val = cg_emit_expr(c, fn_n->body);
+            LLVMBasicBlockRef cur_bb = LLVMGetInsertBlock(c->builder);
+            if (!LLVMGetBasicBlockTerminator(cur_bb)) {
+                if (ret_t == c->t_void) LLVMBuildRetVoid(c->builder);
+                else LLVMBuildRet(c->builder, body_val);
+            }
+            cg_pop_scope(c);
+
+            c->current_fn = saved_fn;
+            if (saved_bb) LLVMPositionBuilderAtEnd(c->builder, saved_bb);
+            free(ptypes);
+            return fn;
+        }
         case NODE_BINARY_OP:       return emit_binary_op(c, (BinaryOpNode*)node);
         case NODE_UNARY_OP:        return emit_unary_op(c, (UnaryOpNode*)node);
         case NODE_CONCAT_EXPR:     return emit_concat(c, (ConcatExprNode*)node);
@@ -658,6 +719,16 @@ static LLVMValueRef emit_let(CodegenContext *c, LetExprNode *n) {
             ? cg_emit_expr(c, vb->init_expr)
             : LLVMConstReal(c->t_double, 0.0);
 
+        /* Si el init es una función (lambda), la registramos directamente
+         * como sym->value con is_func=1; el callsite la llamará vía
+         * sym->type (LLVMGlobalGetValueType). */
+        if (init_val && LLVMIsAFunction(init_val)) {
+            LLVMTypeRef fn_type = LLVMGlobalGetValueType(init_val);
+            CGSymbol *vsym = cg_define(c, vb->name, init_val, fn_type, 1);
+            if (vsym) vsym->hulk_type = binding_ti;
+            continue;
+        }
+
         LLVMTypeRef val_type = LLVMTypeOf(init_val);
         LLVMValueRef alloca = cg_create_entry_alloca(c, val_type, vb->name);
         LLVMBuildStore(c->builder, init_val, alloca);
@@ -759,6 +830,19 @@ static LLVMValueRef emit_if(CodegenContext *c, IfExprNode *n) {
 
     if (idx > 0) {
         LLVMTypeRef result_type = LLVMTypeOf(values[0]);
+        /* Si TODAS las ramas son void, no se puede emitir PHI de void.
+         * En ese caso el if entero es void. */
+        if (result_type == c->t_void) {
+            int all_void = 1;
+            for (int i = 1; i < idx; i++) {
+                if (LLVMTypeOf(values[i]) != c->t_void) { all_void = 0; break; }
+            }
+            if (all_void) {
+                free(blocks);
+                free(values);
+                return LLVMGetUndef(c->t_void);
+            }
+        }
         LLVMValueRef phi = LLVMBuildPhi(c->builder, result_type, "ifval");
         LLVMAddIncoming(phi, values, blocks, idx);
         free(blocks);
