@@ -131,6 +131,7 @@ typedef struct {
     CGTypeInfo       *enclosing_type;      /* tipo actual (para self) */
     LLVMValueRef      self_ptr;            /* puntero a self en método */
     const char       *current_method_name; /* para resolver base() */
+    HulkNode         *current_program;     /* para heurísticas post-hoc */
     int               error_count;
 
     /* Built-in runtime functions */

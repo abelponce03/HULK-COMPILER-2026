@@ -104,6 +104,7 @@ HulkNode* parse_function_def(ASTBuilder *b);
 HulkNode* parse_function_expr(ASTBuilder *b);
 HulkNode* parse_type_def(ASTBuilder *b);
 HulkNode* parse_decor_block(ASTBuilder *b);
+HulkNode* parse_protocol_def(ASTBuilder *b);
 
 // ============================================================
 //  Primarias  (parse_primary.c)

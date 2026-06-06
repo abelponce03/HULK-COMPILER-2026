@@ -46,6 +46,7 @@ struct HulkType_s {
     HulkType   **param_types;
     int          param_count;
     HulkType    *return_type;
+    int          is_protocol; // 1 si proviene de `protocol`
 };
 
 /* ============================================================

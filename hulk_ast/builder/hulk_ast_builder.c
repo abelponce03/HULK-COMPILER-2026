@@ -57,6 +57,7 @@ HulkNode* parse_top_level(ASTBuilder *b) {
     }
     if (check(b, TOKEN_TYPE))     return parse_type_def(b);
     if (check(b, TOKEN_DECOR))    return parse_decor_block(b);
+    if (check(b, TOKEN_PROTOCOL)) return parse_protocol_def(b);
 
     // TerminatedStmt → Stmt SEMICOLON
     HulkNode *stmt = parse_stmt(b);

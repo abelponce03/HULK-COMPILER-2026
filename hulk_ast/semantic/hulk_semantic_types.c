@@ -124,6 +124,27 @@ int sem_type_conforms(HulkType *child, HulkType *ancestor) {
     for (HulkType *t = child->parent; t; t = t->parent) {
         if (t == ancestor) return 1;
     }
+    /* Conformance estructural: si ancestor es protocolo, child conforma
+     * si tiene todos los métodos del protocolo (por nombre, sin chequear
+     * variance estricta en este momento). */
+    if (ancestor->is_protocol && ancestor->members &&
+        child->members) {
+        for (int i = 0; i < ancestor->members->sym_count; i++) {
+            Symbol *psym = ancestor->members->symbols[i];
+            if (!psym || psym->kind != SYM_METHOD) continue;
+            int found = 0;
+            for (int j = 0; j < child->members->sym_count; j++) {
+                Symbol *csym = child->members->symbols[j];
+                if (csym && csym->kind == SYM_METHOD && csym->name &&
+                    psym->name && strcmp(csym->name, psym->name) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) return 0;
+        }
+        return 1;
+    }
     return 0;
 }
 

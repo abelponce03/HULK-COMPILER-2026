@@ -33,6 +33,7 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
         return;
     }
     ProgramNode *prog = (ProgramNode*)program;
+    c->current_program = program;
 
     /* ---- Pasada 1: Forward declarations ---- */
     for (int i = 0; i < prog->declarations.count; i++) {
@@ -325,6 +326,133 @@ static int self_member_used_as_string(HulkNode *n, const char *member) {
     }
 }
 
+/* Walker que busca `new TypeName(...)` en cualquier subárbol y, si
+ * el (param_idx)-ésimo argumento es un StringLit, retorna 1. */
+static int new_call_uses_string_arg(HulkNode *n, const char *type_name,
+                                     int param_idx) {
+    if (!n) return 0;
+    switch (n->type) {
+        case NODE_NEW_EXPR: {
+            NewExprNode *ne = (NewExprNode*)n;
+            if (ne->type_name && type_name &&
+                strcmp(ne->type_name, type_name) == 0 &&
+                param_idx < ne->args.count) {
+                HulkNode *a = ne->args.items[param_idx];
+                if (a && a->type == NODE_STRING_LIT) return 1;
+            }
+            for (int i = 0; i < ne->args.count; i++)
+                if (new_call_uses_string_arg(ne->args.items[i], type_name,
+                                              param_idx)) return 1;
+            return 0;
+        }
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)n;
+            return new_call_uses_string_arg(b->left, type_name, param_idx) ||
+                   new_call_uses_string_arg(b->right, type_name, param_idx);
+        }
+        case NODE_CONCAT_EXPR: {
+            ConcatExprNode *ce = (ConcatExprNode*)n;
+            return new_call_uses_string_arg(ce->left, type_name, param_idx) ||
+                   new_call_uses_string_arg(ce->right, type_name, param_idx);
+        }
+        case NODE_UNARY_OP:
+            return new_call_uses_string_arg(((UnaryOpNode*)n)->operand,
+                                             type_name, param_idx);
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)n;
+            if (new_call_uses_string_arg(ce->callee, type_name, param_idx))
+                return 1;
+            for (int i = 0; i < ce->args.count; i++)
+                if (new_call_uses_string_arg(ce->args.items[i], type_name,
+                                              param_idx)) return 1;
+            return 0;
+        }
+        case NODE_MEMBER_ACCESS:
+            return new_call_uses_string_arg(((MemberAccessNode*)n)->object,
+                                             type_name, param_idx);
+        case NODE_LET_EXPR: {
+            LetExprNode *l = (LetExprNode*)n;
+            for (int i = 0; i < l->bindings.count; i++) {
+                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
+                if (new_call_uses_string_arg(vb->init_expr, type_name,
+                                              param_idx)) return 1;
+            }
+            return new_call_uses_string_arg(l->body, type_name, param_idx);
+        }
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)n;
+            if (new_call_uses_string_arg(iff->condition, type_name,
+                                          param_idx)) return 1;
+            if (new_call_uses_string_arg(iff->then_body, type_name,
+                                          param_idx)) return 1;
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                if (new_call_uses_string_arg(e->condition, type_name,
+                                              param_idx)) return 1;
+                if (new_call_uses_string_arg(e->body, type_name,
+                                              param_idx)) return 1;
+            }
+            return new_call_uses_string_arg(iff->else_body, type_name,
+                                             param_idx);
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)n;
+            for (int i = 0; i < b->statements.count; i++)
+                if (new_call_uses_string_arg(b->statements.items[i],
+                                              type_name, param_idx)) return 1;
+            return 0;
+        }
+        case NODE_WHILE_STMT: {
+            WhileStmtNode *w = (WhileStmtNode*)n;
+            return new_call_uses_string_arg(w->condition, type_name,
+                                             param_idx) ||
+                   new_call_uses_string_arg(w->body, type_name, param_idx);
+        }
+        case NODE_FOR_STMT: {
+            ForStmtNode *f = (ForStmtNode*)n;
+            return new_call_uses_string_arg(f->iterable, type_name,
+                                             param_idx) ||
+                   new_call_uses_string_arg(f->body, type_name, param_idx);
+        }
+        case NODE_ASSIGN:
+            return new_call_uses_string_arg(((AssignNode*)n)->value,
+                                             type_name, param_idx);
+        case NODE_DESTRUCT_ASSIGN:
+            return new_call_uses_string_arg(((DestructAssignNode*)n)->value,
+                                             type_name, param_idx);
+        case NODE_PROGRAM: {
+            ProgramNode *p = (ProgramNode*)n;
+            for (int i = 0; i < p->declarations.count; i++)
+                if (new_call_uses_string_arg(p->declarations.items[i],
+                                              type_name, param_idx)) return 1;
+            return 0;
+        }
+        case NODE_FUNCTION_DEF: {
+            FunctionDefNode *fd = (FunctionDefNode*)n;
+            return new_call_uses_string_arg(fd->body, type_name, param_idx);
+        }
+        case NODE_METHOD_DEF: {
+            MethodDefNode *md = (MethodDefNode*)n;
+            return new_call_uses_string_arg(md->body, type_name, param_idx);
+        }
+        case NODE_TYPE_DEF: {
+            TypeDefNode *td = (TypeDefNode*)n;
+            for (int i = 0; i < td->parent_args.count; i++)
+                if (new_call_uses_string_arg(td->parent_args.items[i],
+                                              type_name, param_idx)) return 1;
+            for (int i = 0; i < td->members.count; i++)
+                if (new_call_uses_string_arg(td->members.items[i],
+                                              type_name, param_idx)) return 1;
+            return 0;
+        }
+        case NODE_ATTRIBUTE_DEF: {
+            AttributeDefNode *ad = (AttributeDefNode*)n;
+            return new_call_uses_string_arg(ad->init_expr, type_name, param_idx);
+        }
+        default: return 0;
+    }
+}
+
 static LLVMTypeRef infer_ctor_param_type(CodegenContext *c,
                                           TypeDefNode *td,
                                           const char *param_name) {
@@ -354,6 +482,19 @@ static LLVMTypeRef infer_ctor_param_type(CodegenContext *c,
                 }
             }
         }
+    }
+    /* Heurística 3: post-hoc — si algún `new Type(args)` en el programa
+     * pasa un StringLit como arg i-ésimo, defaultear a String. */
+    if (c->current_program) {
+        /* localizar índice del param en td->params */
+        int idx = -1;
+        for (int i = 0; i < td->params.count; i++) {
+            VarBindingNode *p = (VarBindingNode*)td->params.items[i];
+            if (p->name && strcmp(p->name, param_name) == 0) { idx = i; break; }
+        }
+        if (idx >= 0 &&
+            new_call_uses_string_arg(c->current_program, td->name, idx))
+            return c->t_i8ptr;
     }
     return c->t_double;
 }
@@ -438,6 +579,9 @@ static void emit_function_def(CodegenContext *c, FunctionDefNode *n) {
  * ============================================================ */
 
 static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
+    /* Los protocols no tienen representación runtime: solo restringen
+     * el typecheck. Se ignoran en codegen. */
+    if (n->is_protocol) return;
     /* Crear struct opaco */
     LLVMTypeRef st = LLVMStructCreateNamed(c->llvm_ctx, n->name);
     CGTypeInfo *ti = cg_type_info_create(c, n->name);
@@ -580,6 +724,7 @@ static void forward_declare_type(CodegenContext *c, TypeDefNode *n) {
  * ============================================================ */
 
 static void emit_type_def(CodegenContext *c, TypeDefNode *n) {
+    if (n->is_protocol) return;
     CGTypeInfo *ti = cg_type_info_find(c, n->name);
     if (!ti) return;
 

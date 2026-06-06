@@ -234,3 +234,52 @@ HulkNode* parse_decor_block(ASTBuilder *b) {
     }
     return (HulkNode*)db;
 }
+
+// ============================================================
+//  ProtocolDef
+//  PROTOCOL IDENT [EXTENDS IDENT] LBRACE MethodSigs RBRACE
+//  Reusa TypeDefNode con is_protocol=1 y bodies dummy (NumberLit 0).
+// ============================================================
+
+HulkNode* parse_protocol_def(ASTBuilder *b) {
+    int line = cur_line(b), col = cur_col(b);
+    expect(b, TOKEN_PROTOCOL);
+    char *name = expect_ident(b);
+
+    char *parent = NULL;
+    if (check(b, TOKEN_EXTENDS)) {
+        advance(b);
+        parent = expect_ident(b);
+    }
+
+    TypeDefNode *td = hulk_ast_type_def(b->ctx, name, parent, line, col);
+    td->is_protocol = 1;
+
+    expect(b, TOKEN_LBRACE);
+
+    /* MethodSig → IDENT LPAREN ArgIdList RPAREN [COLON IDENT] SEMICOLON */
+    while (check(b, TOKEN_IDENT)) {
+        int mline = cur_line(b), mcol = cur_col(b);
+        char *mname = expect_ident(b);
+        if (!mname) break;
+
+        HulkNodeList mparams;
+        hulk_node_list_init(&mparams);
+        expect(b, TOKEN_LPAREN);
+        parse_arg_id_list(b, &mparams);
+        expect(b, TOKEN_RPAREN);
+
+        char *ret_type = parse_type_annotation(b);
+        expect(b, TOKEN_SEMICOLON);
+
+        /* Cuerpo dummy: NumberLit 0 (nunca se ejecuta). */
+        MethodDefNode *md = hulk_ast_method_def(b->ctx, mname, ret_type,
+                                                mline, mcol);
+        md->params = mparams;
+        md->body = (HulkNode*)hulk_ast_number_lit(b->ctx, "0", mline, mcol);
+        hulk_node_list_push(&td->members, (HulkNode*)md);
+    }
+
+    expect(b, TOKEN_RBRACE);
+    return (HulkNode*)td;
+}

@@ -40,6 +40,7 @@ static void collect_pass1_types(SemanticContext *c, ProgramNode *prog) {
 
         TypeDefNode *td = (TypeDefNode*)decl;
         HulkType *t = sem_type_new(c, HULK_TYPE_USER, td->name, c->t_object);
+        t->is_protocol = td->is_protocol;
 
         Scope *prev = c->current;
         c->current = c->global;

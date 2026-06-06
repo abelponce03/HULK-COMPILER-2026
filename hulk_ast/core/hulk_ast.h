@@ -123,13 +123,15 @@ typedef struct {
 } FunctionExprNode;
 
 // type Name(params) inherits Parent(args) { body }
+// O protocol Name [extends Parent] { method_sigs } cuando is_protocol=1
 typedef struct {
     HulkNode base;
     char *name;
     HulkNodeList params;       // ArgId (name + type)
-    char *parent;              // NULL si no hereda
+    char *parent;              // NULL si no hereda / extends
     HulkNodeList parent_args;  // args del padre (puede estar vacía)
-    HulkNodeList members;      // MethodDef | AttributeDef
+    HulkNodeList members;      // MethodDef | AttributeDef (o sigs si is_protocol)
+    int is_protocol;           // 1 si proviene de `protocol`
 } TypeDefNode;
 
 // Método dentro de type: name(params): Type => body
