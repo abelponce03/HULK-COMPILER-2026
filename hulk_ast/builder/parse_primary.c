@@ -37,6 +37,15 @@ HulkNode* parse_primary_tail(ASTBuilder *b, HulkNode *left) {
             continue;
         }
 
+        if (check(b, TOKEN_LBRACKET)) {
+            // Vector indexing
+            advance(b);
+            HulkNode *idx = parse_expr(b);
+            expect(b, TOKEN_RBRACKET);
+            left = (HulkNode*)hulk_ast_index_expr(b->ctx, left, idx, line, col);
+            continue;
+        }
+
         if (check(b, TOKEN_DOT)) {
             // Member access
             advance(b);
@@ -222,6 +231,22 @@ HulkNode* parse_primary(ASTBuilder *b) {
         advance(b);
         HulkNode *node = (HulkNode*)hulk_ast_self(b->ctx, line, col);
         return parse_primary_tail(b, node);
+    }
+
+    // LBRACKET vector_lit RBRACKET  →  [a, b, c]
+    if (check(b, TOKEN_LBRACKET)) {
+        int vline = cur_line(b), vcol = cur_col(b);
+        advance(b);
+        VectorLitNode *v = hulk_ast_vector_lit(b->ctx, vline, vcol);
+        if (!check(b, TOKEN_RBRACKET)) {
+            for (;;) {
+                HulkNode *item = parse_expr(b);
+                if (item) hulk_node_list_push(&v->items, item);
+                if (!match(b, TOKEN_COMMA)) break;
+            }
+        }
+        expect(b, TOKEN_RBRACKET);
+        return parse_primary_tail(b, (HulkNode*)v);
     }
 
     // BASE LPAREN ArgList RPAREN

@@ -58,6 +58,8 @@ typedef enum {
     NODE_DECOR_BLOCK,
     NODE_DECOR_ITEM,
     NODE_CONCAT_EXPR,
+    NODE_VECTOR_LIT,
+    NODE_INDEX_EXPR,
     NODE_HULK_COUNT   // centinela: cantidad total de tipos
 } HulkNodeType;
 
@@ -325,6 +327,19 @@ typedef struct {
     HulkNode *right;
 } ConcatExprNode;
 
+// [a, b, c, ...]
+typedef struct {
+    HulkNode base;
+    HulkNodeList items;
+} VectorLitNode;
+
+// expr[index]
+typedef struct {
+    HulkNode base;
+    HulkNode *object;
+    HulkNode *index;
+} IndexExprNode;
+
 // ============== OBJECT POOL / ARENA ==============
 // Todos los nodos se asignan desde esta arena.
 // Se liberan todos juntos con hulk_ast_context_free().
@@ -377,6 +392,8 @@ BaseCallNode*       hulk_ast_base_call(HulkASTContext *ctx, int line, int col);
 DecorBlockNode*     hulk_ast_decor_block(HulkASTContext *ctx, int line, int col);
 DecorItemNode*      hulk_ast_decor_item(HulkASTContext *ctx, const char *name, int line, int col);
 ConcatExprNode*     hulk_ast_concat_expr(HulkASTContext *ctx, BinaryOp op, HulkNode *left, HulkNode *right, int line, int col);
+VectorLitNode*      hulk_ast_vector_lit(HulkASTContext *ctx, int line, int col);
+IndexExprNode*      hulk_ast_index_expr(HulkASTContext *ctx, HulkNode *object, HulkNode *index, int line, int col);
 
 // ============== PATRÓN VISITOR ==============
 // Permite agregar operaciones sobre el AST sin modificar los nodos.

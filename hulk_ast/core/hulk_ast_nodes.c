@@ -275,3 +275,17 @@ ConcatExprNode* hulk_ast_concat_expr(HulkASTContext *ctx, BinaryOp op,
     node->right = right;
     return node;
 }
+
+VectorLitNode* hulk_ast_vector_lit(HulkASTContext *ctx, int line, int col) {
+    ALLOC_NODE(ctx, VectorLitNode, NODE_VECTOR_LIT, line, col);
+    hulk_node_list_init(&node->items);
+    return node;
+}
+
+IndexExprNode* hulk_ast_index_expr(HulkASTContext *ctx, HulkNode *object,
+                                    HulkNode *index, int line, int col) {
+    ALLOC_NODE(ctx, IndexExprNode, NODE_INDEX_EXPR, line, col);
+    node->object = object;
+    node->index = index;
+    return node;
+}

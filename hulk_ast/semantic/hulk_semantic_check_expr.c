@@ -310,6 +310,22 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
         case NODE_IS_EXPR:         return check_is(c, (IsExprNode*)node);
         case NODE_SELF:            return check_self(c, (SelfNode*)node);
         case NODE_BASE_CALL:       return check_base(c, (BaseCallNode*)node);
+        case NODE_VECTOR_LIT: {
+            VectorLitNode *vn = (VectorLitNode*)node;
+            for (int i = 0; i < vn->items.count; i++)
+                sem_check_expr(c, vn->items.items[i]);
+            /* Por simplicidad, asumimos vector de Number. */
+            return c->t_number;
+        }
+        case NODE_INDEX_EXPR: {
+            IndexExprNode *ix = (IndexExprNode*)node;
+            sem_check_expr(c, ix->object);
+            HulkType *idx_t = sem_check_expr(c, ix->index);
+            if (!sem_type_conforms(idx_t, c->t_number))
+                sem_error(c, node, "índice de vector debe ser Number (es %s)",
+                          idx_t->name);
+            return c->t_number;
+        }
         default:                   return c->t_error;
     }
 }

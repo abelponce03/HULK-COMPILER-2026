@@ -235,6 +235,60 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             LLVMAddIncoming(rphi, rvals, rbbs, 2);
             return rphi;
         }
+        case NODE_VECTOR_LIT: {
+            /* Layout: { i32 size, double[N] items } como struct anónimo.
+             * malloc(sizeof(i32) + N*sizeof(double)), store size, store
+             * cada elemento. Retornar el ptr (i8*). */
+            VectorLitNode *vn = (VectorLitNode*)node;
+            int n = vn->items.count;
+
+            LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+            int byte_size = 8 + 8 * (n > 0 ? n : 1);  /* align 8 */
+            LLVMValueRef size_const = LLVMConstInt(i64, byte_size, 0);
+            LLVMTypeRef malloc_params[1] = { i64 };
+            LLVMTypeRef malloc_ft = LLVMFunctionType(c->t_i8ptr,
+                                                      malloc_params, 1, 0);
+            LLVMValueRef raw = LLVMBuildCall2(c->builder, malloc_ft,
+                                              c->fn_malloc, &size_const, 1, "vec");
+
+            /* size en bytes [0..3] (i32). */
+            LLVMBuildStore(c->builder,
+                LLVMConstInt(c->t_i32, n, 0), raw);
+
+            /* items[i] = items[i+8 bytes]. Para simplicidad emitimos via
+             * ptr aritmético en i64 sobre el i8*. Usamos GEP con i8
+             * offset y bitcast al double*. */
+            for (int i = 0; i < n; i++) {
+                LLVMValueRef offset = LLVMConstInt(i64, 8 + 8 * i, 0);
+                LLVMValueRef gep = LLVMBuildInBoundsGEP2(
+                    c->builder,
+                    LLVMInt8TypeInContext(c->llvm_ctx),
+                    raw, &offset, 1, "vec.elem.ptr");
+                LLVMValueRef val = cg_emit_expr(c, vn->items.items[i]);
+                LLVMBuildStore(c->builder, val, gep);
+            }
+            return raw;
+        }
+        case NODE_INDEX_EXPR: {
+            IndexExprNode *ix = (IndexExprNode*)node;
+            LLVMValueRef obj = cg_emit_expr(c, ix->object);
+            LLVMValueRef idx_d = cg_emit_expr(c, ix->index);
+
+            /* Convertir índice double → i64 */
+            LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+            LLVMValueRef idx_i = LLVMBuildFPToSI(c->builder, idx_d, i64, "idx");
+
+            /* offset = 8 (header) + 8 * idx */
+            LLVMValueRef eight = LLVMConstInt(i64, 8, 0);
+            LLVMValueRef mul = LLVMBuildMul(c->builder, idx_i, eight, "ofsmul");
+            LLVMValueRef offset = LLVMBuildAdd(c->builder, mul, eight, "ofs");
+
+            LLVMValueRef gep = LLVMBuildInBoundsGEP2(
+                c->builder,
+                LLVMInt8TypeInContext(c->llvm_ctx),
+                obj, &offset, 1, "elem.ptr");
+            return LLVMBuildLoad2(c->builder, c->t_double, gep, "elem");
+        }
         case NODE_BASE_CALL: {
             /* base() — llamar a la implementación del método padre con
              * el mismo nombre que el enclosing method. Caminamos la
