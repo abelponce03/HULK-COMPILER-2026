@@ -11,7 +11,7 @@ LLVM_LDFLAGS = $(shell llvm-config-18 --ldflags --libs core analysis native bitw
 LEXER_DIR = generador_analizadores_lexicos
 PARSER_DIR = generador_parser_ll1
 HULK_AST_DIR = hulk_ast
-OUTPUT_DIR = output
+OUTPUT_DIR = .build
 TEST_DIR = tests
 
 # Archivo generado por flex
@@ -68,6 +68,14 @@ TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(T
 # ============== Regla principal ==============
 $(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
+
+# ============== Contrato facultad ==============
+# `make build` produce `./hulk` en la raíz del repo. Es el punto de
+# entrada esperado por el contrato de matcom/compilers.
+build: hulk
+
+hulk: $(REGEX_LEXER_C) hulk_cli.o $(LIB_OBJS) | $(OUTPUT_DIR)
+	$(CC) $(CFLAGS) -o hulk hulk_cli.o $(LIB_OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
 
 # Crear directorio de salida
 $(OUTPUT_DIR):

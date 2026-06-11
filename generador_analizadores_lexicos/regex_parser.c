@@ -133,7 +133,7 @@ static void regex_parser_ensure_init(RegexParserContext *rctx) {
     }
     
     // Exportar tabla LL(1) de regex a CSV
-    ll1_table_save_csv(&rctx->ll1, &rctx->grammar, "output/regex_ll1_table.csv");
+    ll1_table_save_csv(&rctx->ll1, &rctx->grammar, ".build/regex_ll1_table.csv");
     
     rctx->initialized = 1;
 }

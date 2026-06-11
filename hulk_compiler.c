@@ -89,8 +89,8 @@ static int phase_build_dfa(LexerBuildContext *lbc) {
 }
 
 static int phase_export_dfa(LexerBuildContext *lbc) {
-    dfa_save_dot(lbc->dfa, "output/lexer_dfa.dot", token_names);
-    dfa_save_csv(lbc->dfa, "output/lexer_dfa.csv", token_names);
+    dfa_save_dot(lbc->dfa, ".build/lexer_dfa.dot", token_names);
+    dfa_save_csv(lbc->dfa, ".build/lexer_dfa.csv", token_names);
     return 1;
 }
 
@@ -207,7 +207,7 @@ static int build_parser_tables(const char *grammar_file,
         printf("La gramática es LL(1) ✓\n");
     }
     
-    ll1_table_save_csv(ll1, grammar, "output/hulk_ll1_table.csv");
+    ll1_table_save_csv(ll1, grammar, ".build/hulk_ll1_table.csv");
     return is_ll1;
 }
 
