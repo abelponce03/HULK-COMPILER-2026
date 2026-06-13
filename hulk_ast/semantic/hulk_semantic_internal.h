@@ -182,6 +182,10 @@ HulkType* sem_infer_param_type(SemanticContext *c, const char *param_name,
 HulkType* sem_infer_self_member_type(SemanticContext *c, const char *member,
                                       TypeDefNode *td);
 
+/* Detecta si una función es recursiva (su nombre aparece como callee en
+ * el body). Usado para el default del tipo de retorno. */
+int sem_body_calls_name(HulkNode *n, const char *name);
+
 /* Helper: resuelve type_annotation; si no hay, intenta inferir vía
  * sem_infer_param_type, y si tampoco, defaultea a Object. */
 static inline HulkType* sem_param_annotation_for(SemanticContext *c,
