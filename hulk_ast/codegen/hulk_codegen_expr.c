@@ -436,6 +436,18 @@ static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n) {
 
 static LLVMValueRef emit_unary_op(CodegenContext *c, UnaryOpNode *n) {
     LLVMValueRef v = cg_emit_expr(c, n->operand);
+    if (n->is_not) {
+        /* not lógico: si el operando es i1, XOR con true; si es double
+         * (por inferencia laxa), comparar == 0.0. */
+        LLVMTypeRef vt = LLVMTypeOf(v);
+        if (vt == c->t_bool)
+            return LLVMBuildXor(c->builder, v,
+                                LLVMConstInt(c->t_bool, 1, 0), "not");
+        if (vt == c->t_double)
+            return LLVMBuildFCmp(c->builder, LLVMRealOEQ, v,
+                                 LLVMConstReal(c->t_double, 0.0), "not");
+        return v;
+    }
     return LLVMBuildFNeg(c->builder, v, "neg");
 }
 
@@ -1128,6 +1140,29 @@ static LLVMValueRef emit_destruct(CodegenContext *c, DestructAssignNode *n) {
                 sym->is_func = LLVMIsAFunction(val) ? 1 : 0;
             } else {
                 LLVMBuildStore(c->builder, val, sym->value);
+            }
+        }
+    } else if (n->target->type == NODE_MEMBER_ACCESS) {
+        /* self.field := val — store en el field del struct */
+        MemberAccessNode *ma = (MemberAccessNode*)n->target;
+        LLVMValueRef obj = cg_emit_expr(c, ma->object);
+        CGTypeInfo *ti = cg_static_type_of(c, ma->object);
+        if (!ti && c->enclosing_type && obj == c->self_ptr)
+            ti = c->enclosing_type;
+        if (ti) {
+            for (CGTypeInfo *cur = ti; cur; cur = cur->parent) {
+                int fidx = cg_type_field_index(cur, ma->member);
+                if (fidx >= 0) {
+                    LLVMValueRef target_obj = obj;
+                    if (cur != ti)
+                        target_obj = LLVMBuildBitCast(c->builder, obj,
+                                                      cur->ptr_type, "up");
+                    LLVMValueRef gep = LLVMBuildStructGEP2(
+                        c->builder, cur->struct_type, target_obj, fidx,
+                        "field.set");
+                    LLVMBuildStore(c->builder, val, gep);
+                    break;
+                }
             }
         }
     }

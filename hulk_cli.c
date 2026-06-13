@@ -20,6 +20,7 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include "hulk_compiler.h"
 #include "error_handler.h"
@@ -158,6 +159,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "(0,0) LEXICAL: cannot read file '%s'\n", argv[1]);
         return 1;
     }
+
+    /* Directorio interno de debug del DFA/LL1; si no existe, los
+     * dfa_save_* fallan y emiten ruido por el handler. Lo creamos. */
+    mkdir(".build", 0755);
 
     setup_io();
     error_handler_set(hulk_diag_handler);

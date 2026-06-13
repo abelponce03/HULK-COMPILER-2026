@@ -60,8 +60,15 @@ HulkNode* parse_top_level(ASTBuilder *b) {
     if (check(b, TOKEN_PROTOCOL)) return parse_protocol_def(b);
 
     // TerminatedStmt → Stmt SEMICOLON
+    // El `;` es opcional tras un bloque { ... } y al final del archivo
+    // (spec A.2.4); obligatorio entre statements top-level consecutivos.
     HulkNode *stmt = parse_stmt(b);
-    if (stmt && !b->panic) expect(b, TOKEN_SEMICOLON);
+    if (stmt && !b->panic) {
+        if (stmt->type == NODE_BLOCK_STMT || check(b, TOKEN_EOF))
+            match(b, TOKEN_SEMICOLON);   // opcional
+        else
+            expect(b, TOKEN_SEMICOLON);  // obligatorio
+    }
     return stmt;
 }
 

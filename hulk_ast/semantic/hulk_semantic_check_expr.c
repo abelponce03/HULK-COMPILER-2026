@@ -487,6 +487,12 @@ static HulkType* check_binary_op(SemanticContext *c, BinaryOpNode *n) {
 
 static HulkType* check_unary_op(SemanticContext *c, UnaryOpNode *n) {
     HulkType *t = sem_check_expr(c, n->operand);
+    if (n->is_not) {
+        if (!sem_type_conforms(t, c->t_boolean))
+            sem_error(c, (HulkNode*)n,
+                "operando de '!' debe ser Boolean (es %s)", t->name);
+        return c->t_boolean;
+    }
     if (!sem_type_conforms(t, c->t_number))
         sem_error(c, (HulkNode*)n,
             "operando de negación debe ser Number (es %s)", t->name);
@@ -708,7 +714,17 @@ static HulkType* check_while(SemanticContext *c, WhileStmtNode *n) {
 static HulkType* check_for(SemanticContext *c, ForStmtNode *n) {
     sem_check_expr(c, n->iterable);
     sem_push_scope(c);
-    sem_define(c, n->var_name, SYM_VARIABLE, c->t_object, (HulkNode*)n);
+    /* La variable de iteración es Number cuando el iterable es range(...)
+     * (el único iterable builtin soportado por ahora); de lo contrario
+     * Object. Esto permite usarla en contextos aritméticos. */
+    HulkType *var_t = c->t_object;
+    if (n->iterable && n->iterable->type == NODE_CALL_EXPR) {
+        CallExprNode *ce = (CallExprNode*)n->iterable;
+        if (ce->callee && ce->callee->type == NODE_IDENT &&
+            strcmp(((IdentNode*)ce->callee)->name, "range") == 0)
+            var_t = c->t_number;
+    }
+    sem_define(c, n->var_name, SYM_VARIABLE, var_t, (HulkNode*)n);
     HulkType *body_t = sem_check_expr(c, n->body);
     sem_pop_scope(c);
     return body_t;

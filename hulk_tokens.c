@@ -44,10 +44,7 @@ TokenRegex hulk_tokens[] = {
     { TOKEN_CONCAT_WS,      "@@" },
     { TOKEN_CONCAT,         "@" },
     { TOKEN_POW,            "\\*\\*" },
-    /* NOTE: la spec del PDF usa `^` para potencia, pero el meta-lexer
-     * de regex tiene un bug latente al procesar `\^` en char class y
-     * en escape; mientras no se arregle, el operador soportado es `**`
-     * (sintaxis tipo Python). Ver CLAUDE.md > "Alcance vigente". */
+    { TOKEN_POW,            "[\\^]" },
     
     // ===== OPERADORES SIMPLES =====
     { TOKEN_SEMICOLON,  ";" },
@@ -68,10 +65,11 @@ TokenRegex hulk_tokens[] = {
     { TOKEN_MOD,        "%" },
     { TOKEN_LT,         "<" },
     { TOKEN_GT,         ">" },
+    { TOKEN_NOT,        "!" },
     
     // ===== LITERALES =====
     { TOKEN_NUMBER,     "[0-9]+(\\.[0-9]+)?" },
-    { TOKEN_STRING,     "\"[a-zA-Z0-9 ]*\"" },
+    { TOKEN_STRING,     "\"[^\"]*\"" },
     
     // ===== IDENTIFICADORES (debe ir DESPUÉS de palabras clave) =====
     { TOKEN_IDENT,      "[a-zA-Z_][a-zA-Z0-9_]*" },
@@ -93,7 +91,7 @@ const char* token_names[] = {
     "PROTOCOL", "EXTENDS",
     "SEMICOLON", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACKET", "RBRACKET", "COMMA", "COLON", "DOT",
     "ASSIGN", "ASSIGN_DESTRUCT", "PLUS", "MINUS", "MULT", "DIV", "MOD", "POW",
-    "LT", "GT", "LE", "GE", "EQ", "NEQ", "OR", "AND", "CONCAT", "CONCAT_WS", "ARROW",
+    "LT", "GT", "LE", "GE", "EQ", "NEQ", "OR", "AND", "NOT", "CONCAT", "CONCAT_WS", "ARROW",
     "IDENT", "NUMBER", "STRING", "ERROR"
 };
 

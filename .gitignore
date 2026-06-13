@@ -1,16 +1,28 @@
 # ============== Build artifacts ==============
 *.o
 *.a
+*.d
 hulk_compiler
+# Binario del contrato (make build) y su salida
+/hulk
+/output
 tests/test_lexer
 tests/test_parser
 tests/test_ast
+tests/test_hulk_ast
+tests/test_ast_builder
+tests/test_semantic
+tests/test_codegen
+tests/test_feature_decorators_closures
+probar/spec_check/spec_runner
 
 # ============== Generated files ==============
 generador_analizadores_lexicos/regex_lexer.c
 *.ll1.cache
 
 # ============== Output (regenerated each build) ==============
+# Dir interno de debug del DFA/LL1 (CSV/DOT)
+/.build/
 output/*.csv
 output/*.dot
 output/*.png

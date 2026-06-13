@@ -66,6 +66,7 @@ typedef enum {
     TOKEN_NEQ,
     TOKEN_OR,
     TOKEN_AND,
+    TOKEN_NOT,
     TOKEN_CONCAT,
     TOKEN_CONCAT_WS,
     TOKEN_ARROW,

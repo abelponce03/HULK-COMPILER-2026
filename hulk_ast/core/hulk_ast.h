@@ -214,10 +214,11 @@ typedef struct {
     HulkNode *right;
 } BinaryOpNode;
 
-// -expr  (unary minus)
+// -expr  (unary minus)  o  !expr  (logical not)
 typedef struct {
     HulkNode base;
     HulkNode *operand;
+    int is_not;        // 0 = negación numérica (-), 1 = not lógico (!)
 } UnaryOpNode;
 
 // 42, 3.14

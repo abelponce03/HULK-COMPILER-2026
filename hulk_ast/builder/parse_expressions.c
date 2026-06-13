@@ -151,6 +151,14 @@ HulkNode* parse_unary(ASTBuilder *b) {
         HulkNode *operand = parse_unary(b);
         return (HulkNode*)hulk_ast_unary_op(b->ctx, operand, line, col);
     }
+    if (check(b, TOKEN_NOT)) {
+        int line = cur_line(b), col = cur_col(b);
+        advance(b);
+        HulkNode *operand = parse_unary(b);
+        UnaryOpNode *u = hulk_ast_unary_op(b->ctx, operand, line, col);
+        u->is_not = 1;
+        return (HulkNode*)u;
+    }
     HulkNode *node = parse_primary(b);
     return parse_as_chain(b, node);
 }

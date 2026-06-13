@@ -380,10 +380,47 @@ static void exec_action(int act, ASTNode** sem, int* sem_top,
         break;
     }
 
-    case ACT_NEGATE:
-        // TODO: implementar negación de clase de caracteres
-        LOG_WARN_MSG("regex", "clases negadas [^...] no soportadas completamente");
+    case ACT_NEGATE: {
+        /* El tope de la pila tiene el AST de CCItems: un OR (o leaf) de
+         * los caracteres del conjunto. Coleccionamos esos caracteres y
+         * construimos un OR de todos los imprimibles ASCII (más \t\n\r)
+         * que NO están en el conjunto. */
+        ASTNode *set_ast = (*sem_top > 0) ? sem[--(*sem_top)] : NULL;
+
+        unsigned char in_set[256] = {0};
+        /* Recorrido iterativo del árbol OR/leaf para marcar caracteres. */
+        ASTNode *stack[512];
+        int sp = 0;
+        if (set_ast) stack[sp++] = set_ast;
+        while (sp > 0) {
+            ASTNode *n = stack[--sp];
+            if (!n) continue;
+            if (n->type == NODE_LEAF) {
+                in_set[(unsigned char)n->symbol] = 1;
+            } else {
+                if (n->left  && sp < 512) stack[sp++] = n->left;
+                if (n->right && sp < 512) stack[sp++] = n->right;
+            }
+        }
+
+        ASTNode *result = NULL;
+        /* Imprimibles 0x20..0x7E + whitespace común. */
+        for (int ch = 0x20; ch <= 0x7E; ch++) {
+            if (in_set[ch]) continue;
+            ASTNode *leaf = ast_create_leaf(ctx, (char)ch,
+                                            get_next_position(ctx));
+            result = result ? ast_create_or(ctx, result, leaf) : leaf;
+        }
+        const char extra[] = { '\t', '\n', '\r' };
+        for (int i = 0; i < 3; i++) {
+            if (in_set[(unsigned char)extra[i]]) continue;
+            ASTNode *leaf = ast_create_leaf(ctx, extra[i],
+                                            get_next_position(ctx));
+            result = result ? ast_create_or(ctx, result, leaf) : leaf;
+        }
+        if (*sem_top < SEM_STACK_MAX) sem[(*sem_top)++] = result;
         break;
+    }
     }
 }
 

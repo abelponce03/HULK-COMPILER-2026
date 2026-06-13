@@ -1111,8 +1111,9 @@ TEST(error_missing_semicolon) {
     HulkNode *ast = build("42", &ctx);
     fclose(stderr);
     stderr = saved_err;
-    // Missing semicolon → error → NULL
-    ASSERT_NULL(ast);
+    // Spec A.2.4: el `;` final es OPCIONAL. `42` es un programa válido
+    // (una sola expresión global). Debe parsear sin error.
+    ASSERT_NOT_NULL(ast);
     hulk_ast_context_free(&ctx);
 }
 
