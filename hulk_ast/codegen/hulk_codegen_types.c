@@ -265,6 +265,7 @@ void cg_context_free(CodegenContext *c) {
     }
     free(c->type_infos);
     free(c->method_slot_names);
+    free(c->str_hints);
 
     /* LLVM resources */
     if (c->builder) LLVMDisposeBuilder(c->builder);

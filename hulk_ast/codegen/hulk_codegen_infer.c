@@ -147,129 +147,141 @@ static int self_member_used_as_string(HulkNode *n, const char *member) {
     }
 }
 
-static int new_call_uses_string_arg(HulkNode *n, const char *type_name,
-                                     int param_idx) {
-    if (!n) return 0;
+/* Recolector: registra en c->str_hints cada (tipo, idx) tal que algún
+ * `new T(...)` del programa pasa un StringLit como argumento idx-ésimo.
+ * Recorrido único del AST — esto es lo que hace la inferencia O(n). */
+static void hint_add(CodegenContext *c, const char *type_name, int idx) {
+    for (int i = 0; i < c->str_hints_count; i++)
+        if (c->str_hints[i].arg_idx == idx &&
+            c->str_hints[i].type_name &&
+            strcmp(c->str_hints[i].type_name, type_name) == 0)
+            return;  /* ya registrado */
+    if (c->str_hints_count >= c->str_hints_cap) {
+        int nc = c->str_hints_cap == 0 ? 16 : c->str_hints_cap * 2;
+        struct CGStrArgHint *t = realloc(c->str_hints, sizeof(*t) * nc);
+        if (!t) return;
+        c->str_hints = t;
+        c->str_hints_cap = nc;
+    }
+    c->str_hints[c->str_hints_count].type_name = type_name;
+    c->str_hints[c->str_hints_count].arg_idx = idx;
+    c->str_hints_count++;
+}
+
+static void collect_string_hints(CodegenContext *c, HulkNode *n) {
+    if (!n) return;
     switch (n->type) {
         case NODE_NEW_EXPR: {
             NewExprNode *ne = (NewExprNode*)n;
-            if (ne->type_name && type_name &&
-                strcmp(ne->type_name, type_name) == 0 &&
-                param_idx < ne->args.count) {
-                HulkNode *a = ne->args.items[param_idx];
-                if (a && a->type == NODE_STRING_LIT) return 1;
+            for (int i = 0; i < ne->args.count; i++) {
+                HulkNode *a = ne->args.items[i];
+                if (a && a->type == NODE_STRING_LIT && ne->type_name)
+                    hint_add(c, ne->type_name, i);
+                collect_string_hints(c, a);
             }
-            for (int i = 0; i < ne->args.count; i++)
-                if (new_call_uses_string_arg(ne->args.items[i], type_name,
-                                              param_idx)) return 1;
-            return 0;
+            return;
         }
         case NODE_BINARY_OP: {
             BinaryOpNode *b = (BinaryOpNode*)n;
-            return new_call_uses_string_arg(b->left, type_name, param_idx) ||
-                   new_call_uses_string_arg(b->right, type_name, param_idx);
+            collect_string_hints(c, b->left); collect_string_hints(c, b->right); return;
         }
         case NODE_CONCAT_EXPR: {
             ConcatExprNode *ce = (ConcatExprNode*)n;
-            return new_call_uses_string_arg(ce->left, type_name, param_idx) ||
-                   new_call_uses_string_arg(ce->right, type_name, param_idx);
+            collect_string_hints(c, ce->left); collect_string_hints(c, ce->right); return;
         }
         case NODE_UNARY_OP:
-            return new_call_uses_string_arg(((UnaryOpNode*)n)->operand,
-                                             type_name, param_idx);
+            collect_string_hints(c, ((UnaryOpNode*)n)->operand); return;
         case NODE_CALL_EXPR: {
             CallExprNode *ce = (CallExprNode*)n;
-            if (new_call_uses_string_arg(ce->callee, type_name, param_idx))
-                return 1;
+            collect_string_hints(c, ce->callee);
             for (int i = 0; i < ce->args.count; i++)
-                if (new_call_uses_string_arg(ce->args.items[i], type_name,
-                                              param_idx)) return 1;
-            return 0;
+                collect_string_hints(c, ce->args.items[i]);
+            return;
         }
         case NODE_MEMBER_ACCESS:
-            return new_call_uses_string_arg(((MemberAccessNode*)n)->object,
-                                             type_name, param_idx);
+            collect_string_hints(c, ((MemberAccessNode*)n)->object); return;
+        case NODE_INDEX_EXPR: {
+            IndexExprNode *ix = (IndexExprNode*)n;
+            collect_string_hints(c, ix->object); collect_string_hints(c, ix->index); return;
+        }
+        case NODE_VECTOR_LIT: {
+            VectorLitNode *v = (VectorLitNode*)n;
+            for (int i = 0; i < v->items.count; i++)
+                collect_string_hints(c, v->items.items[i]);
+            return;
+        }
         case NODE_LET_EXPR: {
             LetExprNode *l = (LetExprNode*)n;
-            for (int i = 0; i < l->bindings.count; i++) {
-                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
-                if (new_call_uses_string_arg(vb->init_expr, type_name,
-                                              param_idx)) return 1;
-            }
-            return new_call_uses_string_arg(l->body, type_name, param_idx);
+            for (int i = 0; i < l->bindings.count; i++)
+                collect_string_hints(c, ((VarBindingNode*)l->bindings.items[i])->init_expr);
+            collect_string_hints(c, l->body); return;
         }
         case NODE_IF_EXPR: {
             IfExprNode *iff = (IfExprNode*)n;
-            if (new_call_uses_string_arg(iff->condition, type_name,
-                                          param_idx)) return 1;
-            if (new_call_uses_string_arg(iff->then_body, type_name,
-                                          param_idx)) return 1;
+            collect_string_hints(c, iff->condition);
+            collect_string_hints(c, iff->then_body);
             for (int i = 0; i < iff->elifs.count; i++) {
                 ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
-                if (new_call_uses_string_arg(e->condition, type_name,
-                                              param_idx)) return 1;
-                if (new_call_uses_string_arg(e->body, type_name,
-                                              param_idx)) return 1;
+                collect_string_hints(c, e->condition);
+                collect_string_hints(c, e->body);
             }
-            return new_call_uses_string_arg(iff->else_body, type_name,
-                                             param_idx);
+            collect_string_hints(c, iff->else_body); return;
+        }
+        case NODE_WHILE_STMT: {
+            WhileStmtNode *w = (WhileStmtNode*)n;
+            collect_string_hints(c, w->condition); collect_string_hints(c, w->body); return;
+        }
+        case NODE_FOR_STMT: {
+            ForStmtNode *f = (ForStmtNode*)n;
+            collect_string_hints(c, f->iterable); collect_string_hints(c, f->body); return;
         }
         case NODE_BLOCK_STMT: {
             BlockStmtNode *b = (BlockStmtNode*)n;
             for (int i = 0; i < b->statements.count; i++)
-                if (new_call_uses_string_arg(b->statements.items[i],
-                                              type_name, param_idx)) return 1;
-            return 0;
-        }
-        case NODE_WHILE_STMT: {
-            WhileStmtNode *w = (WhileStmtNode*)n;
-            return new_call_uses_string_arg(w->condition, type_name,
-                                             param_idx) ||
-                   new_call_uses_string_arg(w->body, type_name, param_idx);
-        }
-        case NODE_FOR_STMT: {
-            ForStmtNode *f = (ForStmtNode*)n;
-            return new_call_uses_string_arg(f->iterable, type_name,
-                                             param_idx) ||
-                   new_call_uses_string_arg(f->body, type_name, param_idx);
+                collect_string_hints(c, b->statements.items[i]);
+            return;
         }
         case NODE_ASSIGN:
-            return new_call_uses_string_arg(((AssignNode*)n)->value,
-                                             type_name, param_idx);
+            collect_string_hints(c, ((AssignNode*)n)->value); return;
         case NODE_DESTRUCT_ASSIGN:
-            return new_call_uses_string_arg(((DestructAssignNode*)n)->value,
-                                             type_name, param_idx);
+            collect_string_hints(c, ((DestructAssignNode*)n)->value); return;
         case NODE_PROGRAM: {
             ProgramNode *p = (ProgramNode*)n;
             for (int i = 0; i < p->declarations.count; i++)
-                if (new_call_uses_string_arg(p->declarations.items[i],
-                                              type_name, param_idx)) return 1;
-            return 0;
+                collect_string_hints(c, p->declarations.items[i]);
+            return;
         }
-        case NODE_FUNCTION_DEF: {
-            FunctionDefNode *fd = (FunctionDefNode*)n;
-            return new_call_uses_string_arg(fd->body, type_name, param_idx);
-        }
-        case NODE_METHOD_DEF: {
-            MethodDefNode *md = (MethodDefNode*)n;
-            return new_call_uses_string_arg(md->body, type_name, param_idx);
-        }
+        case NODE_FUNCTION_DEF:
+            collect_string_hints(c, ((FunctionDefNode*)n)->body); return;
         case NODE_TYPE_DEF: {
             TypeDefNode *td = (TypeDefNode*)n;
             for (int i = 0; i < td->parent_args.count; i++)
-                if (new_call_uses_string_arg(td->parent_args.items[i],
-                                              type_name, param_idx)) return 1;
+                collect_string_hints(c, td->parent_args.items[i]);
             for (int i = 0; i < td->members.count; i++)
-                if (new_call_uses_string_arg(td->members.items[i],
-                                              type_name, param_idx)) return 1;
-            return 0;
+                collect_string_hints(c, td->members.items[i]);
+            return;
         }
-        case NODE_ATTRIBUTE_DEF: {
-            AttributeDefNode *ad = (AttributeDefNode*)n;
-            return new_call_uses_string_arg(ad->init_expr, type_name, param_idx);
-        }
-        default: return 0;
+        case NODE_METHOD_DEF:
+            collect_string_hints(c, ((MethodDefNode*)n)->body); return;
+        case NODE_ATTRIBUTE_DEF:
+            collect_string_hints(c, ((AttributeDefNode*)n)->init_expr); return;
+        default: return;
     }
+}
+
+/* Consulta O(hints) si (type_name, idx) recibió un StringLit. La tabla
+ * se construye una sola vez (lazy) en la primera consulta. */
+static int hint_has_string(CodegenContext *c, const char *type_name, int idx) {
+    if (!c->str_hints_built) {
+        collect_string_hints(c, c->current_program);
+        c->str_hints_built = 1;
+    }
+    for (int i = 0; i < c->str_hints_count; i++)
+        if (c->str_hints[i].arg_idx == idx &&
+            c->str_hints[i].type_name &&
+            strcmp(c->str_hints[i].type_name, type_name) == 0)
+            return 1;
+    return 0;
 }
 
 LLVMTypeRef cg_infer_ctor_param_type(CodegenContext *c,
@@ -311,8 +323,7 @@ LLVMTypeRef cg_infer_ctor_param_type(CodegenContext *c,
             VarBindingNode *p = (VarBindingNode*)td->params.items[i];
             if (p->name && strcmp(p->name, param_name) == 0) { idx = i; break; }
         }
-        if (idx >= 0 &&
-            new_call_uses_string_arg(c->current_program, td->name, idx))
+        if (idx >= 0 && hint_has_string(c, td->name, idx))
             return c->t_i8ptr;
     }
     return c->t_double;

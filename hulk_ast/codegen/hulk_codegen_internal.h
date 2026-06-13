@@ -134,6 +134,15 @@ typedef struct {
     HulkNode         *current_program;     /* para heurísticas post-hoc */
     int               error_count;
 
+    /* Tabla precomputada (una sola pasada O(n) sobre el programa) de los
+     * pares (tipo, índice de argumento) donde algún `new T(...)` pasa un
+     * StringLit. Permite a cg_infer_ctor_param_type consultar en O(1)
+     * en vez de re-escanear el programa por cada parámetro. */
+    struct CGStrArgHint { const char *type_name; int arg_idx; } *str_hints;
+    int               str_hints_count;
+    int               str_hints_cap;
+    int               str_hints_built;     /* 0 hasta la primera consulta */
+
     /* Built-in runtime functions */
     LLVMValueRef      fn_printf;
     LLVMValueRef      fn_snprintf;
