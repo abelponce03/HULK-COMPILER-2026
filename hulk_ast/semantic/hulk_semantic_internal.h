@@ -207,6 +207,24 @@ static inline HulkType* sem_param_annotation_for(SemanticContext *c,
 void      sem_check_program(SemanticContext *ctx, HulkNode *program);
 HulkType* sem_check_expr(SemanticContext *ctx, HulkNode *node);
 
+/* Recolección de símbolos, pases 1-2  (hulk_semantic_collect.c) */
+void      sem_collect_pass1_types(SemanticContext *c, ProgramNode *prog);
+void      sem_collect_pass2_resolve(SemanticContext *c, ProgramNode *prog);
+
+/* Verificación de control y OOP  (hulk_semantic_check_stmt.c) */
+HulkType* sem_check_let(SemanticContext *c, LetExprNode *n);
+HulkType* sem_check_if(SemanticContext *c, IfExprNode *n);
+HulkType* sem_check_while(SemanticContext *c, WhileStmtNode *n);
+HulkType* sem_check_for(SemanticContext *c, ForStmtNode *n);
+HulkType* sem_check_block(SemanticContext *c, BlockStmtNode *n);
+HulkType* sem_check_new(SemanticContext *c, NewExprNode *n);
+HulkType* sem_check_assign(SemanticContext *c, AssignNode *n);
+HulkType* sem_check_destruct(SemanticContext *c, DestructAssignNode *n);
+HulkType* sem_check_as(SemanticContext *c, AsExprNode *n);
+HulkType* sem_check_is(SemanticContext *c, IsExprNode *n);
+HulkType* sem_check_self(SemanticContext *c, SelfNode *n);
+HulkType* sem_check_base(SemanticContext *c, BaseCallNode *n);
+
 /* ============================================================
  *  Desugaring  (hulk_semantic_desugar.c)
  * ============================================================ */
