@@ -40,6 +40,8 @@ LIB_OBJS = hulk_tokens.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_call.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_oop.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_control.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_infer.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_typedecl.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_stmt.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen.o \
             error_handler.o \

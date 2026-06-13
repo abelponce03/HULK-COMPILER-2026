@@ -246,6 +246,19 @@ LLVMValueRef cg_emit_block(CodegenContext *c, BlockStmtNode *n);
 
 void cg_emit_program(CodegenContext *c, HulkNode *program);
 
+/* Tipos de usuario: layout, constructor, métodos, vtables/RTTI
+ * (hulk_codegen_typedecl.c) */
+void cg_forward_declare_type(CodegenContext *c, TypeDefNode *n);
+void cg_emit_type_def(CodegenContext *c, TypeDefNode *n);
+void cg_emit_rtti_globals(CodegenContext *c);
+
+/* Inferencia de tipos LLVM desde el AST  (hulk_codegen_infer.c) */
+LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann);
+LLVMTypeRef cg_infer_body_return_type(CodegenContext *c, HulkNode *body);
+LLVMTypeRef cg_infer_param_type(CodegenContext *c, const char *ann);
+LLVMTypeRef cg_infer_ctor_param_type(CodegenContext *c, TypeDefNode *td,
+                                     const char *param_name);
+
 /* ============================================================
  *  Utilidades
  * ============================================================ */
