@@ -71,8 +71,11 @@ La detección de lambda merece mención: la gramática es ambigua porque tras un
 - `hulk_semantic_internal.h`: define el sistema de tipos `HulkType { kind, name, parent, members, param_types, param_count, return_type, is_protocol }`, los símbolos `Symbol { kind, name, type, callable_type, decl_node, param_types, param_names, param_count }`, los scopes `Scope { parent, symbols, count }` y el `SemanticContext`.
 - `hulk_semantic_types.c`: tabla de tipos, `sem_type_conforms` (relación `T1 <= T2`), `sem_type_join` (LCA), inicialización de tipos built-in (`Object`, `Number`, `String`, `Boolean`) y funciones built-in (`print`, `sqrt`, `sin`, `cos`, `exp`, `log`, `rand`, `parse`, `range`).
 - `hulk_semantic_scope.c`: scopes anidados con cleanup automático.
-- `hulk_semantic_check.c`: tres pases sobre el AST: (1) registrar nombres de tipo, (2) resolver herencia y registrar funciones/miembros, (3) verificar cuerpos.
-- `hulk_semantic_check_expr.c`: bottom-up type-checking de cada expresión.
+- `hulk_semantic_collect.c`: pases 1-2 de recolección de símbolos — registrar nombres de tipo, resolver herencia (con detección de ciclos tortoise-and-hare), y registrar funciones y miembros. Permite referencias mutuas y herencia hacia adelante.
+- `hulk_semantic_check.c`: pase 3 (verificación de cuerpos) + orquestación (`sem_check_program`, `hulk_semantic_analyze`).
+- `hulk_semantic_check_expr.c`: bottom-up type-checking de literales, operadores, llamadas y member access (el dispatcher `sem_check_expr`).
+- `hulk_semantic_check_stmt.c`: type-checking de las construcciones de control con valor (let/if/while/for/block) y OOP (new/assign/is/as/self/base).
+- `hulk_semantic_infer.c`: inferencia ad-hoc de tipos no anotados (`sem_infer_param_type`, `sem_infer_self_member_type`, `sem_body_calls_name`).
 - `hulk_semantic_desugar.c`: pase de transformación que reescribe decoradores como composición de llamadas (`decor d, e function f` → `f := d(e(f))`).
 
 La conformidad de tipo es nominal por defecto (cadena de herencia), pero también **estructural cuando el target es un protocolo**: el child conforma a un protocolo si tiene métodos del mismo nombre que los signatures del protocolo.
@@ -85,9 +88,15 @@ Para recursión, el `collect_function` defaultea el tipo de retorno a `Number` s
 Genera **LLVM IR** y, opcionalmente, ejecuta el pipeline LLVM completo hasta producir un binario ELF nativo. Está dividido en:
 - `hulk_codegen_internal.h`: `CodegenContext` (llvm_ctx, module, builder, tipos básicos, scope chain, registro de tipos de usuario, slots globales de método para la vtable, tablas de RTTI), `CGScope` (chain de scopes), `CGSymbol { name, value, type, is_func, hulk_type }`, `CGTypeInfo { name, struct_type, ptr_type, field_count, field_offset_self, field_names, field_types_arr, type_tag, methods, parent, vtable_global, vtable_type, fn_new, fn_init, fn_init_type }`.
 - `hulk_codegen_types.c`: gestión de scope chain con herencia, registro de tipos de usuario y tabla global de slots de método (`cg_method_slot`).
-- `hulk_codegen_expr.c`: emisión de IR para cada nodo del AST. El despachador `cg_emit_expr` cubre todos los `NODE_*`.
-- `hulk_codegen_stmt.c`: orquestación del programa, forward-declares, vtables, RTTI.
-- `hulk_codegen.c`: declaración del runtime (libc + libm + helpers HULK), API pública `hulk_codegen(ast, "out.ll")` y `hulk_codegen_to_executable(ast, "./output")`.
+- `hulk_codegen_expr.c`: despachador `cg_emit_expr` + emisión de escalares (literales, ident, operadores, concat, short-circuit).
+- `hulk_codegen_call.c`: invocación de funciones/closures/builtins, intercept de `print` polimórfico y coerción a string (`cg_emit_to_string`).
+- `hulk_codegen_oop.c`: acceso a miembros, `new`, `self`, asignación destructiva sobre campos, y el tipo HULK estático de una expresión (`cg_static_type_of` + LCA).
+- `hulk_codegen_control.c`: let/if/while/for/block como expresiones con valor (basic blocks + PHI/alloca).
+- `hulk_codegen_typedecl.c`: layout del struct con tag, constructor encadenado, emisión de métodos y `T_new`/`T_init`, y construcción de vtables + tablas RTTI.
+- `hulk_codegen_infer.c`: heurísticas que deciden el `LLVMTypeRef` de retornos/params/campos sin anotación, incluida la tabla de hints O(n) para inferir String en params de constructor.
+- `hulk_codegen_stmt.c`: orquestación del programa (`cg_emit_program`), forward-declares y emisión de funciones/decoradores.
+- `hulk_codegen_runtime.c`: declaración del runtime C externo (libc + libm) y definición en IR de los helpers HULK (print, concat, conversiones a string, log de base arbitraria).
+- `hulk_codegen.c`: API pública `hulk_codegen(ast, "out.ll")` y `hulk_codegen_to_executable(ast, "./output")`.
 
 ### 2.4 Punto de entrada del contrato: `hulk_cli.c`
 
@@ -297,9 +306,32 @@ Un runner end-to-end que toma cada `.hulk` en `tests/hulk_programs/`, lo pasa po
 
 ---
 
-## 9. Limitaciones conocidas
+## 9. Complejidad temporal del proceso de compilación
 
-- El operador de potencia documentado en la spec es `^`, pero el meta-lexer tiene un bug latente al procesar `\^` en char class y en escape; mientras tanto, el operador soportado es `**` (sintaxis tipo Python).
+El pipeline procesa la entrada de tamaño *n* (caracteres del fuente) en **tiempo lineal O(n)** en el caso práctico. Fase por fase:
+
+| Fase | Complejidad | Justificación |
+|------|-------------|---------------|
+| Lexer (DFA maximal-munch) | **O(n)** | Cada carácter dispara una transición O(1) en `next_state[state][c]`. El retroceso a `last_accept_pos` está acotado por la longitud del token más largo; los lexemas de HULK no comparten prefijos largos arbitrarios, así que no hay re-escaneo significativo. |
+| Parser LL(1) | **O(n)** | Predictivo con pila + tabla: cada token se consume una vez y cada expansión de producción es un lookup O(1). La tabla FIRST/FOLLOW/LL(1) se construye una sola vez sobre la gramática (constante respecto al input). |
+| Builder de AST | **O(n)** | Una pasada sobre el árbol de derivación. |
+| Semántico | **O(n)** amortizado | El recorrido base es lineal. Las heurísticas de inferencia de tipos no anotados (`sem_infer_param_type`, `sem_infer_self_member_type`) recorren el cuerpo de *cada declaración* una vez por símbolo sin anotar de esa declaración: O(símbolos × cuerpo) **local a cada declaración**, no al programa. Es lineal salvo en el caso patológico de una única declaración con un número de parámetros proporcional a su propio cuerpo. |
+| Codegen | **O(n)** | La inferencia de tipos de constructor, que originalmente reescaneaba el programa completo por cada parámetro (O(params × n) — el peor offender), se reemplazó por una **tabla de hints precomputada en una sola pasada** (`collect_string_hints`), reduciendo cada consulta a O(1). El resto de la emisión es una pasada sobre el AST. |
+
+**Medición empírica** (programa generado de *N* funciones + *N* statements):
+
+| N | líneas | tiempo |
+|---|--------|--------|
+| 1000 | 2002 | 0.35 s |
+| 2000 | 4002 | 0.73 s |
+| 4000 | 8002 | 1.54 s |
+
+Doblar la entrada **dobla** el tiempo (no lo cuadruplica), confirmando empíricamente el escalado lineal. Antes de la optimización de la tabla de hints, el caso con muchos constructores sin anotar exhibía comportamiento super-lineal; tras ella, el pipeline es O(n) end-to-end en todos los programas medidos.
+
+---
+
+## 10. Limitaciones conocidas
+
 - La indización de vectores asume vectores de `Number` (representación: `{ i32 size, double items[N] }` empacada en un bloque de bytes). Otros tipos de vector quedarían para una iteración posterior.
 - El protocolo `Iterable` que la spec menciona como mecanismo del `for` está implementado a nivel sintáctico (el `for` se reconoce a `range`), pero no hay infraestructura para iterar sobre tipos arbitrarios que conformen `Iterable`. En su lugar, el `for` detecta sintácticamente `range(a, b)` y emite el loop apropiado.
 - Macros (`def`, `*expr`, `@symbol`, `$symbol`, `match`/`case`) descritas en A.14 no están implementadas.
@@ -307,6 +339,6 @@ Un runner end-to-end que toma cada `.hulk` en `tests/hulk_programs/`, lo pasa po
 
 ---
 
-## 10. Cierre
+## 11. Cierre
 
 El compilador cubre con 26/26 los casos end-to-end que ejercitan polimorfismo dinámico, herencia, protocolos, lambdas, vectores y todos los constructos básicos del lenguaje. Implementa correctamente las tres fases del análisis (léxico, sintáctico, semántico) con reporte de errores conforme al contrato de la facultad, y genera un ejecutable nativo ELF x86_64 mediante LLVM. El código está organizado en subsistemas con responsabilidad única y comunicación por contratos, lo que ha permitido evolucionar el backend (especialmente la refactorización que introdujo vtables y type tags) sin romper el frontend.

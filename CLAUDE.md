@@ -93,15 +93,22 @@
   - `hulk_ast/builder/` — construcción del AST desde el flujo de
     tokens, dividido en `parse_expressions`, `parse_statements`,
     `parse_definitions`, `parse_primary`, `parse_helpers`.
-  - `hulk_ast/semantic/` — `scope`, `types`, `check`, `check_expr`,
-    `desugar`.
-  - `hulk_ast/codegen/` — emisión LLVM IR (`hulk_codegen`, `_expr`,
-    `_stmt`, `_types`).
+  - `hulk_ast/semantic/` — `scope`, `types`, `collect` (pases 1-2),
+    `check` (pase 3 + orquestación), `check_expr` (literales/operadores/
+    llamadas), `check_stmt` (control + OOP), `infer` (inferencia ad-hoc),
+    `desugar`. Ningún archivo supera 500 líneas.
+  - `hulk_ast/codegen/` — emisión LLVM IR, dividida por responsabilidad:
+    `_expr` (dispatcher + escalares), `_call`, `_oop`, `_control`,
+    `_typedecl` (struct/vtable/RTTI), `_infer` (tipos LLVM + tabla de
+    hints O(n)), `_runtime` (runtime embebido), `_stmt` (orquestación),
+    `_types` (scopes/registro), `hulk_codegen.c` (API pública).
   - `hulk_ast/printer/` — pretty-print del AST para debug.
-- **Orquestación:** `main.c` (CLI) → `hulk_compiler.c` (fachada
-  Pipeline). El CLI **solo ejecuta hasta build_ast**; no invoca
-  `hulk_semantic_analyze` ni `hulk_codegen`. Los tests internos sí
-  ejercen el pipeline completo.
+- **Orquestación:** `hulk_cli.c` es el punto de entrada del contrato
+  (`./hulk archivo.hulk`); ejecuta el pipeline **completo**
+  (build_ast → semántico → codegen → `./output`) y mapea los errores
+  al formato `(línea,col) TYPE: msg` con exit codes 1/2/3.
+  `hulk_compiler.c` es la fachada que construye el lexer/parser.
+  `main.c` fue eliminado (era un CLI legacy que solo iba hasta el AST).
 - **Patrones ya presentes (respetar, no recrear):**
   Pipeline (`hulk_compiler.c`), Visitor (`hulk_ast/core/`), Object Pool
   (`hulk_ast_context`), Abstract Factory (`grammar.h/c`), Strategy
