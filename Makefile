@@ -35,7 +35,11 @@ LIB_OBJS = hulk_tokens.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_check.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_desugar.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_types.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_runtime.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_expr.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_call.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_oop.o \
+            $(HULK_AST_DIR)/codegen/hulk_codegen_control.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen_stmt.o \
             $(HULK_AST_DIR)/codegen/hulk_codegen.o \
             error_handler.o \

@@ -214,9 +214,31 @@ void cg_define_runtime_helpers(CodegenContext *c);
 
 /* ============================================================
  *  Expresiones  (hulk_codegen_expr.c)
+ *  Dispatcher central; los emisores concretos viven repartidos por
+ *  archivo temático (call/oop/control) y se declaran abajo.
  * ============================================================ */
 
 LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node);
+
+/* Llamadas y conversión a string  (hulk_codegen_call.c) */
+LLVMValueRef cg_emit_call(CodegenContext *c, CallExprNode *n);
+LLVMValueRef cg_emit_to_string(CodegenContext *c, HulkNode *node);
+
+/* OOP: acceso a miembros, new, self, asignación, tipo estático
+ * (hulk_codegen_oop.c) */
+LLVMValueRef cg_emit_member_access(CodegenContext *c, MemberAccessNode *n);
+LLVMValueRef cg_emit_new(CodegenContext *c, NewExprNode *n);
+LLVMValueRef cg_emit_self(CodegenContext *c, SelfNode *n);
+LLVMValueRef cg_emit_assign(CodegenContext *c, AssignNode *n);
+LLVMValueRef cg_emit_destruct(CodegenContext *c, DestructAssignNode *n);
+CGTypeInfo*  cg_static_type_of(CodegenContext *c, HulkNode *expr);
+
+/* Flujo de control como expresión  (hulk_codegen_control.c) */
+LLVMValueRef cg_emit_let(CodegenContext *c, LetExprNode *n);
+LLVMValueRef cg_emit_if(CodegenContext *c, IfExprNode *n);
+LLVMValueRef cg_emit_while(CodegenContext *c, WhileStmtNode *n);
+LLVMValueRef cg_emit_for(CodegenContext *c, ForStmtNode *n);
+LLVMValueRef cg_emit_block(CodegenContext *c, BlockStmtNode *n);
 
 /* ============================================================
  *  Declaraciones / top-level  (hulk_codegen_stmt.c)
