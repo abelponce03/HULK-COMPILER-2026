@@ -52,6 +52,7 @@ LIB_OBJS = hulk_tokens.o \
             $(LEXER_DIR)/afd.o \
             $(LEXER_DIR)/lexer.o \
             $(LEXER_DIR)/regex_parser.o \
+            $(LEXER_DIR)/regex_ast_actions.o \
             $(LEXER_DIR)/regex_lexer.o \
             $(PARSER_DIR)/grammar.o \
             $(PARSER_DIR)/grammar_regex.o \
