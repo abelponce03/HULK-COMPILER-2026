@@ -1,7 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g -D_GNU_SOURCE -MMD -MP
 LDFLAGS = -lfl
-TARGET = hulk_compiler
 
 # LLVM flags (para módulo codegen)
 LLVM_CFLAGS  = $(shell llvm-config-18 --cflags 2>/dev/null || llvm-config --cflags)
@@ -52,7 +51,7 @@ LIB_OBJS = hulk_tokens.o \
             $(PARSER_DIR)/parser.o \
             $(PARSER_DIR)/first_follow.o
 
-OBJS = main.o $(LIB_OBJS)
+OBJS = hulk_cli.o $(LIB_OBJS)
 
 # Binarios de tests
 TEST_LEXER       = $(TEST_DIR)/test_lexer
@@ -65,13 +64,10 @@ TEST_CODEGEN     = $(TEST_DIR)/test_codegen
 TEST_FEATURE_DECORATORS_CLOSURES = $(TEST_DIR)/test_feature_decorators_closures
 TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN) $(TEST_FEATURE_DECORATORS_CLOSURES)
 
-# ============== Regla principal ==============
-$(TARGET): $(REGEX_LEXER_C) $(OBJS) | $(OUTPUT_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
-
-# ============== Contrato facultad ==============
-# `make build` produce `./hulk` en la raíz del repo. Es el punto de
-# entrada esperado por el contrato de matcom/compilers.
+# ============== Regla principal (contrato facultad) ==============
+# `make` / `make build` producen `./hulk` en la raíz del repo, el punto
+# de entrada esperado por el contrato de matcom/compilers.
+all: hulk
 build: hulk
 
 hulk: $(REGEX_LEXER_C) hulk_cli.o $(LIB_OBJS) | $(OUTPUT_DIR)
@@ -163,17 +159,13 @@ test-feature-decorators-closures: $(TEST_FEATURE_DECORATORS_CLOSURES)
 	./$(TEST_FEATURE_DECORATORS_CLOSURES)
 
 # ============== Otros targets ==============
-# Test rápido (entrada por defecto)
-test: $(TARGET)
-	./$(TARGET)
-
-# Test con archivo .hulk
-test-file: $(TARGET)
-	./$(TARGET) test.hulk
+# Compilar y ejecutar un archivo .hulk de prueba
+run: hulk
+	./hulk test.hulk
 
 # Limpiar
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) hulk output output.o
 	rm -f $(LEXER_DIR)/*.o $(PARSER_DIR)/*.o
 	rm -f $(HULK_AST_DIR)/core/*.o $(HULK_AST_DIR)/builder/*.o $(HULK_AST_DIR)/printer/*.o $(HULK_AST_DIR)/semantic/*.o $(HULK_AST_DIR)/codegen/*.o
 	rm -f $(REGEX_LEXER_C)
@@ -183,9 +175,9 @@ clean:
 	find . -name '*.d' -delete
 
 # Reconstruir desde cero
-rebuild: clean $(TARGET)
+rebuild: clean hulk
 
-.PHONY: clean test test-file rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen test-feature-decorators-closures
+.PHONY: all build run clean rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen test-feature-decorators-closures
 
 # Auto-generated dependency files
 -include $(OBJS:.o=.d)
