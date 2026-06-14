@@ -29,6 +29,18 @@ static CGTypeInfo* cg_type_lca(CGTypeInfo *a, CGTypeInfo *b) {
 
 CGTypeInfo* cg_static_type_of(CodegenContext *c, HulkNode *expr) {
     if (!expr) return NULL;
+
+    /* Camino canónico: el análisis semántico ya anotó el nodo con el
+     * nombre de su tipo estático. Si nombra un tipo de usuario conocido,
+     * esa es la respuesta autoritativa (el semántico ya resolvió join de
+     * ramas y herencia mejor que la derivación sintáctica de abajo). */
+    if (expr->static_type) {
+        CGTypeInfo *ti = cg_type_info_find(c, expr->static_type);
+        if (ti) return ti;
+    }
+
+    /* Fallback sintáctico: si no se corrió el semántico, o el tipo
+     * anotado es primitivo/función (sin CGTypeInfo asociado). */
     switch (expr->type) {
         case NODE_SELF:
             return c->enclosing_type;

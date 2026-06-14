@@ -84,6 +84,10 @@ La inferencia ad-hoc de tipos de parámetro de función/método sin anotación s
 
 Para recursión, el `collect_function` defaultea el tipo de retorno a `Number` solo si el body contiene una autollamada (detectado por `body_calls_name`); de lo contrario el tipo de retorno se infiere del cuerpo en `check_function_def`.
 
+**Árbol semántico anotado.** El dispatcher `sem_check_expr` escribe el nombre canónico del tipo inferido en cada nodo (`HulkNode.static_type`), materializando el "árbol semántico anotado" del flujo clásico de compilación. La anotación es centralizada (un único punto en el dispatcher anota todos los nodos de expresión) y desacoplada: el AST core guarda solo un `const char*` con el nombre del tipo, sin depender de los structs internos del semántico ni del codegen. El backend **consume** esa anotación (`cg_static_type_of` y `cg_infer_body_return_type` la leen primero, con las heurísticas sintácticas como fallback únicamente cuando no hubo análisis semántico previo o el tipo es `Object`/`<function>`). Esto elimina la duplicación de lógica de inferencia entre frontend y backend que existía antes, donde el codegen re-derivaba los tipos desde cero.
+
+Ejemplo: para `let x = 3 + 4 in print(x @ " es la suma")`, el árbol queda anotado con `BinaryOp:Number`, `ConcatExpr:String` e `Ident:Number` (la `x`, sin anotación del usuario, inferida y anotada), entre otros.
+
 #### `hulk_ast/codegen/`
 Genera **LLVM IR** y, opcionalmente, ejecuta el pipeline LLVM completo hasta producir un binario ELF nativo. Está dividido en:
 - `hulk_codegen_internal.h`: `CodegenContext` (llvm_ctx, module, builder, tipos básicos, scope chain, registro de tipos de usuario, slots globales de método para la vtable, tablas de RTTI), `CGScope` (chain de scopes), `CGSymbol { name, value, type, is_func, hulk_type }`, `CGTypeInfo { name, struct_type, ptr_type, field_count, field_offset_self, field_names, field_types_arr, type_tag, methods, parent, vtable_global, vtable_type, fn_new, fn_init, fn_init_type }`.

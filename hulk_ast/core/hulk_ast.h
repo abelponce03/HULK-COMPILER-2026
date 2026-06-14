@@ -95,6 +95,12 @@ typedef struct HulkNode_s {
     HulkNodeType type;
     int line;   // posición en el fuente (1-based)
     int col;
+    // Tipo estático inferido por el análisis semántico (nombre canónico:
+    // "Number" | "String" | "Boolean" | "Object" | "<UserType>"). NULL
+    // antes del análisis. Esto materializa el "árbol semántico anotado":
+    // el codegen lo lee en vez de re-inferir tipos. Apunta al nombre
+    // estable de un HulkType (no requiere liberación).
+    const char *static_type;
 } HulkNode;
 
 // ============== NODOS CONCRETOS ==============

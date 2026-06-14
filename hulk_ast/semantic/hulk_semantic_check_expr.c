@@ -26,35 +26,37 @@ static HulkType* check_member(SemanticContext *c, MemberAccessNode *n);
 
 HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
     if (!node) return c->t_error;
+    HulkType *t;
     switch (node->type) {
-        case NODE_NUMBER_LIT:      return c->t_number;
-        case NODE_STRING_LIT:      return c->t_string;
-        case NODE_BOOL_LIT:        return c->t_boolean;
-        case NODE_IDENT:           return check_ident(c, (IdentNode*)node);
-        case NODE_FUNCTION_EXPR:   return check_function_expr(c, (FunctionExprNode*)node);
-        case NODE_BINARY_OP:       return check_binary_op(c, (BinaryOpNode*)node);
-        case NODE_UNARY_OP:        return check_unary_op(c, (UnaryOpNode*)node);
-        case NODE_CONCAT_EXPR:     return check_concat(c, (ConcatExprNode*)node);
-        case NODE_CALL_EXPR:       return check_call(c, (CallExprNode*)node);
-        case NODE_MEMBER_ACCESS:   return check_member(c, (MemberAccessNode*)node);
-        case NODE_LET_EXPR:        return sem_check_let(c, (LetExprNode*)node);
-        case NODE_IF_EXPR:         return sem_check_if(c, (IfExprNode*)node);
-        case NODE_WHILE_STMT:      return sem_check_while(c, (WhileStmtNode*)node);
-        case NODE_FOR_STMT:        return sem_check_for(c, (ForStmtNode*)node);
-        case NODE_BLOCK_STMT:      return sem_check_block(c, (BlockStmtNode*)node);
-        case NODE_NEW_EXPR:        return sem_check_new(c, (NewExprNode*)node);
-        case NODE_ASSIGN:          return sem_check_assign(c, (AssignNode*)node);
-        case NODE_DESTRUCT_ASSIGN: return sem_check_destruct(c, (DestructAssignNode*)node);
-        case NODE_AS_EXPR:         return sem_check_as(c, (AsExprNode*)node);
-        case NODE_IS_EXPR:         return sem_check_is(c, (IsExprNode*)node);
-        case NODE_SELF:            return sem_check_self(c, (SelfNode*)node);
-        case NODE_BASE_CALL:       return sem_check_base(c, (BaseCallNode*)node);
+        case NODE_NUMBER_LIT:      t = c->t_number; break;
+        case NODE_STRING_LIT:      t = c->t_string; break;
+        case NODE_BOOL_LIT:        t = c->t_boolean; break;
+        case NODE_IDENT:           t = check_ident(c, (IdentNode*)node); break;
+        case NODE_FUNCTION_EXPR:   t = check_function_expr(c, (FunctionExprNode*)node); break;
+        case NODE_BINARY_OP:       t = check_binary_op(c, (BinaryOpNode*)node); break;
+        case NODE_UNARY_OP:        t = check_unary_op(c, (UnaryOpNode*)node); break;
+        case NODE_CONCAT_EXPR:     t = check_concat(c, (ConcatExprNode*)node); break;
+        case NODE_CALL_EXPR:       t = check_call(c, (CallExprNode*)node); break;
+        case NODE_MEMBER_ACCESS:   t = check_member(c, (MemberAccessNode*)node); break;
+        case NODE_LET_EXPR:        t = sem_check_let(c, (LetExprNode*)node); break;
+        case NODE_IF_EXPR:         t = sem_check_if(c, (IfExprNode*)node); break;
+        case NODE_WHILE_STMT:      t = sem_check_while(c, (WhileStmtNode*)node); break;
+        case NODE_FOR_STMT:        t = sem_check_for(c, (ForStmtNode*)node); break;
+        case NODE_BLOCK_STMT:      t = sem_check_block(c, (BlockStmtNode*)node); break;
+        case NODE_NEW_EXPR:        t = sem_check_new(c, (NewExprNode*)node); break;
+        case NODE_ASSIGN:          t = sem_check_assign(c, (AssignNode*)node); break;
+        case NODE_DESTRUCT_ASSIGN: t = sem_check_destruct(c, (DestructAssignNode*)node); break;
+        case NODE_AS_EXPR:         t = sem_check_as(c, (AsExprNode*)node); break;
+        case NODE_IS_EXPR:         t = sem_check_is(c, (IsExprNode*)node); break;
+        case NODE_SELF:            t = sem_check_self(c, (SelfNode*)node); break;
+        case NODE_BASE_CALL:       t = sem_check_base(c, (BaseCallNode*)node); break;
         case NODE_VECTOR_LIT: {
             VectorLitNode *vn = (VectorLitNode*)node;
             for (int i = 0; i < vn->items.count; i++)
                 sem_check_expr(c, vn->items.items[i]);
             /* Por simplicidad, asumimos vector de Number. */
-            return c->t_number;
+            t = c->t_number;
+            break;
         }
         case NODE_INDEX_EXPR: {
             IndexExprNode *ix = (IndexExprNode*)node;
@@ -63,10 +65,17 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
             if (!sem_type_conforms(idx_t, c->t_number))
                 sem_error(c, node, "índice de vector debe ser Number (es %s)",
                           idx_t->name);
-            return c->t_number;
+            t = c->t_number;
+            break;
         }
-        default:                   return c->t_error;
+        default:                   t = c->t_error; break;
     }
+    /* Anotar el nodo con el nombre canónico del tipo inferido — esto
+     * materializa el árbol semántico anotado que el codegen consulta.
+     * No se anota el tipo <error> (recuperación de errores). */
+    if (t && t->name && t->kind != HULK_TYPE_ERROR)
+        node->static_type = t->name;
+    return t;
 }
 
 /* ============================================================

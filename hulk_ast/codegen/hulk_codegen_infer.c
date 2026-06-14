@@ -11,20 +11,38 @@
  */
 #include "hulk_codegen_internal.h"
 
+/* Mapea el nombre canónico de un tipo HULK al LLVMTypeRef que lo
+ * representa. Retorna NULL para "Object"/"<function>"/desconocido, donde
+ * el llamador debe decidir (no hay un LLVMType único razonable). */
+LLVMTypeRef cg_llvm_type_for_name(CodegenContext *c, const char *name) {
+    if (!name) return NULL;
+    if (strcmp(name, "Number") == 0)  return c->t_double;
+    if (strcmp(name, "String") == 0)  return c->t_i8ptr;
+    if (strcmp(name, "Boolean") == 0) return c->t_bool;
+    if (strcmp(name, "Void") == 0)    return c->t_void;
+    CGTypeInfo *ti = cg_type_info_find(c, name);
+    if (ti) return ti->ptr_type;
+    return NULL;
+}
+
 LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann) {
     if (!ann) return c->t_double;  /* default */
-    if (strcmp(ann, "Number") == 0) return c->t_double;
-    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
-    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
-    if (strcmp(ann, "Void") == 0) return c->t_void;
-    /* Para tipos de usuario, retornar pointer genérico */
-    CGTypeInfo *ti = cg_type_info_find(c, ann);
-    if (ti) return ti->ptr_type;
-    return c->t_double;
+    LLVMTypeRef t = cg_llvm_type_for_name(c, ann);
+    return t ? t : c->t_double;
 }
 
 LLVMTypeRef cg_infer_body_return_type(CodegenContext *c, HulkNode *body) {
     if (!body) return NULL;
+
+    /* Camino canónico: el semántico anotó el body con su tipo. Si mapea
+     * a un LLVMType concreto, esa es la respuesta (elimina la
+     * re-inferencia sintáctica de abajo). "Object" y print→void caen al
+     * análisis sintáctico de fallback. */
+    if (body->static_type) {
+        LLVMTypeRef t = cg_llvm_type_for_name(c, body->static_type);
+        if (t) return t;
+    }
+
     switch (body->type) {
         case NODE_CALL_EXPR: {
             CallExprNode *ce = (CallExprNode*)body;

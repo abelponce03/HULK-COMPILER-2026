@@ -262,6 +262,7 @@ void cg_emit_type_def(CodegenContext *c, TypeDefNode *n);
 void cg_emit_rtti_globals(CodegenContext *c);
 
 /* Inferencia de tipos LLVM desde el AST  (hulk_codegen_infer.c) */
+LLVMTypeRef cg_llvm_type_for_name(CodegenContext *c, const char *name);
 LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann);
 LLVMTypeRef cg_infer_body_return_type(CodegenContext *c, HulkNode *body);
 LLVMTypeRef cg_infer_param_type(CodegenContext *c, const char *ann);
