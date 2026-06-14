@@ -24,6 +24,7 @@ LIB_OBJS = hulk_tokens.o \
             $(HULK_AST_DIR)/core/hulk_ast_visitor.o \
             $(HULK_AST_DIR)/printer/hulk_ast_printer.o \
             $(HULK_AST_DIR)/builder/hulk_ast_builder.o \
+            $(HULK_AST_DIR)/builder/hulk_ll1_builder.o \
             $(HULK_AST_DIR)/builder/parse_helpers.o \
             $(HULK_AST_DIR)/builder/parse_expressions.o \
             $(HULK_AST_DIR)/builder/parse_statements.o \
