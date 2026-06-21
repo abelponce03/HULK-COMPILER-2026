@@ -31,7 +31,7 @@
  *  No-terminales
  * ============================================================ */
 enum {
-    NT_Program, NT_StmtList, NT_TermStmt, NT_Stmt,
+    NT_Program, NT_TopList, NT_TopItem, NT_StmtList, NT_TermStmt, NT_Stmt,
     NT_Expr, NT_Or, NT_OrP, NT_And, NT_AndP, NT_Cmp, NT_CmpP,
     NT_Concat, NT_ConcatP, NT_Add, NT_AddP, NT_Term, NT_TermP,
     NT_Factor, NT_FactorP, NT_Unary, NT_Postfix,
@@ -40,6 +40,12 @@ enum {
     NT_If, NT_ElifL, NT_Body,
     NT_While, NT_For, NT_Block,
     NT_VecItems, NT_VecItemsT,
+    /* Capa 2: definiciones */
+    NT_FunctionDef, NT_Params, NT_ParamsT, NT_Param, NT_FuncBody, NT_FuncExprBody,
+    NT_TypeDef, NT_TypeParams, NT_TypeInherit, NT_TypeBaseArgs,
+    NT_TypeBody, NT_TypeMember, NT_TypeMemberTail, NT_AttrTail, NT_MethodBody,
+    NT_ProtocolDef, NT_ProtoExt, NT_ProtoSigs, NT_ProtoSig,
+    NT_Lambda,
     NT_COUNT
 };
 
@@ -56,6 +62,11 @@ enum {
     A_LET, A_BIND, A_TYPE_NAME, A_TYPE_NONE,
     A_IF, A_ELIF, A_WHILE, A_FOR, A_BLOCK_BEGIN, A_BLOCK,
     A_VEC,
+    /* Capa 2 */
+    A_PARAM, A_FUNCDEF, A_FUNCEXPR,
+    A_TD_BEGIN, A_TD_PARAMS, A_TD_PARENT, A_TD_PARGS,
+    A_METHOD, A_ATTR, A_ATTR_NOINIT,
+    A_PROTO_BEGIN, A_PROTO_METHOD,
 };
 
 /* Codificación de símbolos en el RHS de los datos:
@@ -75,9 +86,18 @@ typedef struct { int lhs; int rhs[16]; int n; } Prod;
  *  ε se expresa con n==0.
  * ============================================================ */
 static const Prod HULK_PRODS[] = {
-    /* Program -> StmtList */
-    { NT_Program, { NT_StmtList }, 1 },
-    /* StmtList -> TermStmt StmtList | ε */
+    /* Program -> TopList */
+    { NT_Program, { NT_TopList }, 1 },
+    /* TopList -> TopItem TopList | ε */
+    { NT_TopList, { NT_TopItem, NT_TopList }, 2 },
+    { NT_TopList, { 0 }, 0 },
+    /* TopItem -> FunctionDef | TypeDef | ProtocolDef | TermStmt
+       (FUNCTION es ambiguo def/expr: lookahead local en el parser) */
+    { NT_TopItem, { NT_FunctionDef }, 1 },
+    { NT_TopItem, { NT_TypeDef }, 1 },
+    { NT_TopItem, { NT_ProtocolDef }, 1 },
+    { NT_TopItem, { NT_TermStmt }, 1 },
+    /* StmtList -> TermStmt StmtList | ε  (solo statements, dentro de bloques) */
     { NT_StmtList, { NT_TermStmt, NT_StmtList }, 2 },
     { NT_StmtList, { 0 }, 0 },
     /* TermStmt -> Stmt SEMICOLON   (el `;` final lo maneja el lexer/EOF) */
@@ -209,15 +229,87 @@ static const Prod HULK_PRODS[] = {
     { NT_For, { T(TOKEN_FOR), T(TOKEN_LPAREN), T(TOKEN_IDENT), T(TOKEN_IN), NT_Expr, T(TOKEN_RPAREN), NT_Body, A_FOR }, 8 },
     /* Block -> LBRACE @blockbegin StmtList RBRACE @block */
     { NT_Block, { T(TOKEN_LBRACE), A_BLOCK_BEGIN, NT_StmtList, T(TOKEN_RBRACE), A_BLOCK }, 5 },
+
+    /* ---- Capa 2: definiciones ---- */
+    /* FunctionDef -> FUNCTION IDENT LPAREN @sent Params RPAREN TypeAnn FuncBody @funcdef */
+    { NT_FunctionDef, { T(TOKEN_FUNCTION), T(TOKEN_IDENT), T(TOKEN_LPAREN), A_SENT,
+                        NT_Params, T(TOKEN_RPAREN), NT_TypeAnn, NT_FuncBody, A_FUNCDEF }, 9 },
+    /* Params -> Param ParamsT | ε ; ParamsT -> COMMA Param ParamsT | ε */
+    { NT_Params, { NT_Param, NT_ParamsT }, 2 },
+    { NT_Params, { 0 }, 0 },
+    { NT_ParamsT, { T(TOKEN_COMMA), NT_Param, NT_ParamsT }, 3 },
+    { NT_ParamsT, { 0 }, 0 },
+    /* Param -> IDENT TypeAnn @param */
+    { NT_Param, { T(TOKEN_IDENT), NT_TypeAnn, A_PARAM }, 3 },
+    /* FuncBody -> ARROW Expr SEMICOLON | Block */
+    { NT_FuncBody, { T(TOKEN_ARROW), NT_Expr, T(TOKEN_SEMICOLON) }, 3 },
+    { NT_FuncBody, { NT_Block }, 1 },
+    /* FuncExprBody -> ARROW Expr | Block   (cuerpo de lambda; sin `;`) */
+    { NT_FuncExprBody, { T(TOKEN_ARROW), NT_Expr }, 2 },
+    { NT_FuncExprBody, { NT_Block }, 1 },
+
+    /* Lambda (FunctionExpr): se empuja por lookahead. Dos formas:
+       function LPAREN @sent Params RPAREN TypeAnn FuncExprBody @funcexpr
+       LPAREN @sent Params RPAREN TypeAnn FuncExprBody @funcexpr */
+    { NT_Lambda, { T(TOKEN_FUNCTION), T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
+                   NT_TypeAnn, NT_FuncExprBody, A_FUNCEXPR }, 8 },
+    { NT_Lambda, { T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
+                   NT_TypeAnn, NT_FuncExprBody, A_FUNCEXPR }, 7 },
+
+    /* TypeDef -> TYPE IDENT @td_begin TypeParams TypeInherit LBRACE TypeBody RBRACE */
+    { NT_TypeDef, { T(TOKEN_TYPE), T(TOKEN_IDENT), A_TD_BEGIN, NT_TypeParams,
+                    NT_TypeInherit, T(TOKEN_LBRACE), NT_TypeBody, T(TOKEN_RBRACE) }, 8 },
+    /* TypeParams -> LPAREN @sent Params RPAREN @td_params | ε */
+    { NT_TypeParams, { T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN), A_TD_PARAMS }, 5 },
+    { NT_TypeParams, { 0 }, 0 },
+    /* TypeInherit -> INHERITS IDENT @td_parent TypeBaseArgs | ε */
+    { NT_TypeInherit, { T(TOKEN_INHERITS), T(TOKEN_IDENT), A_TD_PARENT, NT_TypeBaseArgs }, 4 },
+    { NT_TypeInherit, { 0 }, 0 },
+    /* TypeBaseArgs -> LPAREN @sent Args RPAREN @td_pargs | ε */
+    { NT_TypeBaseArgs, { T(TOKEN_LPAREN), A_SENT, NT_Args, T(TOKEN_RPAREN), A_TD_PARGS }, 5 },
+    { NT_TypeBaseArgs, { 0 }, 0 },
+    /* TypeBody -> TypeMember TypeBody | ε */
+    { NT_TypeBody, { NT_TypeMember, NT_TypeBody }, 2 },
+    { NT_TypeBody, { 0 }, 0 },
+    /* TypeMember -> IDENT TypeMemberTail */
+    { NT_TypeMember, { T(TOKEN_IDENT), NT_TypeMemberTail }, 2 },
+    /* TypeMemberTail -> LPAREN @sent Params RPAREN TypeAnn MethodBody @method
+                       | TypeAnn AttrTail */
+    { NT_TypeMemberTail, { T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
+                           NT_TypeAnn, NT_MethodBody, A_METHOD }, 7 },
+    { NT_TypeMemberTail, { NT_TypeAnn, NT_AttrTail }, 2 },
+    /* AttrTail -> ASSIGN Expr SEMICOLON @attr | SEMICOLON @attr_noinit */
+    { NT_AttrTail, { T(TOKEN_ASSIGN), NT_Expr, T(TOKEN_SEMICOLON), A_ATTR }, 4 },
+    { NT_AttrTail, { T(TOKEN_SEMICOLON), A_ATTR_NOINIT }, 2 },
+    /* MethodBody -> ARROW Expr SEMICOLON | Block */
+    { NT_MethodBody, { T(TOKEN_ARROW), NT_Expr, T(TOKEN_SEMICOLON) }, 3 },
+    { NT_MethodBody, { NT_Block }, 1 },
+
+    /* ProtocolDef -> PROTOCOL IDENT @proto_begin ProtoExt LBRACE ProtoSigs RBRACE */
+    { NT_ProtocolDef, { T(TOKEN_PROTOCOL), T(TOKEN_IDENT), A_PROTO_BEGIN, NT_ProtoExt,
+                        T(TOKEN_LBRACE), NT_ProtoSigs, T(TOKEN_RBRACE) }, 7 },
+    /* ProtoExt -> EXTENDS IDENT @td_parent | ε */
+    { NT_ProtoExt, { T(TOKEN_EXTENDS), T(TOKEN_IDENT), A_TD_PARENT }, 3 },
+    { NT_ProtoExt, { 0 }, 0 },
+    /* ProtoSigs -> ProtoSig ProtoSigs | ε */
+    { NT_ProtoSigs, { NT_ProtoSig, NT_ProtoSigs }, 2 },
+    { NT_ProtoSigs, { 0 }, 0 },
+    /* ProtoSig -> IDENT LPAREN @sent Params RPAREN TypeAnn SEMICOLON @proto_method */
+    { NT_ProtoSig, { T(TOKEN_IDENT), T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
+                     NT_TypeAnn, T(TOKEN_SEMICOLON), A_PROTO_METHOD }, 8 },
 };
 #define HULK_PROD_COUNT ((int)(sizeof(HULK_PRODS)/sizeof(HULK_PRODS[0])))
 
 static const char *NT_NAMES[NT_COUNT] = {
-    "Program","StmtList","TermStmt","Stmt","Expr","Or","Or'","And","And'",
-    "Cmp","Cmp'","Concat","Concat'","Add","Add'","Term","Term'","Factor",
-    "Factor'","Unary","Postfix","Primary","Call","Args","Args'","Let",
+    "Program","TopList","TopItem","StmtList","TermStmt","Stmt","Expr","Or","Or'",
+    "And","And'","Cmp","Cmp'","Concat","Concat'","Add","Add'","Term","Term'",
+    "Factor","Factor'","Unary","Postfix","Primary","Call","Args","Args'","Let",
     "Bindings","Bindings'","Binding","TypeAnn","If","ElifL","Body","While",
-    "For","Block","VecItems","VecItems'"
+    "For","Block","VecItems","VecItems'",
+    "FunctionDef","Params","ParamsT","Param","FuncBody","FuncExprBody",
+    "TypeDef","TypeParams","TypeInherit","TypeBaseArgs","TypeBody","TypeMember",
+    "TypeMemberTail","AttrTail","MethodBody","ProtocolDef","ProtoExt","ProtoSigs",
+    "ProtoSig","Lambda"
 };
 
 /* ============================================================
@@ -256,6 +348,16 @@ static char* sv_pop_lex(SemStack *S) {
     SemVal v = S->s[--S->sp];
     if (v.k != V_LEX) { S->had_error = 1; return NULL; }
     return v.lex;
+}
+
+/* Mira (sin extraer) el nodo en el tope de la pila. Usado por las
+ * definiciones de tipo, que dejan el TypeDefNode como acumulador al fondo
+ * y le agregan miembros sin sacarlo. */
+static HulkNode* sv_peek_node(SemStack *S) {
+    if (S->sp <= 0) { S->had_error = 1; return NULL; }
+    SemVal v = S->s[S->sp - 1];
+    if (v.k != V_NODE) { S->had_error = 1; return NULL; }
+    return v.node;
 }
 
 /* Recolecta los nodos por encima del centinela en una HulkNodeList (en
@@ -396,6 +498,77 @@ static void exec_hulk_action(int act, SemStack *S, int line, int col) {
         case A_BLOCK: { BlockStmtNode *b = hulk_ast_block_stmt(c, line, col);
             sv_collect_to_sentinel(S, &b->statements);
             sv_push_node(S, (HulkNode*)b); break; }
+
+        /* ---- Capa 2: definiciones ---- */
+        case A_PARAM: { char *type = sv_pop_lex(S); char *name = sv_pop_lex(S);
+            sv_push_node(S, (HulkNode*)hulk_ast_var_binding(c, name?name:"?", type, line, col));
+            break; }
+        case A_FUNCDEF: { HulkNode *body = sv_pop_node(S); char *ret = sv_pop_lex(S);
+            HulkNodeList params; hulk_node_list_init(&params);
+            sv_collect_to_sentinel(S, &params);
+            char *name = sv_pop_lex(S);
+            FunctionDefNode *fn = hulk_ast_function_def(c, name?name:"?", ret, line, col);
+            fn->params = params; fn->body = body;
+            sv_push_node(S, (HulkNode*)fn); break; }
+        case A_FUNCEXPR: { HulkNode *body = sv_pop_node(S); char *ret = sv_pop_lex(S);
+            HulkNodeList params; hulk_node_list_init(&params);
+            sv_collect_to_sentinel(S, &params);
+            FunctionExprNode *fn = hulk_ast_function_expr(c, ret, line, col);
+            fn->params = params; fn->body = body;
+            sv_push_node(S, (HulkNode*)fn); break; }
+
+        case A_TD_BEGIN: { char *name = sv_pop_lex(S);
+            sv_push_node(S, (HulkNode*)hulk_ast_type_def(c, name?name:"?", NULL, line, col));
+            break; }
+        case A_PROTO_BEGIN: { char *name = sv_pop_lex(S);
+            TypeDefNode *td = hulk_ast_type_def(c, name?name:"?", NULL, line, col);
+            td->is_protocol = 1;
+            sv_push_node(S, (HulkNode*)td); break; }
+        case A_TD_PARAMS: { HulkNodeList params; hulk_node_list_init(&params);
+            sv_collect_to_sentinel(S, &params);
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) td->params = params;
+            break; }
+        case A_TD_PARENT: { char *p = sv_pop_lex(S);
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td && p) td->parent = hulk_ast_strdup(c, p);
+            break; }
+        case A_TD_PARGS: { HulkNodeList args; hulk_node_list_init(&args);
+            sv_collect_to_sentinel(S, &args);
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) td->parent_args = args;
+            break; }
+        case A_METHOD: { HulkNode *body = sv_pop_node(S); char *ret = sv_pop_lex(S);
+            HulkNodeList params; hulk_node_list_init(&params);
+            sv_collect_to_sentinel(S, &params);
+            char *name = sv_pop_lex(S);
+            MethodDefNode *m = hulk_ast_method_def(c, name?name:"?", ret, line, col);
+            m->params = params; m->body = body;
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) hulk_node_list_push(&td->members, (HulkNode*)m);
+            break; }
+        case A_ATTR: { HulkNode *init = sv_pop_node(S); char *type = sv_pop_lex(S);
+            char *name = sv_pop_lex(S);
+            AttributeDefNode *a = hulk_ast_attribute_def(c, name?name:"?", type, line, col);
+            a->init_expr = init;
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) hulk_node_list_push(&td->members, (HulkNode*)a);
+            break; }
+        case A_ATTR_NOINIT: { char *type = sv_pop_lex(S); char *name = sv_pop_lex(S);
+            AttributeDefNode *a = hulk_ast_attribute_def(c, name?name:"?", type, line, col);
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) hulk_node_list_push(&td->members, (HulkNode*)a);
+            break; }
+        case A_PROTO_METHOD: { char *ret = sv_pop_lex(S);
+            HulkNodeList params; hulk_node_list_init(&params);
+            sv_collect_to_sentinel(S, &params);
+            char *name = sv_pop_lex(S);
+            MethodDefNode *m = hulk_ast_method_def(c, name?name:"?", ret, line, col);
+            m->params = params;
+            m->body = (HulkNode*)hulk_ast_number_lit(c, "0", line, col); /* dummy */
+            TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
+            if (td) hulk_node_list_push(&td->members, (HulkNode*)m);
+            break; }
         default: break;
     }
 }
@@ -467,6 +640,35 @@ static void push_production_actions(int prod_data_idx, GrammarSymbol *stk, int *
 }
 
 /* ============================================================
+ *  Lookahead local (resuelve los puntos no-LL(1) de HULK)
+ * ============================================================ */
+
+/* Tipo del token que sigue a `cur` sin alterar el lexer real. */
+static int peek_next_type(LexerContext lx_copy) {
+    Token t = lexer_next_token(&lx_copy);
+    int ty = t.type;
+    if (t.lexeme) free(t.lexeme);
+    return ty;
+}
+
+/* Con `cur`==LPAREN y `lx` posicionado justo tras ese LPAREN, decide si
+ * lo que sigue es una lambda `(params) =>` escaneando hasta el RPAREN
+ * que balancea y mirando si viene ARROW. No altera el lexer real. */
+static int lookahead_is_lambda(LexerContext lx_copy) {
+    int depth = 1;
+    for (;;) {
+        Token t = lexer_next_token(&lx_copy);
+        int ty = t.type;
+        if (t.lexeme) free(t.lexeme);
+        if (ty == TOKEN_EOF) return 0;
+        if (ty == TOKEN_LPAREN) depth++;
+        else if (ty == TOKEN_RPAREN) {
+            if (--depth == 0) return peek_next_type(lx_copy) == TOKEN_ARROW;
+        }
+    }
+}
+
+/* ============================================================
  *  Parser principal
  * ============================================================ */
 #define PSTACK_MAX 4096
@@ -520,6 +722,30 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
                 had_error = 1;
             }
             continue;
+        }
+
+        /* ---- Lookahead local: puntos no-LL(1) de HULK ----
+         * (a) TopItem con FUNCTION: def `function f(` vs expr `function(`.
+         * (b) Primary con LPAREN: lambda `(x)=>` vs paréntesis `(expr)`.
+         * (c) Primary con FUNCTION: siempre lambda (FunctionExpr). */
+        if (top.type == SYMBOL_NON_TERMINAL) {
+            if (top.id == NT_TopItem && cur.type == TOKEN_FUNCTION) {
+                if (peek_next_type(lx) == TOKEN_IDENT) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_FunctionDef};
+                } else {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_TermStmt};
+                }
+                continue;
+            }
+            if (top.id == NT_Primary && cur.type == TOKEN_FUNCTION) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Lambda};
+                continue;
+            }
+            if (top.id == NT_Primary && cur.type == TOKEN_LPAREN &&
+                lookahead_is_lambda(lx)) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Lambda};
+                continue;
+            }
         }
 
         /* NON_TERMINAL: consultar tabla */
