@@ -13,6 +13,7 @@
 #include "../hulk_tokens.h"
 #include "../hulk_compiler.h"
 #include "../generador_analizadores_lexicos/lexer.h"
+#include "../error_handler.h"
 #include <stdlib.h>
 
 // ============== HELPER ==============
@@ -53,6 +54,14 @@ static void free_tokens(Token *tokens, int count) {
     for (int i = 0; i < count; i++)
         if (tokens[i].lexeme) free(tokens[i].lexeme);
     free(tokens);
+}
+
+static void ignore_expected_log(LogLevel level, const char *module,
+                                const char *fmt, va_list args) {
+    (void)level;
+    (void)module;
+    (void)fmt;
+    (void)args;
 }
 
 // ============== TESTS: KEYWORDS ==============
@@ -183,6 +192,14 @@ TEST(simple_string) {
     int n; Token *t = tokenize("\"hello\"", &n);
     ASSERT_EQ(TOKEN_STRING, t[0].type);
     ASSERT_STR_EQ("\"hello\"", t[0].lexeme);
+    free_tokens(t, n);
+}
+
+TEST(string_invalid_escape) {
+    error_handler_set(ignore_expected_log);
+    int n; Token *t = tokenize("\"hello\\qworld\"", &n);
+    error_handler_set(NULL);
+    ASSERT_EQ(TOKEN_ERROR, t[0].type);
     free_tokens(t, n);
 }
 
@@ -351,6 +368,7 @@ int main(void) {
 
     TEST_SUITE("Strings");
     RUN_TEST(simple_string);
+    RUN_TEST(string_invalid_escape);
 
     TEST_SUITE("Operators");
     RUN_TEST(arithmetic_operators);

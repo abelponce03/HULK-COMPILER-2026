@@ -85,19 +85,43 @@ HulkType* sem_check_while(SemanticContext *c, WhileStmtNode *n) {
  *  For: scope con variable de iteración
  * ============================================================ */
 
+static int sem_type_has_iterator_shape(SemanticContext *c, HulkType *type) {
+    if (!type || type->kind == HULK_TYPE_ERROR) return 0;
+
+    Symbol *next = sem_lookup_member(type, "next");
+    Symbol *current = sem_lookup_member(type, "current");
+    if (!next || !current) return 0;
+    if (next->kind != SYM_METHOD || current->kind != SYM_METHOD) return 0;
+    if (next->type && !sem_type_conforms(next->type, c->t_boolean))
+        return 0;
+
+    return 1;
+}
+
 HulkType* sem_check_for(SemanticContext *c, ForStmtNode *n) {
-    sem_check_expr(c, n->iterable);
-    sem_push_scope(c);
+    HulkType *iter_t = sem_check_expr(c, n->iterable);
     /* La variable de iteración es Number cuando el iterable es range(...)
-     * (el único iterable builtin soportado por ahora); de lo contrario
-     * Object. Esto permite usarla en contextos aritméticos. */
+     * (builtin soportado por codegen). Los tipos de usuario con forma
+     * next/current se aceptan como iterables, aunque su valor actual aún
+     * se mantiene como Object mientras el codegen de generadores esté
+     * pendiente. */
     HulkType *var_t = c->t_object;
+    int is_iterable = 0;
     if (n->iterable && n->iterable->type == NODE_CALL_EXPR) {
         CallExprNode *ce = (CallExprNode*)n->iterable;
         if (ce->callee && ce->callee->type == NODE_IDENT &&
-            strcmp(((IdentNode*)ce->callee)->name, "range") == 0)
+            strcmp(((IdentNode*)ce->callee)->name, "range") == 0) {
+            is_iterable = 1;
             var_t = c->t_number;
+        }
     }
+    if (!is_iterable && sem_type_has_iterator_shape(c, iter_t))
+        is_iterable = 1;
+    if (!is_iterable)
+        sem_error(c, n->iterable ? n->iterable : (HulkNode*)n,
+            "expresión en 'for' no es iterable");
+
+    sem_push_scope(c);
     sem_define(c, n->var_name, SYM_VARIABLE, var_t, (HulkNode*)n);
     HulkType *body_t = sem_check_expr(c, n->body);
     sem_pop_scope(c);

@@ -320,7 +320,12 @@ TEST(while_condition_not_bool) {
 
 TEST(for_valid) {
     ASSERT_EQ(0, analyze(
-        "let items = 42 in for (x in items) print(x);"));
+        "for (x in range(0, 3)) print(x);"));
+}
+
+TEST(for_non_iterable_rejected) {
+    ASSERT_GT(analyze(
+        "for (x in 42) print(x);"), 0);
 }
 
 TEST(block_valid) {
@@ -515,6 +520,7 @@ int main(void) {
     RUN_TEST(while_valid);
     RUN_TEST(while_condition_not_bool);
     RUN_TEST(for_valid);
+    RUN_TEST(for_non_iterable_rejected);
     RUN_TEST(block_valid);
 
     TEST_SUITE("Operadores especiales");

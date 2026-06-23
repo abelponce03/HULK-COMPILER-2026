@@ -25,6 +25,51 @@ static void advance_position(LexerContext *ctx, const char *text, int len) {
     }
 }
 
+static int is_valid_string_escape(char c) {
+    return c == 'n' || c == 't' || c == 'r' || c == '"' || c == '\\';
+}
+
+static int validate_string_literal(const char *text, int len,
+                                   int start_line, int start_col,
+                                   int *err_line, int *err_col,
+                                   const char **msg) {
+    int line = start_line;
+    int col = start_col;
+
+    for (int i = 0; i < len; i++) {
+        char c = text[i];
+
+        if ((c == '\n' || c == '\r') && i > 0 && i < len - 1) {
+            *err_line = line;
+            *err_col = col;
+            *msg = "salto de línea en literal string";
+            return 0;
+        }
+
+        if (c == '\\' && i > 0 && i < len - 1) {
+            char next = text[i + 1];
+            if (!is_valid_string_escape(next)) {
+                *err_line = line;
+                *err_col = col;
+                *msg = "escape inválido en literal string";
+                return 0;
+            }
+            i++;
+            col += 2;
+            continue;
+        }
+
+        if (c == '\n') {
+            line++;
+            col = 1;
+        } else {
+            col++;
+        }
+    }
+
+    return 1;
+}
+
 Token lexer_next_token(LexerContext *ctx) {
     while (1) {
         int state = 0;
@@ -97,6 +142,24 @@ Token lexer_next_token(LexerContext *ctx) {
         memcpy(lexeme, ctx->input + start, len);
         lexeme[len] = '\0';
 
+        if (last_token == TOKEN_STRING) {
+            int err_line = start_line;
+            int err_col = start_col;
+            const char *msg = "literal string inválido";
+
+            if (!validate_string_literal(lexeme, len, start_line, start_col,
+                                         &err_line, &err_col, &msg)) {
+                LOG_ERROR_MSG("lexer", "[%d:%d] %s", err_line, err_col, msg);
+                Token err;
+                err.type = TOKEN_ERROR;
+                err.lexeme = lexeme;
+                err.length = len;
+                err.line = start_line;
+                err.col = start_col;
+                return err;
+            }
+        }
+
         Token tok;
         tok.type   = last_token;
         tok.lexeme = lexeme;
@@ -106,5 +169,4 @@ Token lexer_next_token(LexerContext *ctx) {
         return tok;
     }
 }
-
 
