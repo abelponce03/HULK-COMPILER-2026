@@ -44,6 +44,12 @@ void cg_declare_runtime(CodegenContext *c) {
         LLVMTypeRef ft = LLVMFunctionType(i64, params, 1, 0);
         c->fn_strlen = LLVMAddFunction(c->module, "strlen", ft);
     }
+    /* int strcmp(const char *, const char *) */
+    {
+        LLVMTypeRef params[] = { c->t_i8ptr, c->t_i8ptr };
+        LLVMTypeRef ft = LLVMFunctionType(c->t_i32, params, 2, 0);
+        c->fn_strcmp = LLVMAddFunction(c->module, "strcmp", ft);
+    }
     /* char *strcpy(char *dst, const char *src) */
     {
         LLVMTypeRef params[] = { c->t_i8ptr, c->t_i8ptr };
@@ -391,4 +397,3 @@ void cg_define_runtime_helpers(CodegenContext *c) {
         LLVMBuildRet(c->builder, buf);
     }
 }
-

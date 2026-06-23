@@ -17,6 +17,8 @@
  * en hulk_codegen_internal.h. */
 static LLVMValueRef emit_ident(CodegenContext *c, IdentNode *n);
 static LLVMValueRef emit_short_circuit(CodegenContext *c, BinaryOpNode *n, int is_and);
+static LLVMValueRef emit_equality_op(CodegenContext *c, BinaryOpNode *n,
+                                      LLVMValueRef lv, LLVMValueRef rv);
 static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n);
 static LLVMValueRef emit_unary_op(CodegenContext *c, UnaryOpNode *n);
 static LLVMValueRef emit_concat(CodegenContext *c, ConcatExprNode *n);
@@ -373,6 +375,52 @@ static LLVMValueRef emit_short_circuit(CodegenContext *c, BinaryOpNode *n,
     return phi;
 }
 
+static int is_static_string(HulkNode *n) {
+    return n && n->static_type && strcmp(n->static_type, "String") == 0;
+}
+
+static LLVMValueRef emit_equality_op(CodegenContext *c, BinaryOpNode *n,
+                                      LLVMValueRef lv, LLVMValueRef rv) {
+    int is_eq = (n->op == OP_EQ);
+    LLVMTypeRef lt = LLVMTypeOf(lv);
+    LLVMTypeRef rt = LLVMTypeOf(rv);
+
+    if (is_static_string(n->left) && is_static_string(n->right)) {
+        LLVMValueRef args[2] = { lv, rv };
+        LLVMTypeRef strcmp_params[2] = { c->t_i8ptr, c->t_i8ptr };
+        LLVMTypeRef strcmp_ft = LLVMFunctionType(c->t_i32,
+                                                  strcmp_params, 2, 0);
+        LLVMValueRef cmp = LLVMBuildCall2(c->builder, strcmp_ft,
+                                          c->fn_strcmp, args, 2, "strcmp");
+        LLVMIntPredicate pred = is_eq ? LLVMIntEQ : LLVMIntNE;
+        return LLVMBuildICmp(c->builder, pred, cmp,
+                             LLVMConstInt(c->t_i32, 0, 0),
+                             is_eq ? "streq" : "strneq");
+    }
+
+    if (lt == c->t_double && rt == c->t_double) {
+        LLVMRealPredicate pred = is_eq ? LLVMRealOEQ : LLVMRealUNE;
+        return LLVMBuildFCmp(c->builder, pred, lv, rv,
+                             is_eq ? "eq" : "neq");
+    }
+
+    if (LLVMGetTypeKind(lt) == LLVMIntegerTypeKind &&
+        LLVMGetTypeKind(rt) == LLVMIntegerTypeKind) {
+        LLVMIntPredicate pred = is_eq ? LLVMIntEQ : LLVMIntNE;
+        return LLVMBuildICmp(c->builder, pred, lv, rv,
+                             is_eq ? "eq" : "neq");
+    }
+
+    if (LLVMGetTypeKind(lt) == LLVMPointerTypeKind &&
+        LLVMGetTypeKind(rt) == LLVMPointerTypeKind) {
+        LLVMIntPredicate pred = is_eq ? LLVMIntEQ : LLVMIntNE;
+        return LLVMBuildICmp(c->builder, pred, lv, rv,
+                             is_eq ? "ptreq" : "ptrneq");
+    }
+
+    return LLVMConstInt(c->t_bool, is_eq ? 0 : 1, 0);
+}
+
 static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n) {
     /* Short-circuit for logical operators */
     if (n->op == OP_AND) return emit_short_circuit(c, n, 1);
@@ -401,8 +449,9 @@ static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n) {
         case OP_GT: return LLVMBuildFCmp(c->builder, LLVMRealOGT, lv, rv, "gt");
         case OP_LE: return LLVMBuildFCmp(c->builder, LLVMRealOLE, lv, rv, "le");
         case OP_GE: return LLVMBuildFCmp(c->builder, LLVMRealOGE, lv, rv, "ge");
-        case OP_EQ: return LLVMBuildFCmp(c->builder, LLVMRealOEQ, lv, rv, "eq");
-        case OP_NEQ: return LLVMBuildFCmp(c->builder, LLVMRealUNE, lv, rv, "neq");
+        case OP_EQ:
+        case OP_NEQ:
+            return emit_equality_op(c, n, lv, rv);
 
         /* OP_AND / OP_OR handled above via short-circuit */
         default: break;

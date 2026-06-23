@@ -147,6 +147,7 @@ typedef struct {
     LLVMValueRef      fn_printf;
     LLVMValueRef      fn_snprintf;
     LLVMValueRef      fn_strlen;
+    LLVMValueRef      fn_strcmp;
     LLVMValueRef      fn_strcpy;
     LLVMValueRef      fn_strcat;
     LLVMValueRef      fn_malloc;
