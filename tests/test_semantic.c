@@ -176,6 +176,14 @@ TEST(function_no_annotation) {
     ASSERT_EQ(0, analyze("function f(x) => x; f(5);"));
 }
 
+TEST(function_infers_params_from_call_signature) {
+    ASSERT_EQ(0, analyze(
+        "function min_val(a, b) { if (a < b) a else b; }\n"
+        "function max_val(a, b) { if (a > b) a else b; }\n"
+        "function clamp(val, lo, hi) { min_val(max_val(val, lo), hi); }\n"
+        "clamp(10, 0, 5);"));
+}
+
 TEST(function_expr_closure_capture) {
     ASSERT_EQ(0, analyze(
         "let n: Number = 5, add = function (x: Number): Number => x + n in add(3);"));
@@ -477,6 +485,7 @@ int main(void) {
     TEST_SUITE("Funciones");
     RUN_TEST(function_basic);
     RUN_TEST(function_no_annotation);
+    RUN_TEST(function_infers_params_from_call_signature);
     RUN_TEST(function_expr_closure_capture);
     RUN_TEST(function_expr_returns_function);
     RUN_TEST(function_expr_undefined_capture);
