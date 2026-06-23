@@ -172,6 +172,12 @@ for hulk_file in "$TESTS_DIR/ok/generators/"*.hulk; do
     run_ok_test "$hulk_file" "$TESTS_DIR/ok/generators/$name.expected" "ok/generators" "$name"
 done
 
+for hulk_file in "$TESTS_DIR/ok/test_decorators/"*.hulk; do
+    [ -f "$hulk_file" ] || continue
+    name=$(basename "$hulk_file" .hulk)
+    run_ok_test "$hulk_file" "$TESTS_DIR/ok/test_decorators/$name.expected" "ok/test_decorators" "$name"
+done
+
 for hulk_file in "$TESTS_DIR/errors/lexical/"*.hulk; do
     name=$(basename "$hulk_file" .hulk)
     run_error_test "$hulk_file" "$TESTS_DIR/errors/lexical/$name.exit" "errors/lexical" "$name"
@@ -195,7 +201,7 @@ echo "       GRADING SUMMARY"
 echo "=============================="
 
 REQUIRED=("ok/minimal" "ok/types" "ok/oop" "errors/lexical" "errors/syntactic" "errors/semantic")
-BONUS=("ok/extras" "ok/macros" "ok/arrays" "ok/interfaces" "ok/lambdas" "ok/generators")
+BONUS=("ok/extras" "ok/macros" "ok/arrays" "ok/interfaces" "ok/lambdas" "ok/generators" "ok/test_decorators")
 ALL_GREEN=true
 
 printf "%-28s %s\n" "Category" "Result"

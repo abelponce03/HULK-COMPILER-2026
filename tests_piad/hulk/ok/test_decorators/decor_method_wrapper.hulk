@@ -1,0 +1,13 @@
+function plus10(f: () -> Number): () -> Number {
+    function (): Number -> f() + 10;
+}
+
+type Box(v0: Number) {
+    value: Number = v0;
+
+    decor plus10
+    get(): Number -> self.value;
+}
+
+let b = new Box(5) in
+if (b.get() == 15) print("ok") else print("fail");

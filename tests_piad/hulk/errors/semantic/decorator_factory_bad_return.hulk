@@ -1,0 +1,6 @@
+function bad(delta: Number): Number -> delta;
+
+decor bad(1)
+function f(n: Number): Number -> n;
+
+f(1);

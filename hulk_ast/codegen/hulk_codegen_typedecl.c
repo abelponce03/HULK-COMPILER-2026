@@ -9,6 +9,50 @@
  */
 #include "hulk_codegen_internal.h"
 
+static int method_has_decorators(MethodDefNode *m) {
+    return m && m->decorators.count > 0;
+}
+
+static void method_public_name(char *buf, size_t n,
+                               TypeDefNode *td, MethodDefNode *m) {
+    snprintf(buf, n, "%s_%s", td->name, m->name);
+}
+
+static void method_impl_name(char *buf, size_t n,
+                             TypeDefNode *td, MethodDefNode *m) {
+    if (method_has_decorators(m))
+        snprintf(buf, n, "%s_%s__impl", td->name, m->name);
+    else
+        method_public_name(buf, n, td, m);
+}
+
+static void method_adapter_name(char *buf, size_t n,
+                                TypeDefNode *td, MethodDefNode *m) {
+    snprintf(buf, n, "%s_%s__decor_adapter", td->name, m->name);
+}
+
+static LLVMValueRef load_decorator_callable(CodegenContext *c,
+                                            DecorItemNode *dec) {
+    CGSymbol *sym = dec ? cg_lookup(c->global, dec->name) : NULL;
+    if (!sym) {
+        cg_error(c, (HulkNode*)dec, "decorador '%s' no definido",
+                 dec ? dec->name : "?");
+        return LLVMConstNull(c->t_i8ptr);
+    }
+    if (sym->callable_cell)
+        return LLVMBuildLoad2(c->builder, c->t_i8ptr, sym->callable_cell,
+                              "decor.fn");
+    if (sym->is_func && sym->adapter_fn)
+        return cg_emit_make_closure(c, sym->adapter_fn, NULL, 0);
+    return sym->value;
+}
+
+static void emit_method_decorator_adapter(CodegenContext *c, CGTypeInfo *ti,
+                                          TypeDefNode *td, MethodDefNode *m,
+                                          LLVMValueRef impl_fn);
+static void emit_method_decorator_wrapper(CodegenContext *c, CGTypeInfo *ti,
+                                          TypeDefNode *td, MethodDefNode *m);
+
 void cg_forward_declare_type(CodegenContext *c, TypeDefNode *n) {
     /* Los protocols no tienen representación runtime: solo restringen
      * el typecheck. Se ignoran en codegen. */
@@ -136,13 +180,35 @@ void cg_forward_declare_type(CodegenContext *c, TypeDefNode *n) {
                 LLVMTypeRef inferred = cg_infer_body_return_type(c, m->body);
                 m_ret = inferred ? inferred : c->t_double;
             }
-            char mname[256];
-            snprintf(mname, sizeof(mname), "%s_%s", n->name, m->name);
+            char public_name[256], impl_name[256], adapter_name[256];
+            method_public_name(public_name, sizeof(public_name), n, m);
+            method_impl_name(impl_name, sizeof(impl_name), n, m);
+            method_adapter_name(adapter_name, sizeof(adapter_name), n, m);
             LLVMTypeRef m_ft = LLVMFunctionType(m_ret, m_params, m_argc, 0);
-            LLVMValueRef m_fn = LLVMAddFunction(c->module, mname, m_ft);
+            LLVMValueRef impl_fn = LLVMAddFunction(c->module, impl_name, m_ft);
 
-            cg_define_in(c, c->global, strdup(mname), m_fn, m_ft, 1);
-            cg_type_add_method(ti, m->name, m_fn);
+            cg_define_in(c, c->global, strdup(impl_name), impl_fn, m_ft, 1);
+
+            LLVMValueRef public_fn = impl_fn;
+            if (method_has_decorators(m)) {
+                public_fn = LLVMAddFunction(c->module, public_name, m_ft);
+                cg_define_in(c, c->global, strdup(public_name), public_fn,
+                             m_ft, 1);
+
+                LLVMTypeRef *adapter_params = calloc(m_argc, sizeof(LLVMTypeRef));
+                adapter_params[0] = c->t_i8ptr;
+                for (int j = 0; j < m->params.count; j++)
+                    adapter_params[j + 1] = m_params[j + 1];
+                LLVMTypeRef adapter_ft = LLVMFunctionType(m_ret,
+                    adapter_params, m_argc, 0);
+                LLVMValueRef adapter_fn = LLVMAddFunction(
+                    c->module, adapter_name, adapter_ft);
+                cg_define_in(c, c->global, strdup(adapter_name), adapter_fn,
+                             adapter_ft, 1);
+                free(adapter_params);
+            }
+
+            cg_type_add_method(ti, m->name, public_fn);
             cg_method_slot(c, m->name);  /* asigna slot global si no existe */
 
             free(m_params);
@@ -287,7 +353,7 @@ void cg_emit_type_def(CodegenContext *c, TypeDefNode *n) {
             MethodDefNode *m = (MethodDefNode*)n->members.items[i];
 
             char mname[256];
-            snprintf(mname, sizeof(mname), "%s_%s", n->name, m->name);
+            method_impl_name(mname, sizeof(mname), n, m);
             CGSymbol *msym = cg_lookup(c->global, mname);
             if (!msym) continue;
 
@@ -342,10 +408,167 @@ void cg_emit_type_def(CodegenContext *c, TypeDefNode *n) {
             c->current_fn = saved_fn;
             c->self_ptr = NULL;
             c->current_method_name = prev_method_name;
+
+            if (method_has_decorators(m)) {
+                emit_method_decorator_adapter(c, ti, n, m, m_fn);
+                emit_method_decorator_wrapper(c, ti, n, m);
+            }
         }
     }
 
     c->enclosing_type = saved_type;
+}
+
+static void emit_method_decorator_adapter(CodegenContext *c, CGTypeInfo *ti,
+                                          TypeDefNode *td, MethodDefNode *m,
+                                          LLVMValueRef impl_fn) {
+    char adapter_name[256];
+    method_adapter_name(adapter_name, sizeof(adapter_name), td, m);
+    CGSymbol *adapter_sym = cg_lookup(c->global, adapter_name);
+    if (!adapter_sym || adapter_sym->adapter_emitted) return;
+    adapter_sym->adapter_emitted = 1;
+
+    LLVMValueRef adapter_fn = adapter_sym->value;
+    LLVMValueRef saved_fn = c->current_fn;
+    c->current_fn = adapter_fn;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
+        c->llvm_ctx, adapter_fn, "entry");
+    LLVMPositionBuilderAtEnd(c->builder, entry);
+
+    LLVMValueRef env = LLVMGetParam(adapter_fn, 0);
+    LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+    LLVMValueRef offset = LLVMConstInt(i64, 8, 0);
+    LLVMValueRef slot = LLVMBuildInBoundsGEP2(
+        c->builder, LLVMInt8TypeInContext(c->llvm_ctx),
+        env, &offset, 1, "method.self.slot");
+    LLVMValueRef self = LLVMBuildLoad2(c->builder, ti->ptr_type,
+                                       slot, "method.self");
+
+    int argc = m->params.count + 1;
+    LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
+    argv[0] = self;
+    for (int i = 0; i < m->params.count; i++)
+        argv[i + 1] = LLVMGetParam(adapter_fn, i + 1);
+
+    LLVMTypeRef impl_ft = LLVMGlobalGetValueType(impl_fn);
+    LLVMTypeRef ret_t = LLVMGetReturnType(impl_ft);
+    LLVMValueRef result = LLVMBuildCall2(
+        c->builder, impl_ft, impl_fn, argv, argc,
+        ret_t == c->t_void ? "" : "method.impl");
+    if (ret_t == c->t_void)
+        LLVMBuildRetVoid(c->builder);
+    else
+        LLVMBuildRet(c->builder, result);
+
+    free(argv);
+    c->current_fn = saved_fn;
+}
+
+static void emit_method_decorator_wrapper(CodegenContext *c, CGTypeInfo *ti,
+                                          TypeDefNode *td, MethodDefNode *m) {
+    char public_name[256], adapter_name[256];
+    method_public_name(public_name, sizeof(public_name), td, m);
+    method_adapter_name(adapter_name, sizeof(adapter_name), td, m);
+
+    CGSymbol *wrapper_sym = cg_lookup(c->global, public_name);
+    CGSymbol *adapter_sym = cg_lookup(c->global, adapter_name);
+    if (!wrapper_sym || !adapter_sym) return;
+
+    LLVMValueRef wrapper_fn = wrapper_sym->value;
+    LLVMValueRef saved_fn = c->current_fn;
+    LLVMValueRef saved_self = c->self_ptr;
+    CGTypeInfo *saved_type = c->enclosing_type;
+    const char *saved_method = c->current_method_name;
+
+    c->current_fn = wrapper_fn;
+    c->self_ptr = LLVMGetParam(wrapper_fn, 0);
+    c->enclosing_type = ti;
+    c->current_method_name = m->name;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
+        c->llvm_ctx, wrapper_fn, "entry");
+    LLVMPositionBuilderAtEnd(c->builder, entry);
+
+    cg_push_scope(c);
+
+    CGSymbol *self_sym = cg_define(c, "self", c->self_ptr, ti->ptr_type, 0);
+    if (self_sym) self_sym->hulk_type = ti;
+
+    for (int i = 0; i < m->params.count; i++) {
+        VarBindingNode *p = (VarBindingNode*)m->params.items[i];
+        LLVMValueRef param_val = LLVMGetParam(wrapper_fn, i + 1);
+        LLVMTypeRef pt = LLVMTypeOf(param_val);
+        LLVMValueRef alloca = cg_create_entry_alloca(c, pt, p->name);
+        LLVMBuildStore(c->builder, param_val, alloca);
+        CGSymbol *psym = cg_define(c, p->name, alloca, pt, 0);
+        if (psym && p->type_annotation) {
+            CGTypeInfo *pti = cg_type_info_find(c, p->type_annotation);
+            if (pti) psym->hulk_type = pti;
+        }
+    }
+
+    LLVMValueRef self_caps[1] = { c->self_ptr };
+    LLVMValueRef current = cg_emit_make_closure(c, adapter_sym->value,
+                                                self_caps, 1);
+
+    for (int i = m->decorators.count - 1; i >= 0; i--) {
+        DecorItemNode *dec = (DecorItemNode*)m->decorators.items[i];
+        LLVMValueRef dec_callable = load_decorator_callable(c, dec);
+
+        if (dec->args.count > 0) {
+            int argc = dec->args.count;
+            LLVMValueRef *argv = calloc(argc, sizeof(LLVMValueRef));
+            LLVMTypeRef *argt = calloc(argc, sizeof(LLVMTypeRef));
+            for (int j = 0; j < argc; j++) {
+                argv[j] = cg_emit_expr(c, dec->args.items[j]);
+                argt[j] = LLVMTypeOf(argv[j]);
+            }
+            LLVMValueRef factory = cg_emit_call_closure_raw(
+                c, dec_callable, argv, argt, argc, c->t_i8ptr,
+                "method.decor.factory");
+            free(argv);
+            free(argt);
+
+            LLVMValueRef target_arg[1] = { current };
+            LLVMTypeRef target_t[1] = { c->t_i8ptr };
+            current = cg_emit_call_closure_raw(
+                c, factory, target_arg, target_t, 1, c->t_i8ptr,
+                "method.decor");
+        } else {
+            LLVMValueRef target_arg[1] = { current };
+            LLVMTypeRef target_t[1] = { c->t_i8ptr };
+            current = cg_emit_call_closure_raw(
+                c, dec_callable, target_arg, target_t, 1, c->t_i8ptr,
+                "method.decor");
+        }
+    }
+
+    int argc = m->params.count;
+    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
+    LLVMTypeRef *argt = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
+    for (int i = 0; i < argc; i++) {
+        argv[i] = LLVMGetParam(wrapper_fn, i + 1);
+        argt[i] = LLVMTypeOf(argv[i]);
+    }
+
+    LLVMTypeRef wrapper_ft = LLVMGlobalGetValueType(wrapper_fn);
+    LLVMTypeRef ret_t = LLVMGetReturnType(wrapper_ft);
+    LLVMValueRef result = cg_emit_call_closure_raw(
+        c, current, argv, argt, argc, ret_t, "method.decor.call");
+    if (ret_t == c->t_void)
+        LLVMBuildRetVoid(c->builder);
+    else
+        LLVMBuildRet(c->builder, result);
+
+    free(argv);
+    free(argt);
+    cg_pop_scope(c);
+
+    c->current_fn = saved_fn;
+    c->self_ptr = saved_self;
+    c->enclosing_type = saved_type;
+    c->current_method_name = saved_method;
 }
 
 void cg_emit_rtti_globals(CodegenContext *c) {

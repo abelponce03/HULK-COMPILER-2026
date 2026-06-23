@@ -1,0 +1,5 @@
+function apply_twice(x: Number, f: (Number) -> Number): Number -> f(f(x));
+
+function inc(n: Number): Number -> n + 1;
+
+if (apply_twice(3, inc) == 5) print("ok") else print("fail");

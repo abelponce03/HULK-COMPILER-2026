@@ -175,6 +175,10 @@ LLVMValueRef cg_emit_destruct(CodegenContext *c, DestructAssignNode *n) {
         IdentNode *id = (IdentNode*)n->target;
         CGSymbol *sym = cg_lookup(c->current, id->name);
         if (sym) {
+            if (sym->callable_cell) {
+                LLVMBuildStore(c->builder, val, sym->callable_cell);
+                return val;
+            }
             if (sym->is_func) {
                 /* Reasignar función (decoradores) */
                 sym->value   = val;

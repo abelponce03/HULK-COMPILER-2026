@@ -39,6 +39,10 @@ typedef struct CGSymbol_s {
     LLVMTypeRef    type;      /* tipo LLVM del valor */
     int            is_func;   /* 1 si es función */
     CGTypeInfo    *hulk_type; /* tipo HULK del valor (NULL si primitivo) */
+    LLVMValueRef   callable_cell; /* i8* global mutable para funciones HULK */
+    LLVMValueRef   adapter_fn;    /* closure adapter: (env, args...) -> ret */
+    LLVMTypeRef    adapter_type;
+    int            adapter_emitted;
 } CGSymbol;
 
 typedef struct CGScope_s CGScope;
@@ -233,6 +237,15 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node);
 /* Llamadas y conversión a string  (hulk_codegen_call.c) */
 LLVMValueRef cg_emit_call(CodegenContext *c, CallExprNode *n);
 LLVMValueRef cg_emit_to_string(CodegenContext *c, HulkNode *node);
+LLVMValueRef cg_emit_make_closure(CodegenContext *c, LLVMValueRef fn,
+                                  LLVMValueRef *captures, int capture_count);
+LLVMValueRef cg_emit_call_closure_raw(CodegenContext *c,
+                                      LLVMValueRef closure,
+                                      LLVMValueRef *user_args,
+                                      LLVMTypeRef *user_arg_types,
+                                      int user_argc,
+                                      LLVMTypeRef ret_t,
+                                      const char *name);
 
 /* OOP: acceso a miembros, new, self, asignación, tipo estático
  * (hulk_codegen_oop.c) */

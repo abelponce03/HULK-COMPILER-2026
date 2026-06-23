@@ -1,0 +1,4 @@
+decor missing_decorator
+function f(n: Number): Number -> n;
+
+f(1);

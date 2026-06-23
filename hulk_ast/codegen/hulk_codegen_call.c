@@ -68,24 +68,69 @@ static LLVMValueRef emit_array_init(CodegenContext *c,
     return raw;
 }
 
+LLVMValueRef cg_emit_make_closure(CodegenContext *c, LLVMValueRef fn,
+                                  LLVMValueRef *captures, int capture_count) {
+    LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+    LLVMValueRef bytes = LLVMConstInt(i64, 8 * (capture_count + 1), 0);
+    LLVMTypeRef malloc_params[1] = { i64 };
+    LLVMTypeRef malloc_ft = LLVMFunctionType(c->t_i8ptr, malloc_params, 1, 0);
+    LLVMValueRef closure = LLVMBuildCall2(c->builder, malloc_ft,
+                                          c->fn_malloc, &bytes, 1,
+                                          "closure");
+
+    LLVMBuildStore(c->builder, fn, closure);
+    for (int i = 0; i < capture_count; i++) {
+        LLVMValueRef offset = LLVMConstInt(i64, 8 * (i + 1), 0);
+        LLVMValueRef slot = LLVMBuildInBoundsGEP2(
+            c->builder, LLVMInt8TypeInContext(c->llvm_ctx),
+            closure, &offset, 1, "closure.cap.slot");
+        LLVMBuildStore(c->builder, captures[i], slot);
+    }
+    return closure;
+}
+
+LLVMValueRef cg_emit_call_closure_raw(CodegenContext *c,
+                                      LLVMValueRef closure,
+                                      LLVMValueRef *user_args,
+                                      LLVMTypeRef *user_arg_types,
+                                      int user_argc,
+                                      LLVMTypeRef ret_t,
+                                      const char *name) {
+    int argc = user_argc + 1;
+    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
+    LLVMTypeRef *argt = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
+    argv[0] = closure;
+    argt[0] = c->t_i8ptr;
+    for (int i = 0; i < user_argc; i++) {
+        argv[i + 1] = user_args[i];
+        argt[i + 1] = user_arg_types ? user_arg_types[i] : LLVMTypeOf(user_args[i]);
+    }
+
+    LLVMValueRef fn_ptr = LLVMBuildLoad2(c->builder, c->t_i8ptr,
+                                         closure, "closure.fn");
+    if (!ret_t) ret_t = c->t_double;
+    LLVMTypeRef fn_type = LLVMFunctionType(ret_t, argt, argc, 0);
+    const char *call_name = (ret_t == c->t_void) ? "" :
+        (name ? name : "closure.call");
+    LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type, fn_ptr,
+                                         argv, argc, call_name);
+    free(argv);
+    free(argt);
+    return result;
+}
+
 static LLVMValueRef emit_closure_call(CodegenContext *c, CallExprNode *n,
                                       LLVMValueRef closure) {
     int argc = n->args.count;
-    LLVMValueRef *argv = calloc(argc + 1, sizeof(LLVMValueRef));
-    LLVMTypeRef *argt = calloc(argc + 1, sizeof(LLVMTypeRef));
-    argv[0] = closure;
-    argt[0] = c->t_i8ptr;
+    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
+    LLVMTypeRef *argt = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
     for (int i = 0; i < argc; i++) {
-        argv[i + 1] = cg_emit_expr(c, n->args.items[i]);
-        argt[i + 1] = LLVMTypeOf(argv[i + 1]);
+        argv[i] = cg_emit_expr(c, n->args.items[i]);
+        argt[i] = LLVMTypeOf(argv[i]);
     }
-    LLVMValueRef fn_ptr = LLVMBuildLoad2(c->builder, c->t_i8ptr, closure, "closure.fn");
     LLVMTypeRef ret_t = cg_llvm_type_for_name(c, n->base.static_type);
-    if (!ret_t) ret_t = c->t_double;
-    LLVMTypeRef fn_type = LLVMFunctionType(ret_t, argt, argc + 1, 0);
-    const char *name = (ret_t == c->t_void) ? "" : "closure.call";
-    LLVMValueRef result = LLVMBuildCall2(c->builder, fn_type, fn_ptr,
-                                         argv, argc + 1, name);
+    LLVMValueRef result = cg_emit_call_closure_raw(
+        c, closure, argv, argt, argc, ret_t, "closure.call");
     free(argv);
     free(argt);
     return result;
@@ -239,6 +284,29 @@ LLVMValueRef cg_emit_call(CodegenContext *c, CallExprNode *n) {
         if (!sym) {
             cg_error(c, (HulkNode*)n, "función '%s' no definida", id->name);
             return LLVMConstReal(c->t_double, 0.0);
+        }
+
+        if (sym->callable_cell) {
+            LLVMValueRef closure = LLVMBuildLoad2(c->builder, c->t_i8ptr,
+                                                  sym->callable_cell,
+                                                  "fn.closure");
+            int argc = n->args.count;
+            LLVMValueRef *argv = calloc(argc > 0 ? argc : 1,
+                                        sizeof(LLVMValueRef));
+            LLVMTypeRef *argt = calloc(argc > 0 ? argc : 1,
+                                       sizeof(LLVMTypeRef));
+            for (int i = 0; i < argc; i++) {
+                argv[i] = cg_emit_expr(c, n->args.items[i]);
+                argt[i] = LLVMTypeOf(argv[i]);
+            }
+            LLVMTypeRef ret_t = sym->type
+                ? LLVMGetReturnType(sym->type)
+                : cg_llvm_type_for_name(c, n->base.static_type);
+            LLVMValueRef result = cg_emit_call_closure_raw(
+                c, closure, argv, argt, argc, ret_t, "fn.call");
+            free(argv);
+            free(argt);
+            return result;
         }
 
         LLVMValueRef fn_val = sym->value;

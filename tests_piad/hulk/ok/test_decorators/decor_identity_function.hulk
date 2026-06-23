@@ -1,0 +1,8 @@
+function identity(f: (Number) -> Number): (Number) -> Number {
+    f;
+}
+
+decor identity
+function square(n: Number): Number -> n * n;
+
+if (square(6) == 36) print("ok") else print("fail");

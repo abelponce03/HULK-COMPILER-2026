@@ -1,0 +1,10 @@
+function add(delta: Number) {
+    function (f: (Number) -> Number): (Number) -> Number {
+        function (x: Number): Number -> f(x) + delta;
+    };
+}
+
+decor add(7)
+function id(n: Number): Number -> n;
+
+if (id(5) == 12) print("ok") else print("fail");

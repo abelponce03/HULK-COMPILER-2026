@@ -64,8 +64,23 @@ static void collect_lambda_captures(CodegenContext *c, HulkNode *node,
                 name_list_add(out, name);
             return;
         }
-        case NODE_FUNCTION_EXPR:
-            return; /* las lambdas anidadas capturan por su cuenta */
+        case NODE_FUNCTION_EXPR: {
+            /* Una lambda anidada captura por su cuenta, pero la lambda
+             * exterior debe conservar cualquier variable externa que esa
+             * lambda interior vaya a necesitar cuando se construya. */
+            FunctionExprNode *fn = (FunctionExprNode*)node;
+            NameList nested = *params;
+            nested.names = NULL; nested.count = 0; nested.cap = 0;
+            for (int i = 0; i < params->count; i++)
+                name_list_add(&nested, params->names[i]);
+            for (int i = 0; i < fn->params.count; i++) {
+                VarBindingNode *p = (VarBindingNode*)fn->params.items[i];
+                name_list_add(&nested, p->name);
+            }
+            collect_lambda_captures(c, fn->body, &nested, out);
+            free(nested.names);
+            return;
+        }
         case NODE_BINARY_OP: {
             BinaryOpNode *b = (BinaryOpNode*)node;
             collect_lambda_captures(c, b->left, params, out);
@@ -532,6 +547,9 @@ static LLVMValueRef emit_ident(CodegenContext *c, IdentNode *n) {
         cg_error(c, (HulkNode*)n, "variable '%s' no definida", n->name);
         return LLVMConstReal(c->t_double, 0.0);
     }
+    if (sym->is_func && sym->callable_cell)
+        return LLVMBuildLoad2(c->builder, c->t_i8ptr,
+                              sym->callable_cell, n->name);
     if (sym->is_func) return sym->value;
 
     /* Variable: cargar desde alloca */

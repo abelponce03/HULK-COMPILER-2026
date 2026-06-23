@@ -17,6 +17,9 @@
 static void emit_function_def(CodegenContext *c, FunctionDefNode *n);
 static void forward_declare_function(CodegenContext *c, FunctionDefNode *n);
 static void emit_decor_block(CodegenContext *c, DecorBlockNode *n);
+static void emit_function_adapter(CodegenContext *c, FunctionDefNode *n,
+                                  CGSymbol *sym);
+static void init_function_closure_cells(CodegenContext *c);
 
 void cg_emit_program(CodegenContext *c, HulkNode *program) {
     if (!program || program->type != NODE_PROGRAM) {
@@ -87,6 +90,8 @@ void cg_emit_program(CodegenContext *c, HulkNode *program) {
     LLVMPositionBuilderAtEnd(c->builder, entry);
 
     cg_push_scope(c);
+
+    init_function_closure_cells(c);
 
     for (int i = 0; i < prog->declarations.count; i++) {
         HulkNode *decl = prog->declarations.items[i];
@@ -184,7 +189,31 @@ static void forward_declare_function(CodegenContext *c, FunctionDefNode *n) {
     LLVMValueRef fn = LLVMAddFunction(c->module, n->name, fn_type);
 
     /* Registrar en scope global */
-    cg_define_in(c, c->global, n->name, fn, fn_type, 1);
+    CGSymbol *sym = cg_define_in(c, c->global, n->name, fn, fn_type, 1);
+    if (sym) {
+        char adapter_name[256];
+        snprintf(adapter_name, sizeof(adapter_name), "%s__closure_adapter",
+                 n->name);
+
+        LLVMTypeRef *adapter_params = calloc(argc + 1, sizeof(LLVMTypeRef));
+        adapter_params[0] = c->t_i8ptr;
+        for (int i = 0; i < argc; i++)
+            adapter_params[i + 1] = param_types[i];
+        LLVMTypeRef adapter_type = LLVMFunctionType(ret_t, adapter_params,
+                                                    argc + 1, 0);
+        LLVMValueRef adapter_fn = LLVMAddFunction(c->module, adapter_name,
+                                                  adapter_type);
+
+        char cell_name[256];
+        snprintf(cell_name, sizeof(cell_name), "%s__closure_cell", n->name);
+        LLVMValueRef cell = LLVMAddGlobal(c->module, c->t_i8ptr, cell_name);
+        LLVMSetInitializer(cell, LLVMConstNull(c->t_i8ptr));
+
+        sym->callable_cell = cell;
+        sym->adapter_fn = adapter_fn;
+        sym->adapter_type = adapter_type;
+        free(adapter_params);
+    }
 
     free(param_types);
 }
@@ -233,6 +262,50 @@ static void emit_function_def(CodegenContext *c, FunctionDefNode *n) {
 
     cg_pop_scope(c);
     c->current_fn = saved_fn;
+
+    emit_function_adapter(c, n, sym);
+}
+
+static void emit_function_adapter(CodegenContext *c, FunctionDefNode *n,
+                                  CGSymbol *sym) {
+    if (!sym || !sym->adapter_fn || sym->adapter_emitted) return;
+    sym->adapter_emitted = 1;
+
+    LLVMValueRef saved_fn = c->current_fn;
+    c->current_fn = sym->adapter_fn;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
+        c->llvm_ctx, sym->adapter_fn, "entry");
+    LLVMPositionBuilderAtEnd(c->builder, entry);
+
+    int argc = n->params.count;
+    LLVMValueRef *argv = calloc(argc > 0 ? argc : 1, sizeof(LLVMValueRef));
+    for (int i = 0; i < argc; i++)
+        argv[i] = LLVMGetParam(sym->adapter_fn, i + 1);
+
+    LLVMTypeRef fn_type = LLVMGlobalGetValueType(sym->value);
+    LLVMTypeRef ret_t = LLVMGetReturnType(fn_type);
+    LLVMValueRef result = LLVMBuildCall2(
+        c->builder, fn_type, sym->value, argv, argc,
+        ret_t == c->t_void ? "" : "adapter.call");
+    if (ret_t == c->t_void)
+        LLVMBuildRetVoid(c->builder);
+    else
+        LLVMBuildRet(c->builder, result);
+
+    free(argv);
+    c->current_fn = saved_fn;
+}
+
+static void init_function_closure_cells(CodegenContext *c) {
+    if (!c->global) return;
+    for (int i = 0; i < c->global->sym_count; i++) {
+        CGSymbol *sym = c->global->symbols[i];
+        if (!sym || !sym->callable_cell || !sym->adapter_fn) continue;
+        LLVMValueRef closure = cg_emit_make_closure(c, sym->adapter_fn,
+                                                    NULL, 0);
+        LLVMBuildStore(c->builder, closure, sym->callable_cell);
+    }
 }
 
 static void emit_decor_block(CodegenContext *c, DecorBlockNode *n) {

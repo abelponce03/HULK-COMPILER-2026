@@ -1,0 +1,11 @@
+function trace(f: (Number) -> Number): (Number) -> Number {
+    function (x: Number): Number {
+        print("call");
+        f(x);
+    };
+}
+
+decor trace
+function fact(n: Number): Number -> if (n == 0) 1 else n * fact(n - 1);
+
+if (fact(3) == 6) print("ok") else print("fail");

@@ -1,0 +1,8 @@
+function string_identity(f: (String) -> String): (String) -> String {
+    f;
+}
+
+decor string_identity
+function inc(n: Number): Number -> n + 1;
+
+inc(1);

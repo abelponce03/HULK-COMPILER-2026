@@ -1,0 +1,12 @@
+function plus10(f: (Number) -> Number): (Number) -> Number {
+    function (x: Number): Number -> f(x) + 10;
+}
+
+function times2(f: (Number) -> Number): (Number) -> Number {
+    function (x: Number): Number -> f(x) * 2;
+}
+
+decor plus10, times2
+function seed(n: Number): Number -> n;
+
+if (seed(5) == 20) print("ok") else print("fail");
