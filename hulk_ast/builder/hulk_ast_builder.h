@@ -1,12 +1,11 @@
 /*
- * hulk_ast_builder.h — Construcción del AST a partir del flujo de tokens
+ * hulk_ast_builder.h — API pública para construir el AST
  *
- * Implementa un parser de descenso recursivo que sigue la gramática
- * LL(1) definida en grammar.ll1 y construye el árbol HulkNode*.
+ * Expone la fachada estable hulk_build_ast. La implementación vigente es
+ * el parser LL(1) dirigido por tabla de hulk_ll1_builder.
  *
  * Principios SOLID:
  *   SRP — Solo construye el AST; no valida semántica ni genera código.
- *   OCP — No modifica el parser LL(1) existente; es un módulo aparte.
  *   DIP — Depende de la abstracción del lexer (LexerContext/DFA).
  *
  * Uso:
@@ -23,7 +22,8 @@
 #include "../core/hulk_ast.h"
 #include "../../generador_analizadores_lexicos/afd.h"
 
-// Construye el AST del programa HULK a partir del código fuente.
+// Construye el AST del programa HULK a partir del código fuente usando
+// el parser LL(1) principal.
 //
 //   ctx   — arena que poseerá todos los nodos (el caller la libera).
 //   dfa   — DFA del lexer (ya construido por hulk_compiler_init).

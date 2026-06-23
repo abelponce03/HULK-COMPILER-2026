@@ -2,9 +2,9 @@
 
 ## Resumen
 
-- Fecha de actualizacion: `2026-06-23 15:03:08 CDT`
+- Fecha de actualizacion: `2026-06-23 15:36:06 CDT`
 - Workspace: `/home/josue/HULK-COMPILER-2026`
-- Parser principal: `hulk_build_ast` delega en `hulk_ll1_build_ast`.
+- Parser principal: LL(1) unicamente; `hulk_build_ast` es una fachada minima sobre `hulk_ll1_build_ast`.
 - Runner usado: `bash <(tr -d '\r' < tests_piad/hulk/run_tests.sh) "$PWD" "$PWD/tests_piad/hulk"`
 - Resultado global PIAD: `RESULT: ALL_PASS`
 
@@ -12,9 +12,10 @@
 
 | Comando | Resultado |
 |---|---|
+| `make clean` | PASS |
 | `make build` | PASS |
 | `make test-all` | PASS |
-| `make test-ll1-builder` | PASS |
+| `./probar/spec_check/spec_runner tests/hulk_programs` | `26/26 PASS` |
 | `bash <(tr -d '\r' < tests_piad/hulk/run_tests.sh) "$PWD" "$PWD/tests_piad/hulk"` | PASS |
 
 ## Resumen por Categoria PIAD
@@ -37,5 +38,6 @@
 ## Notas
 
 - El script `tests_piad/hulk/run_tests.sh` conserva finales CRLF; por eso se invoca con `tr -d '\r'`.
-- `make test-all` tambien queda verde con el LL(1) como parser principal.
+- `make test-all` incluye `test-ll1-builder` y queda verde con el LL(1) como unico parser AST enlazado.
+- `tests/hulk_programs` fue validado con el runner exploratorio compilado contra los objetos actuales, sin los modulos `parse_*` del parser descendente.
 - La suite PIAD completa cubre `115` archivos `.hulk` en este arbol.

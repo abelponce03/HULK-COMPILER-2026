@@ -25,11 +25,6 @@ LIB_OBJS = hulk_tokens.o \
             $(HULK_AST_DIR)/printer/hulk_ast_printer.o \
             $(HULK_AST_DIR)/builder/hulk_ast_builder.o \
             $(HULK_AST_DIR)/builder/hulk_ll1_builder.o \
-            $(HULK_AST_DIR)/builder/parse_helpers.o \
-            $(HULK_AST_DIR)/builder/parse_expressions.o \
-            $(HULK_AST_DIR)/builder/parse_statements.o \
-            $(HULK_AST_DIR)/builder/parse_definitions.o \
-            $(HULK_AST_DIR)/builder/parse_primary.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_scope.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_types.o \
             $(HULK_AST_DIR)/semantic/hulk_semantic_infer.o \
@@ -195,7 +190,7 @@ clean:
 # Reconstruir desde cero
 rebuild: clean hulk
 
-.PHONY: all build run clean rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen test-feature-decorators-closures
+.PHONY: all build run clean rebuild test-build test-all test-lexer test-parser test-ast test-hulk-ast test-ast-builder test-semantic test-codegen test-feature-decorators-closures test-ll1-builder
 
 # Auto-generated dependency files
 -include $(OBJS:.o=.d)

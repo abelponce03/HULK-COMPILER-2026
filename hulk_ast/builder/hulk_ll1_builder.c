@@ -550,6 +550,7 @@ static void exec_hulk_action(int act, SemStack *S, int line, int col) {
             sv_push_node(S, (HulkNode*)ne); break; }
         case A_BASE: { BaseCallNode *bc = hulk_ast_base_call(c, line, col);
             sv_collect_to_sentinel(S, &bc->args);
+            (void)sv_pop_lex(S); /* keyword `base` */
             sv_push_node(S, (HulkNode*)bc); break; }
         case A_VEC: { VectorLitNode *v = hulk_ast_vector_lit(c, line, col);
             sv_collect_to_sentinel(S, &v->items);
