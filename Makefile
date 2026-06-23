@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g -D_GNU_SOURCE -MMD -MP
-LDFLAGS = -lfl
+LDFLAGS =
 
 # LLVM flags (para módulo codegen)
 LLVM_CFLAGS  = $(shell llvm-config-18 --cflags 2>/dev/null || llvm-config --cflags)
