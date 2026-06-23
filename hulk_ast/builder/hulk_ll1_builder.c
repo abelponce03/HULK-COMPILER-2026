@@ -12,9 +12,8 @@
  * resultados; las acciones construyen los nodos del AST. Las listas de
  * longitud variable (args, bindings, …) usan el patrón centinela.
  *
- * Estado: CAPA 1 — expresiones, primary, let/if/while/for/block, llamadas.
- * Las definiciones (function/type/protocol/decor) se añaden en capas
- * posteriores. Selector en runtime: ver hulk_build_ast / HULK_PARSER.
+ * Estado: CAPA 3 — parser LL(1) funcional con definiciones, decoradores,
+ * lambdas, tipos/protocolos, arrays/iteradores y `define`.
  */
 
 #include "hulk_ll1_builder.h"
@@ -31,7 +30,7 @@
  *  No-terminales
  * ============================================================ */
 enum {
-    NT_Program, NT_TopList, NT_TopItem, NT_StmtList, NT_TermStmt, NT_Stmt,
+    NT_Program, NT_TopList, NT_TopItem, NT_OptSemi, NT_StmtList, NT_TermStmt, NT_Stmt,
     NT_Expr, NT_Or, NT_OrP, NT_And, NT_AndP, NT_Cmp, NT_CmpP,
     NT_Concat, NT_ConcatP, NT_Add, NT_AddP, NT_Term, NT_TermP,
     NT_Factor, NT_FactorP, NT_Unary, NT_Postfix,
@@ -45,6 +44,11 @@ enum {
     NT_TypeDef, NT_TypeParams, NT_TypeInherit, NT_TypeBaseArgs,
     NT_TypeBody, NT_TypeMember, NT_TypeMemberTail, NT_AttrTail, NT_MethodBody,
     NT_ProtocolDef, NT_ProtoExt, NT_ProtoSigs, NT_ProtoSig,
+    NT_DecorBlock, NT_DecorMore, NT_DecorTarget,
+    NT_DecorItems, NT_DecorItemsT, NT_DecorItem, NT_DecorArgs,
+    NT_DecorPrefix,
+    NT_TypeRef, NT_TypeSuffix, NT_TypeList, NT_TypeListT,
+    NT_NewTail, NT_ArrayTypeSuffix, NT_ArrayInit,
     NT_Lambda,
     NT_COUNT
 };
@@ -67,6 +71,9 @@ enum {
     A_TD_BEGIN, A_TD_PARAMS, A_TD_PARENT, A_TD_PARGS,
     A_METHOD, A_ATTR, A_ATTR_NOINIT,
     A_PROTO_BEGIN, A_PROTO_METHOD,
+    A_DECOR_ITEM, A_DECOR_BLOCK, A_TYPE_FUNC,
+    /* Capa 3 */
+    A_TYPE_ARRAY, A_TYPE_ITER, A_ARRAY_NEW, A_ARRAY_INIT,
 };
 
 /* Codificación de símbolos en el RHS de los datos:
@@ -91,22 +98,28 @@ static const Prod HULK_PRODS[] = {
     /* TopList -> TopItem TopList | ε */
     { NT_TopList, { NT_TopItem, NT_TopList }, 2 },
     { NT_TopList, { 0 }, 0 },
-    /* TopItem -> FunctionDef | TypeDef | ProtocolDef | TermStmt
+    /* TopItem -> FunctionDef | DefineDef | TypeDef | ProtocolDef | Block OptSemi | TermStmt
        (FUNCTION es ambiguo def/expr: lookahead local en el parser) */
     { NT_TopItem, { NT_FunctionDef }, 1 },
+    { NT_TopItem, { T(TOKEN_DEFINE), T(TOKEN_IDENT), T(TOKEN_LPAREN), A_SENT,
+                    NT_Params, T(TOKEN_RPAREN), NT_TypeAnn, NT_FuncBody, A_FUNCDEF }, 9 },
     { NT_TopItem, { NT_TypeDef }, 1 },
     { NT_TopItem, { NT_ProtocolDef }, 1 },
+    { NT_TopItem, { NT_DecorBlock }, 1 },
+    { NT_TopItem, { NT_Block, NT_OptSemi }, 2 },
     { NT_TopItem, { NT_TermStmt }, 1 },
+    { NT_OptSemi, { T(TOKEN_SEMICOLON) }, 1 },
+    { NT_OptSemi, { 0 }, 0 },
     /* StmtList -> TermStmt StmtList | ε  (solo statements, dentro de bloques) */
     { NT_StmtList, { NT_TermStmt, NT_StmtList }, 2 },
     { NT_StmtList, { 0 }, 0 },
     /* TermStmt -> Stmt SEMICOLON   (el `;` final lo maneja el lexer/EOF) */
     { NT_TermStmt, { NT_Stmt, T(TOKEN_SEMICOLON) }, 2 },
-    /* Stmt -> Expr | While | For | Block */
-    { NT_Stmt, { NT_Expr }, 1 },
+    /* Stmt -> Block | While | For | Expr */
+    { NT_Stmt, { NT_Block }, 1 },
     { NT_Stmt, { NT_While }, 1 },
     { NT_Stmt, { NT_For }, 1 },
-    { NT_Stmt, { NT_Block }, 1 },
+    { NT_Stmt, { NT_Expr }, 1 },
 
     /* Expr -> Or | Let | If */
     { NT_Expr, { NT_Or }, 1 },
@@ -147,10 +160,10 @@ static const Prod HULK_PRODS[] = {
     { NT_TermP, { T(TOKEN_DIV), NT_Factor, A_DIV, NT_TermP }, 4 },
     { NT_TermP, { T(TOKEN_MOD), NT_Factor, A_MOD, NT_TermP }, 4 },
     { NT_TermP, { 0 }, 0 },
-    /* Factor -> Unary Factor' ; Factor' -> POW Unary @pow Factor' | ε
-       (potencia right-assoc: se aplica al final de la cadena) */
+    /* Factor -> Unary Factor' ; Factor' -> POW Factor @pow | ε
+       (potencia right-assoc: 2 ** 3 ** 4 => 2 ** (3 ** 4)) */
     { NT_Factor, { NT_Unary, NT_FactorP }, 2 },
-    { NT_FactorP, { T(TOKEN_POW), NT_Unary, A_POW, NT_FactorP }, 4 },
+    { NT_FactorP, { T(TOKEN_POW), NT_Factor, A_POW }, 3 },
     { NT_FactorP, { 0 }, 0 },
     /* Unary -> MINUS Unary @neg | NOT Unary @not | Postfix */
     { NT_Unary, { T(TOKEN_MINUS), NT_Unary, A_NEG }, 3 },
@@ -160,7 +173,7 @@ static const Prod HULK_PRODS[] = {
     { NT_Postfix, { NT_Primary, NT_Call }, 2 },
     /* Call (PostfixTail) -> LPAREN @sent Args RPAREN @call Call
                            | LBRACKET Expr RBRACKET @index Call
-                           | DOT IDENT @member Call
+                           | DOT (IDENT|BASE) @member Call
                            | AS IDENT @as Call
                            | ASSIGN_DESTRUCT Expr @destruct
                            | ASSIGN Expr @assign
@@ -168,6 +181,7 @@ static const Prod HULK_PRODS[] = {
     { NT_Call, { T(TOKEN_LPAREN), A_SENT, NT_Args, T(TOKEN_RPAREN), A_CALL, NT_Call }, 6 },
     { NT_Call, { T(TOKEN_LBRACKET), NT_Expr, T(TOKEN_RBRACKET), A_INDEX, NT_Call }, 5 },
     { NT_Call, { T(TOKEN_DOT), T(TOKEN_IDENT), A_MEMBER, NT_Call }, 4 },
+    { NT_Call, { T(TOKEN_DOT), T(TOKEN_BASE), A_MEMBER, NT_Call }, 4 },
     { NT_Call, { T(TOKEN_AS), T(TOKEN_IDENT), A_AS, NT_Call }, 4 },
     { NT_Call, { T(TOKEN_ASSIGN_DESTRUCT), NT_Expr, A_DESTRUCT }, 3 },
     { NT_Call, { T(TOKEN_ASSIGN), NT_Expr, A_ASSIGN }, 3 },
@@ -181,19 +195,33 @@ static const Prod HULK_PRODS[] = {
     /* Primary -> NUMBER @num | STRING @str | TRUE @t | FALSE @f
                 | IDENT @ident | SELF @self
                 | LPAREN Expr RPAREN
-                | NEW IDENT LPAREN @sent Args RPAREN @new
+                | IF ... | LET ...
+                | NEW IDENT NewTail
                 | BASE LPAREN @sent Args RPAREN @base
-                | LBRACKET @sent VecItems RBRACKET @vec */
+                | LBRACKET @sent VecItems RBRACKET @vec
+                | LBRACE @sent VecItems RBRACE @vec */
     { NT_Primary, { T(TOKEN_NUMBER), A_NUM }, 2 },
     { NT_Primary, { T(TOKEN_STRING), A_STR }, 2 },
     { NT_Primary, { T(TOKEN_TRUE), A_TRUE }, 2 },
     { NT_Primary, { T(TOKEN_FALSE), A_FALSE }, 2 },
     { NT_Primary, { T(TOKEN_IDENT), A_IDENT }, 2 },
     { NT_Primary, { T(TOKEN_SELF), A_SELF }, 2 },
+    { NT_Primary, { NT_If }, 1 },
+    { NT_Primary, { NT_Let }, 1 },
     { NT_Primary, { T(TOKEN_LPAREN), NT_Expr, T(TOKEN_RPAREN) }, 3 },
-    { NT_Primary, { T(TOKEN_NEW), T(TOKEN_IDENT), T(TOKEN_LPAREN), A_SENT, NT_Args, T(TOKEN_RPAREN), A_NEW }, 7 },
+    { NT_Primary, { T(TOKEN_NEW), T(TOKEN_IDENT), NT_NewTail }, 3 },
     { NT_Primary, { T(TOKEN_BASE), T(TOKEN_LPAREN), A_SENT, NT_Args, T(TOKEN_RPAREN), A_BASE }, 6 },
     { NT_Primary, { T(TOKEN_LBRACKET), A_SENT, NT_VecItems, T(TOKEN_RBRACKET), A_VEC }, 5 },
+    { NT_Primary, { T(TOKEN_LBRACE), A_SENT, NT_VecItems, T(TOKEN_RBRACE), A_VEC }, 5 },
+    /* NewTail -> (args) | array suffixes [size] [init] */
+    { NT_NewTail, { T(TOKEN_LPAREN), A_SENT, NT_Args, T(TOKEN_RPAREN), A_NEW }, 5 },
+    { NT_NewTail, { NT_ArrayTypeSuffix, T(TOKEN_LBRACKET), NT_Expr,
+                    T(TOKEN_RBRACKET), A_ARRAY_NEW, NT_ArrayInit }, 6 },
+    { NT_ArrayTypeSuffix, { T(TOKEN_LBRACKET), T(TOKEN_RBRACKET), NT_ArrayTypeSuffix }, 3 },
+    { NT_ArrayTypeSuffix, { 0 }, 0 },
+    { NT_ArrayInit, { T(TOKEN_LBRACE), T(TOKEN_IDENT), T(TOKEN_ARROW),
+                      NT_Expr, T(TOKEN_RBRACE), A_ARRAY_INIT }, 6 },
+    { NT_ArrayInit, { 0 }, 0 },
     /* VecItems -> Expr VecItemsT | ε ; VecItemsT -> COMMA Expr VecItemsT | ε */
     { NT_VecItems, { NT_Expr, NT_VecItemsT }, 2 },
     { NT_VecItems, { 0 }, 0 },
@@ -207,9 +235,22 @@ static const Prod HULK_PRODS[] = {
     { NT_BindingsT, { 0 }, 0 },
     /* Binding -> IDENT TypeAnn ASSIGN Expr @bind */
     { NT_Binding, { T(TOKEN_IDENT), NT_TypeAnn, T(TOKEN_ASSIGN), NT_Expr, A_BIND }, 5 },
-    /* TypeAnn -> COLON IDENT @typename | ε @typenone */
-    { NT_TypeAnn, { T(TOKEN_COLON), T(TOKEN_IDENT), A_TYPE_NAME }, 3 },
+    { NT_Binding, { T(TOKEN_BASE), NT_TypeAnn, T(TOKEN_ASSIGN), NT_Expr, A_BIND }, 5 },
+    /* TypeAnn -> COLON TypeRef @typename | ε @typenone */
+    { NT_TypeAnn, { T(TOKEN_COLON), NT_TypeRef, A_TYPE_NAME }, 3 },
     { NT_TypeAnn, { A_TYPE_NONE }, 1 },
+    /* TypeRef -> (IDENT|function type) TypeSuffix */
+    { NT_TypeRef, { T(TOKEN_IDENT), NT_TypeSuffix }, 2 },
+    { NT_TypeRef, { T(TOKEN_LPAREN), A_SENT, NT_TypeList, T(TOKEN_RPAREN),
+                    T(TOKEN_ARROW), NT_TypeRef, A_TYPE_FUNC, NT_TypeSuffix }, 8 },
+    { NT_TypeSuffix, { T(TOKEN_LBRACKET), T(TOKEN_RBRACKET), A_TYPE_ARRAY, NT_TypeSuffix }, 4 },
+    { NT_TypeSuffix, { T(TOKEN_MULT), A_TYPE_ITER, NT_TypeSuffix }, 3 },
+    { NT_TypeSuffix, { 0 }, 0 },
+    /* TypeList -> TypeRef TypeListT | ε ; TypeListT -> COMMA TypeRef TypeListT | ε */
+    { NT_TypeList, { NT_TypeRef, NT_TypeListT }, 2 },
+    { NT_TypeList, { 0 }, 0 },
+    { NT_TypeListT, { T(TOKEN_COMMA), NT_TypeRef, NT_TypeListT }, 3 },
+    { NT_TypeListT, { 0 }, 0 },
 
     /* If -> IF LPAREN Expr RPAREN Body ElifL ELSE Body @if */
     { NT_If, { T(TOKEN_IF), T(TOKEN_LPAREN), NT_Expr, T(TOKEN_RPAREN), NT_Body, A_SENT, NT_ElifL, T(TOKEN_ELSE), NT_Body, A_IF }, 10 },
@@ -241,6 +282,7 @@ static const Prod HULK_PRODS[] = {
     { NT_ParamsT, { 0 }, 0 },
     /* Param -> IDENT TypeAnn @param */
     { NT_Param, { T(TOKEN_IDENT), NT_TypeAnn, A_PARAM }, 3 },
+    { NT_Param, { T(TOKEN_BASE), NT_TypeAnn, A_PARAM }, 3 },
     /* FuncBody -> ARROW Expr SEMICOLON | Block */
     { NT_FuncBody, { T(TOKEN_ARROW), NT_Expr, T(TOKEN_SEMICOLON) }, 3 },
     { NT_FuncBody, { NT_Block }, 1 },
@@ -271,8 +313,12 @@ static const Prod HULK_PRODS[] = {
     /* TypeBody -> TypeMember TypeBody | ε */
     { NT_TypeBody, { NT_TypeMember, NT_TypeBody }, 2 },
     { NT_TypeBody, { 0 }, 0 },
-    /* TypeMember -> IDENT TypeMemberTail */
-    { NT_TypeMember, { T(TOKEN_IDENT), NT_TypeMemberTail }, 2 },
+    /* TypeMember -> @sent DecorPrefix IDENT TypeMemberTail */
+    { NT_TypeMember, { A_SENT, NT_DecorPrefix, T(TOKEN_IDENT), NT_TypeMemberTail }, 4 },
+    { NT_TypeMember, { A_SENT, NT_DecorPrefix, T(TOKEN_BASE), NT_TypeMemberTail }, 4 },
+    /* DecorPrefix -> DECOR DecorItems DecorPrefix | ε */
+    { NT_DecorPrefix, { T(TOKEN_DECOR), NT_DecorItems, NT_DecorPrefix }, 3 },
+    { NT_DecorPrefix, { 0 }, 0 },
     /* TypeMemberTail -> LPAREN @sent Params RPAREN TypeAnn MethodBody @method
                        | TypeAnn AttrTail */
     { NT_TypeMemberTail, { T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
@@ -297,11 +343,30 @@ static const Prod HULK_PRODS[] = {
     /* ProtoSig -> IDENT LPAREN @sent Params RPAREN TypeAnn SEMICOLON @proto_method */
     { NT_ProtoSig, { T(TOKEN_IDENT), T(TOKEN_LPAREN), A_SENT, NT_Params, T(TOKEN_RPAREN),
                      NT_TypeAnn, T(TOKEN_SEMICOLON), A_PROTO_METHOD }, 8 },
+
+    /* DecorBlock -> DECOR @sent DecorItems DecorMore DecorTarget @decor_block */
+    { NT_DecorBlock, { T(TOKEN_DECOR), A_SENT, NT_DecorItems, NT_DecorMore,
+                       NT_DecorTarget, A_DECOR_BLOCK }, 6 },
+    /* DecorMore -> DECOR DecorItems DecorMore | ε */
+    { NT_DecorMore, { T(TOKEN_DECOR), NT_DecorItems, NT_DecorMore }, 3 },
+    { NT_DecorMore, { 0 }, 0 },
+    /* DecorTarget -> FunctionDef | TypeDef */
+    { NT_DecorTarget, { NT_FunctionDef }, 1 },
+    { NT_DecorTarget, { NT_TypeDef }, 1 },
+    /* DecorItems -> DecorItem DecorItemsT ; DecorItemsT -> COMMA DecorItem DecorItemsT | ε */
+    { NT_DecorItems, { NT_DecorItem, NT_DecorItemsT }, 2 },
+    { NT_DecorItemsT, { T(TOKEN_COMMA), NT_DecorItem, NT_DecorItemsT }, 3 },
+    { NT_DecorItemsT, { 0 }, 0 },
+    /* DecorItem -> IDENT @sent DecorArgs @decor_item */
+    { NT_DecorItem, { T(TOKEN_IDENT), A_SENT, NT_DecorArgs, A_DECOR_ITEM }, 4 },
+    /* DecorArgs -> LPAREN Args RPAREN | ε */
+    { NT_DecorArgs, { T(TOKEN_LPAREN), NT_Args, T(TOKEN_RPAREN) }, 3 },
+    { NT_DecorArgs, { 0 }, 0 },
 };
 #define HULK_PROD_COUNT ((int)(sizeof(HULK_PRODS)/sizeof(HULK_PRODS[0])))
 
 static const char *NT_NAMES[NT_COUNT] = {
-    "Program","TopList","TopItem","StmtList","TermStmt","Stmt","Expr","Or","Or'",
+    "Program","TopList","TopItem","OptSemi","StmtList","TermStmt","Stmt","Expr","Or","Or'",
     "And","And'","Cmp","Cmp'","Concat","Concat'","Add","Add'","Term","Term'",
     "Factor","Factor'","Unary","Postfix","Primary","Call","Args","Args'","Let",
     "Bindings","Bindings'","Binding","TypeAnn","If","ElifL","Body","While",
@@ -309,7 +374,10 @@ static const char *NT_NAMES[NT_COUNT] = {
     "FunctionDef","Params","ParamsT","Param","FuncBody","FuncExprBody",
     "TypeDef","TypeParams","TypeInherit","TypeBaseArgs","TypeBody","TypeMember",
     "TypeMemberTail","AttrTail","MethodBody","ProtocolDef","ProtoExt","ProtoSigs",
-    "ProtoSig","Lambda"
+    "ProtoSig","DecorBlock","DecorMore","DecorTarget","DecorItems","DecorItemsT",
+    "DecorItem","DecorArgs","DecorPrefix","TypeRef","TypeSuffix","TypeList","TypeListT",
+    "NewTail","ArrayTypeSuffix","ArrayInit",
+    "Lambda"
 };
 
 /* ============================================================
@@ -372,6 +440,40 @@ static void sv_collect_to_sentinel(SemStack *S, HulkNodeList *out) {
             hulk_node_list_push(out, S->s[i].node);
     /* descartar elementos + centinela */
     S->sp = (first > 0) ? first - 1 : 0;
+}
+
+static char* ll1_join3(HulkASTContext *ctx, const char *a,
+                       const char *mid, const char *c) {
+    const char *sa = a ? a : "";
+    const char *sm = mid ? mid : "";
+    const char *sc = c ? c : "";
+    size_t la = strlen(sa), lm = strlen(sm), lc = strlen(sc);
+    char *out = hulk_ast_alloc(ctx, la + lm + lc + 1);
+    memcpy(out, sa, la);
+    memcpy(out + la, sm, lm);
+    memcpy(out + la + lm, sc, lc);
+    out[la + lm + lc] = '\0';
+    return out;
+}
+
+static char* sv_collect_lex_to_sentinel(SemStack *S) {
+    int start = S->sp;
+    while (start > 0 && S->s[start-1].k != V_SENT) start--;
+    int first = start;
+
+    char *out = hulk_ast_strdup(S->ctx, "");
+    int seen = 0;
+    for (int i = first; i < S->sp; i++) {
+        if (S->s[i].k != V_LEX) continue;
+        if (seen)
+            out = ll1_join3(S->ctx, out, ",", S->s[i].lex);
+        else
+            out = hulk_ast_strdup(S->ctx, S->s[i].lex ? S->s[i].lex : "");
+        seen = 1;
+    }
+
+    S->sp = (first > 0) ? first - 1 : 0;
+    return out;
 }
 
 /* ============================================================
@@ -452,9 +554,52 @@ static void exec_hulk_action(int act, SemStack *S, int line, int col) {
         case A_VEC: { VectorLitNode *v = hulk_ast_vector_lit(c, line, col);
             sv_collect_to_sentinel(S, &v->items);
             sv_push_node(S, (HulkNode*)v); break; }
+        case A_ARRAY_NEW: {
+            HulkNode *size = sv_pop_node(S);
+            char *tn = sv_pop_lex(S);
+            (void)tn;
+            CallExprNode *call = hulk_ast_call_expr(
+                c, (HulkNode*)hulk_ast_ident(c, "__array_new", line, col),
+                line, col);
+            hulk_node_list_push(&call->args, size);
+            sv_push_node(S, (HulkNode*)call);
+            break; }
+        case A_ARRAY_INIT: {
+            HulkNode *body = sv_pop_node(S);
+            char *idx_name = sv_pop_lex(S);
+            HulkNode *node = sv_pop_node(S);
+            if (!node || node->type != NODE_CALL_EXPR) {
+                S->had_error = 1;
+                break;
+            }
+            CallExprNode *call = (CallExprNode*)node;
+            if (call->callee && call->callee->type == NODE_IDENT)
+                ((IdentNode*)call->callee)->name = hulk_ast_strdup(c, "__array_init");
+            FunctionExprNode *fn = hulk_ast_function_expr(c, "Number", line, col);
+            VarBindingNode *p = hulk_ast_var_binding(c, idx_name ? idx_name : "i",
+                                                     "Number", line, col);
+            hulk_node_list_push(&fn->params, (HulkNode*)p);
+            fn->body = body;
+            hulk_node_list_push(&call->args, (HulkNode*)fn);
+            sv_push_node(S, (HulkNode*)call);
+            break; }
 
         case A_TYPE_NAME: break;  /* el lexema del tipo queda en la pila como V_LEX */
         case A_TYPE_NONE: sv_push_lex(S, NULL); break;  /* slot de tipo vacío */
+        case A_TYPE_FUNC: {
+            char *ret = sv_pop_lex(S);
+            char *params = sv_collect_lex_to_sentinel(S);
+            char *head = ll1_join3(c, "(", params, ")->");
+            sv_push_lex(S, ll1_join3(c, head, "", ret));
+            break; }
+        case A_TYPE_ARRAY: {
+            char *base = sv_pop_lex(S);
+            sv_push_lex(S, ll1_join3(c, base, "", "[]"));
+            break; }
+        case A_TYPE_ITER: {
+            char *base = sv_pop_lex(S);
+            sv_push_lex(S, ll1_join3(c, base, "", "*"));
+            break; }
         case A_BIND: { /* … IDENT TypeAnn ASSIGN Expr : pila = [name, type, init] */
             HulkNode *init = sv_pop_node(S);
             char *type = sv_pop_lex(S);
@@ -542,19 +687,28 @@ static void exec_hulk_action(int act, SemStack *S, int line, int col) {
             HulkNodeList params; hulk_node_list_init(&params);
             sv_collect_to_sentinel(S, &params);
             char *name = sv_pop_lex(S);
+            HulkNodeList decorators; hulk_node_list_init(&decorators);
+            sv_collect_to_sentinel(S, &decorators);
             MethodDefNode *m = hulk_ast_method_def(c, name?name:"?", ret, line, col);
             m->params = params; m->body = body;
+            m->decorators = decorators;
             TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
             if (td) hulk_node_list_push(&td->members, (HulkNode*)m);
             break; }
         case A_ATTR: { HulkNode *init = sv_pop_node(S); char *type = sv_pop_lex(S);
             char *name = sv_pop_lex(S);
+            HulkNodeList decorators; hulk_node_list_init(&decorators);
+            sv_collect_to_sentinel(S, &decorators);
+            hulk_node_list_free(&decorators);
             AttributeDefNode *a = hulk_ast_attribute_def(c, name?name:"?", type, line, col);
             a->init_expr = init;
             TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
             if (td) hulk_node_list_push(&td->members, (HulkNode*)a);
             break; }
         case A_ATTR_NOINIT: { char *type = sv_pop_lex(S); char *name = sv_pop_lex(S);
+            HulkNodeList decorators; hulk_node_list_init(&decorators);
+            sv_collect_to_sentinel(S, &decorators);
+            hulk_node_list_free(&decorators);
             AttributeDefNode *a = hulk_ast_attribute_def(c, name?name:"?", type, line, col);
             TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
             if (td) hulk_node_list_push(&td->members, (HulkNode*)a);
@@ -568,6 +722,20 @@ static void exec_hulk_action(int act, SemStack *S, int line, int col) {
             m->body = (HulkNode*)hulk_ast_number_lit(c, "0", line, col); /* dummy */
             TypeDefNode *td = (TypeDefNode*)sv_peek_node(S);
             if (td) hulk_node_list_push(&td->members, (HulkNode*)m);
+            break; }
+        case A_DECOR_ITEM: {
+            DecorItemNode *di = hulk_ast_decor_item(c, "?", line, col);
+            sv_collect_to_sentinel(S, &di->args);
+            char *name = sv_pop_lex(S);
+            di->name = name ? hulk_ast_strdup(c, name) : di->name;
+            sv_push_node(S, (HulkNode*)di);
+            break; }
+        case A_DECOR_BLOCK: {
+            HulkNode *target = sv_pop_node(S);
+            DecorBlockNode *db = hulk_ast_decor_block(c, line, col);
+            sv_collect_to_sentinel(S, &db->decorators);
+            db->target = target;
+            sv_push_node(S, (HulkNode*)db);
             break; }
         default: break;
     }
@@ -651,8 +819,54 @@ static int peek_next_type(LexerContext lx_copy) {
     return ty;
 }
 
+static int next_type_inplace(LexerContext *lx_copy) {
+    Token t = lexer_next_token(lx_copy);
+    int ty = t.type;
+    if (t.lexeme) free(t.lexeme);
+    return ty;
+}
+
+static int lookahead_skip_type_ref(LexerContext *lx_copy) {
+    int ty = next_type_inplace(lx_copy);
+    if (ty == TOKEN_IDENT || ty == TOKEN_BASE) {
+        /* nombre simple */
+    } else if (ty == TOKEN_LPAREN) {
+        ty = peek_next_type(*lx_copy);
+        if (ty != TOKEN_RPAREN) {
+            for (;;) {
+                if (!lookahead_skip_type_ref(lx_copy)) return 0;
+                ty = peek_next_type(*lx_copy);
+                if (ty != TOKEN_COMMA) break;
+                (void)next_type_inplace(lx_copy);
+            }
+        }
+
+        if (next_type_inplace(lx_copy) != TOKEN_RPAREN) return 0;
+        if (next_type_inplace(lx_copy) != TOKEN_ARROW) return 0;
+        if (!lookahead_skip_type_ref(lx_copy)) return 0;
+    } else {
+        return 0;
+    }
+
+    for (;;) {
+        ty = peek_next_type(*lx_copy);
+        if (ty == TOKEN_MULT) {
+            (void)next_type_inplace(lx_copy);
+            continue;
+        }
+        if (ty == TOKEN_LBRACKET) {
+            (void)next_type_inplace(lx_copy);
+            if (next_type_inplace(lx_copy) != TOKEN_RBRACKET) return 0;
+            continue;
+        }
+        break;
+    }
+
+    return 1;
+}
+
 /* Con `cur`==LPAREN y `lx` posicionado justo tras ese LPAREN, decide si
- * lo que sigue es una lambda `(params) =>` escaneando hasta el RPAREN
+ * lo que sigue es una lambda `(params) ->` escaneando hasta el RPAREN
  * que balancea y mirando si viene ARROW. No altera el lexer real. */
 static int lookahead_is_lambda(LexerContext lx_copy) {
     int depth = 1;
@@ -663,7 +877,13 @@ static int lookahead_is_lambda(LexerContext lx_copy) {
         if (ty == TOKEN_EOF) return 0;
         if (ty == TOKEN_LPAREN) depth++;
         else if (ty == TOKEN_RPAREN) {
-            if (--depth == 0) return peek_next_type(lx_copy) == TOKEN_ARROW;
+            if (--depth == 0) {
+                int next = next_type_inplace(&lx_copy);
+                if (next == TOKEN_ARROW) return 1;
+                if (next != TOKEN_COLON) return 0;
+                return lookahead_skip_type_ref(&lx_copy) &&
+                       next_type_inplace(&lx_copy) == TOKEN_ARROW;
+            }
         }
     }
 }
@@ -680,6 +900,8 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
 
     LexerContext lx; lexer_init(&lx, dfa, input);
     Token cur = lexer_next_token(&lx);
+    int last_line = cur.line;
+    int last_col = cur.col;
 
     GrammarSymbol pstk[PSTACK_MAX]; int ptop = 0;
     SemVal semarr[SEMSTACK_MAX];
@@ -701,19 +923,24 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
             /* Antes de ejecutar la acción, si hay un lexema pendiente de un
              * terminal con valor (IDENT/NUMBER/STRING), empujarlo a la pila
              * semántica para que la acción lo consuma. */
-            exec_hulk_action(top.id, &S, cur.line, cur.col);
+            exec_hulk_action(top.id, &S, last_line, last_col);
             if (S.had_error) { had_error = 1; }
             continue;
         }
 
         if (top.type == SYMBOL_TERMINAL) {
+            if (top.id == TOKEN_SEMICOLON && cur.type == TOKEN_EOF) {
+                continue; /* el `;` final es opcional al EOF */
+            }
             if (cur.type == (TokenType)top.id) {
                 /* terminales con valor: empujar su lexema a la pila semántica */
-                if (top.id == TOKEN_IDENT || top.id == TOKEN_NUMBER ||
-                    top.id == TOKEN_STRING) {
+                if (top.id == TOKEN_IDENT || top.id == TOKEN_BASE ||
+                    top.id == TOKEN_NUMBER || top.id == TOKEN_STRING) {
                     char *dup = hulk_ast_strdup(ctx, cur.lexeme ? cur.lexeme : "");
                     sv_push_lex(&S, dup);
                 }
+                last_line = cur.line;
+                last_col = cur.col;
                 if (cur.lexeme) free(cur.lexeme);
                 cur = lexer_next_token(&lx);
             } else {
@@ -726,9 +953,86 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
 
         /* ---- Lookahead local: puntos no-LL(1) de HULK ----
          * (a) TopItem con FUNCTION: def `function f(` vs expr `function(`.
-         * (b) Primary con LPAREN: lambda `(x)=>` vs paréntesis `(expr)`.
+         * (b) Primary con LPAREN: lambda `(x)->` vs paréntesis `(expr)`.
          * (c) Primary con FUNCTION: siempre lambda (FunctionExpr). */
         if (top.type == SYMBOL_NON_TERMINAL) {
+            int lambda_start =
+                (cur.type == TOKEN_FUNCTION) ||
+                (cur.type == TOKEN_LPAREN && lookahead_is_lambda(lx));
+            if (lambda_start) {
+                if (top.id == NT_Expr) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Or};
+                    continue;
+                }
+                if (top.id == NT_Or) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_OrP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_And};
+                    continue;
+                }
+                if (top.id == NT_And) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_AndP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Cmp};
+                    continue;
+                }
+                if (top.id == NT_Cmp) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_CmpP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Concat};
+                    continue;
+                }
+                if (top.id == NT_Concat) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_ConcatP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Add};
+                    continue;
+                }
+                if (top.id == NT_Add) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_AddP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Term};
+                    continue;
+                }
+                if (top.id == NT_Term) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_TermP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Factor};
+                    continue;
+                }
+                if (top.id == NT_Factor) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_FactorP};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Unary};
+                    continue;
+                }
+                if (top.id == NT_Unary) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Postfix};
+                    continue;
+                }
+                if (top.id == NT_Postfix) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Call};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Primary};
+                    continue;
+                }
+                if (top.id == NT_Stmt || top.id == NT_Body) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Expr};
+                    continue;
+                }
+                if (top.id == NT_TermStmt) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_TERMINAL, TOKEN_SEMICOLON};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Stmt};
+                    continue;
+                }
+                if (top.id == NT_StmtList) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_StmtList};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_TermStmt};
+                    continue;
+                }
+                if (top.id == NT_Args) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_ArgsT};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Expr};
+                    continue;
+                }
+                if (top.id == NT_VecItems) {
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_VecItemsT};
+                    pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Expr};
+                    continue;
+                }
+            }
             if (top.id == NT_TopItem && cur.type == TOKEN_FUNCTION) {
                 if (peek_next_type(lx) == TOKEN_IDENT) {
                     pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_FunctionDef};
@@ -737,6 +1041,33 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
                 }
                 continue;
             }
+            if (top.id == NT_TopItem && cur.type == TOKEN_LBRACE) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_OptSemi};
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Block};
+                continue;
+            }
+            if ((top.id == NT_Stmt || top.id == NT_Body) && cur.type == TOKEN_LBRACE) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Block};
+                continue;
+            }
+            if (top.id == NT_ArrayTypeSuffix && cur.type == TOKEN_LBRACKET &&
+                peek_next_type(lx) != TOKEN_RBRACKET) {
+                continue; /* ε: este `[` pertenece al tamaño de new T[expr] */
+            }
+            if (top.id == NT_Call && cur.type == TOKEN_DOT &&
+                peek_next_type(lx) == TOKEN_BASE) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Call};
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_ACTION, A_MEMBER};
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_TERMINAL, TOKEN_BASE};
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_TERMINAL, TOKEN_DOT};
+                continue;
+            }
+            if (cur.type == TOKEN_EOF &&
+                (top.id == NT_OrP || top.id == NT_AndP || top.id == NT_CmpP ||
+                 top.id == NT_ConcatP || top.id == NT_AddP || top.id == NT_TermP ||
+                 top.id == NT_FactorP || top.id == NT_Call)) {
+                continue; /* ε: expresión final sin `;` explícito */
+            }
             if (top.id == NT_Primary && cur.type == TOKEN_FUNCTION) {
                 pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Lambda};
                 continue;
@@ -744,6 +1075,12 @@ HulkNode* hulk_ll1_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
             if (top.id == NT_Primary && cur.type == TOKEN_LPAREN &&
                 lookahead_is_lambda(lx)) {
                 pstk[ptop++] = (GrammarSymbol){SYMBOL_NON_TERMINAL, NT_Lambda};
+                continue;
+            }
+            if (top.id == NT_Primary && cur.type == TOKEN_BASE &&
+                peek_next_type(lx) != TOKEN_LPAREN) {
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_ACTION, A_IDENT};
+                pstk[ptop++] = (GrammarSymbol){SYMBOL_TERMINAL, TOKEN_BASE};
                 continue;
             }
         }

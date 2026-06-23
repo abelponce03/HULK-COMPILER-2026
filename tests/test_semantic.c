@@ -168,12 +168,12 @@ TEST(let_type_mismatch) {
  * ============================================================ */
 
 TEST(function_basic) {
-    ASSERT_EQ(0, analyze("function f(x: Number): Number => x * 2; f(5);"));
+    ASSERT_EQ(0, analyze("function f(x: Number): Number -> x * 2; f(5);"));
 }
 
 TEST(function_no_annotation) {
     /* Sin anotación de tipo — inferencia */
-    ASSERT_EQ(0, analyze("function f(x) => x; f(5);"));
+    ASSERT_EQ(0, analyze("function f(x) -> x; f(5);"));
 }
 
 TEST(function_infers_params_from_call_signature) {
@@ -186,27 +186,32 @@ TEST(function_infers_params_from_call_signature) {
 
 TEST(function_expr_closure_capture) {
     ASSERT_EQ(0, analyze(
-        "let n: Number = 5, add = function (x: Number): Number => x + n in add(3);"));
+        "let n: Number = 5, add = function (x: Number): Number -> x + n in add(3);"));
+}
+
+TEST(function_type_annotation) {
+    ASSERT_EQ(0, analyze(
+        "let f: (Number)->Number = function (x: Number): Number -> x + 1 in f(2);"));
 }
 
 TEST(function_expr_returns_function) {
     ASSERT_EQ(0, analyze(
-        "let makeAdder = function (n: Number) => function (x: Number): Number => x + n in "
+        "let makeAdder = function (n: Number) -> function (x: Number): Number -> x + n in "
         "let add2 = makeAdder(2) in add2(5);"));
 }
 
 TEST(function_expr_undefined_capture) {
     ASSERT_GT(analyze(
-        "let f = function (x: Number): Number => x + missing in f(1);"), 0);
+        "let f = function (x: Number): Number -> x + missing in f(1);"), 0);
 }
 
 TEST(function_wrong_arg_count) {
-    ASSERT_GT(analyze("function f(x: Number): Number => x; f(1, 2);"), 0);
+    ASSERT_GT(analyze("function f(x: Number): Number -> x; f(1, 2);"), 0);
 }
 
 TEST(function_wrong_arg_type) {
     ASSERT_GT(analyze(
-        "function f(x: Number): Number => x; f(\"hello\");"), 0);
+        "function f(x: Number): Number -> x; f(\"hello\");"), 0);
 }
 
 TEST(function_undefined) {
@@ -215,7 +220,7 @@ TEST(function_undefined) {
 
 TEST(function_return_type_mismatch) {
     ASSERT_GT(analyze(
-        "function f(): Number => \"hello\"; f();"), 0);
+        "function f(): Number -> \"hello\"; f();"), 0);
 }
 
 TEST(builtin_print) {
@@ -243,7 +248,7 @@ TEST(type_basic) {
 TEST(type_with_method) {
     ASSERT_EQ(0, analyze(
         "type Point(x: Number, y: Number) {\n"
-        "    getX(): Number => x;\n"
+        "    getX(): Number -> x;\n"
         "}\n"
         "let p = new Point(1, 2) in p.getX();"));
 }
@@ -269,7 +274,7 @@ TEST(type_self_valid) {
     ASSERT_EQ(0, analyze(
         "type Box(value: Number) {\n"
         "    val: Number = value;\n"
-        "    get(): Number => self.val;\n"
+        "    get(): Number -> self.val;\n"
         "}\n"
         "42;"));
 }
@@ -377,43 +382,43 @@ TEST(decorator_basic) {
     /* decor d function f() desugariza a: function f(); f := d(f);
      * d debe ser una función definida */
     ASSERT_EQ(0, analyze(
-        "function logger(f) => f;\n"
+        "function logger(f) -> f;\n"
         "decor logger\n"
-        "function greet() => \"hello\";\n"
+        "function greet() -> \"hello\";\n"
         "greet();"));
 }
 
 TEST(decorator_multiple) {
     ASSERT_EQ(0, analyze(
-        "function d1(f) => f;\n"
-        "function d2(f) => f;\n"
+        "function d1(f) -> f;\n"
+        "function d2(f) -> f;\n"
         "decor d1, d2\n"
-        "function greet() => \"hello\";\n"
+        "function greet() -> \"hello\";\n"
         "greet();"));
 }
 
 TEST(decorator_curried) {
     ASSERT_EQ(0, analyze(
-        "function identity(f) => f;\n"
-        "function memoize(limit: Number) => identity;\n"
+        "function identity(f) -> f;\n"
+        "function memoize(limit: Number) -> identity;\n"
         "decor memoize(100)\n"
-        "function fib(n: Number): Number => n;\n"
+        "function fib(n: Number): Number -> n;\n"
         "fib(1);"));
 }
 
 TEST(decorator_curried_factory_must_return_function) {
     ASSERT_GT(analyze(
-        "function memoize(limit: Number): Number => limit;\n"
+        "function memoize(limit: Number): Number -> limit;\n"
         "decor memoize(100)\n"
-        "function fib(n: Number): Number => n;\n"
+        "function fib(n: Number): Number -> n;\n"
         "fib(1);"), 0);
 }
 
 TEST(method_decorator_basic) {
     ASSERT_EQ(0, analyze(
-        "function logger(f) => f;\n"
+        "function logger(f) -> f;\n"
         "type Box(v: Number) {\n"
-        "    decor logger get(): Number => v;\n"
+        "    decor logger get(): Number -> v;\n"
         "}\n"
         "let b = new Box(3) in b.get();"));
 }
@@ -428,7 +433,7 @@ TEST(call_non_callable_known_type) {
 
 TEST(program_fibonacci) {
     ASSERT_EQ(0, analyze(
-        "function fib(n: Number): Number =>\n"
+        "function fib(n: Number): Number ->\n"
         "    if (n <= 1) n\n"
         "    else fib(n - 1) + fib(n - 2);\n"
         "print(fib(10));"));
@@ -437,10 +442,10 @@ TEST(program_fibonacci) {
 TEST(program_type_hierarchy) {
     ASSERT_EQ(0, analyze(
         "type Shape() {\n"
-        "    area(): Number => 0;\n"
+        "    area(): Number -> 0;\n"
         "}\n"
         "type Circle(r: Number) inherits Shape() {\n"
-        "    area(): Number => 3.14159 * r * r;\n"
+        "    area(): Number -> 3.14159 * r * r;\n"
         "}\n"
         "let c = new Circle(5) in print(c.area());"));
 }
@@ -492,6 +497,7 @@ int main(void) {
     RUN_TEST(function_no_annotation);
     RUN_TEST(function_infers_params_from_call_signature);
     RUN_TEST(function_expr_closure_capture);
+    RUN_TEST(function_type_annotation);
     RUN_TEST(function_expr_returns_function);
     RUN_TEST(function_expr_undefined_capture);
     RUN_TEST(function_wrong_arg_count);

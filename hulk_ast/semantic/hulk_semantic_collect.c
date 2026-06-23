@@ -105,12 +105,7 @@ static void collect_function(SemanticContext *c, FunctionDefNode *fn) {
     if (!fn->return_type && sem_body_calls_name(fn->body, fn->name))
         ret = c->t_number;
     if (fn->return_type) {
-        ret = sem_type_resolve(c, fn->return_type);
-        if (!ret) {
-            sem_error(c, (HulkNode*)fn,
-                "tipo de retorno '%s' no definido", fn->return_type);
-            ret = c->t_error;
-        }
+        ret = sem_resolve_annotation(c, fn->return_type, (HulkNode*)fn);
     }
 
     Scope *prev = c->current;

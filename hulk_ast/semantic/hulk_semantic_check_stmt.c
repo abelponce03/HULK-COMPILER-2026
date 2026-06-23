@@ -85,17 +85,30 @@ HulkType* sem_check_while(SemanticContext *c, WhileStmtNode *n) {
  *  For: scope con variable de iteración
  * ============================================================ */
 
-static int sem_type_has_iterator_shape(SemanticContext *c, HulkType *type) {
-    if (!type || type->kind == HULK_TYPE_ERROR) return 0;
+static HulkType* sem_iterator_current_type(SemanticContext *c, HulkType *type) {
+    if (!type || type->kind == HULK_TYPE_ERROR) return NULL;
+
+    if (type->name) {
+        size_t len = strlen(type->name);
+        if (len >= 1 && type->name[len - 1] == '*') {
+            char *elem = malloc(len);
+            if (!elem) return c->t_object;
+            memcpy(elem, type->name, len - 1);
+            elem[len - 1] = '\0';
+            HulkType *et = sem_resolve_annotation(c, elem, NULL);
+            free(elem);
+            return et && et != c->t_error ? et : c->t_object;
+        }
+    }
 
     Symbol *next = sem_lookup_member(type, "next");
     Symbol *current = sem_lookup_member(type, "current");
-    if (!next || !current) return 0;
-    if (next->kind != SYM_METHOD || current->kind != SYM_METHOD) return 0;
+    if (!next || !current) return NULL;
+    if (next->kind != SYM_METHOD || current->kind != SYM_METHOD) return NULL;
     if (next->type && !sem_type_conforms(next->type, c->t_boolean))
-        return 0;
+        return NULL;
 
-    return 1;
+    return current->type ? current->type : c->t_object;
 }
 
 HulkType* sem_check_for(SemanticContext *c, ForStmtNode *n) {
@@ -115,8 +128,11 @@ HulkType* sem_check_for(SemanticContext *c, ForStmtNode *n) {
             var_t = c->t_number;
         }
     }
-    if (!is_iterable && sem_type_has_iterator_shape(c, iter_t))
+    HulkType *current_t = sem_iterator_current_type(c, iter_t);
+    if (!is_iterable && current_t) {
         is_iterable = 1;
+        var_t = current_t;
+    }
     if (!is_iterable)
         sem_error(c, n->iterable ? n->iterable : (HulkNode*)n,
             "expresión en 'for' no es iterable");

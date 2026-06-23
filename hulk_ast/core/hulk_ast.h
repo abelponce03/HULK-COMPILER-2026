@@ -112,7 +112,7 @@ typedef struct {
     HulkNodeList declarations;  // FunctionDef | TypeDef | DecorBlock | Stmt
 } ProgramNode;
 
-// function name(params): ReturnType => body | { body }
+// function name(params): ReturnType -> body | { body }
 typedef struct {
     HulkNode base;
     char *name;
@@ -121,7 +121,7 @@ typedef struct {
     HulkNode *body;            // Expr o BlockStmt
 } FunctionDefNode;
 
-// function(params): ReturnType => body | { body }
+// function(params): ReturnType -> body | { body }
 typedef struct {
     HulkNode base;
     HulkNodeList params;       // VarBindingNode
@@ -142,7 +142,7 @@ typedef struct {
     int is_protocol;           // 1 si proviene de `protocol`
 } TypeDefNode;
 
-// Método dentro de type: name(params): Type => body
+// Método dentro de type: name(params): Type -> body
 typedef struct {
     HulkNode base;
     char *name;

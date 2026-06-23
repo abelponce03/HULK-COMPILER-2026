@@ -73,7 +73,8 @@ TEST_AST_BUILDER = $(TEST_DIR)/test_ast_builder
 TEST_SEMANTIC    = $(TEST_DIR)/test_semantic
 TEST_CODEGEN     = $(TEST_DIR)/test_codegen
 TEST_FEATURE_DECORATORS_CLOSURES = $(TEST_DIR)/test_feature_decorators_closures
-TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN) $(TEST_FEATURE_DECORATORS_CLOSURES)
+TEST_LL1_BUILDER = $(TEST_DIR)/test_ll1_builder
+TEST_BINS        = $(TEST_LEXER) $(TEST_PARSER) $(TEST_AST) $(TEST_HULK_AST) $(TEST_AST_BUILDER) $(TEST_SEMANTIC) $(TEST_CODEGEN) $(TEST_FEATURE_DECORATORS_CLOSURES) $(TEST_LL1_BUILDER)
 
 # ============== Regla principal (contrato facultad) ==============
 # `make` / `make build` producen `./hulk` en la raíz del repo, el punto
@@ -128,6 +129,9 @@ $(TEST_CODEGEN): $(TEST_DIR)/test_codegen.c $(LIB_OBJS)
 $(TEST_FEATURE_DECORATORS_CLOSURES): $(TEST_DIR)/test_feature_decorators_closures.c $(LIB_OBJS)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
 
+$(TEST_LL1_BUILDER): $(TEST_DIR)/test_ll1_builder.c $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS) $(LLVM_LDFLAGS)
+
 # Ejecutar todos los tests
 test-all: test-build
 	@echo ""
@@ -168,6 +172,9 @@ test-codegen: $(TEST_CODEGEN)
 
 test-feature-decorators-closures: $(TEST_FEATURE_DECORATORS_CLOSURES)
 	./$(TEST_FEATURE_DECORATORS_CLOSURES)
+
+test-ll1-builder: $(TEST_LL1_BUILDER)
+	./$(TEST_LL1_BUILDER)
 
 # ============== Otros targets ==============
 # Compilar y ejecutar un archivo .hulk de prueba

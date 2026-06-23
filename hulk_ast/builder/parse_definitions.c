@@ -2,7 +2,7 @@
  * parse_definitions.c — Parsing de definiciones del AST builder
  *
  * Definiciones de nivel superior del lenguaje HULK:
- *   - FunctionDef: function name(params): Type => body | { body }
+ *   - FunctionDef: function name(params): Type -> body | { body }
  *   - TypeDef:     type Name(params) inherits Parent(args) { body }
  *   - DecorBlock:  decor items function/type ...
  *
@@ -21,9 +21,16 @@ static void parse_decor_items(ASTBuilder *b, HulkNodeList *decorators);
 // ============================================================
 
 // FunctionBody → ARROW Expr SEMICOLON | BlockStmt
-static HulkNode* parse_function_body(ASTBuilder *b) {
+static int match_function_arrow(ASTBuilder *b) {
     if (check(b, TOKEN_ARROW)) {
-        advance(b);   // =>
+        advance(b);
+        return 1;
+    }
+    return 0;
+}
+
+static HulkNode* parse_function_body(ASTBuilder *b) {
+    if (match_function_arrow(b)) {
         HulkNode *body = parse_expr(b);
         expect(b, TOKEN_SEMICOLON);
         return body;
@@ -32,8 +39,7 @@ static HulkNode* parse_function_body(ASTBuilder *b) {
 }
 
 static HulkNode* parse_function_expr_body(ASTBuilder *b) {
-    if (check(b, TOKEN_ARROW)) {
-        advance(b);
+    if (match_function_arrow(b)) {
         return parse_expr(b);
     }
     return parse_block_stmt(b);
@@ -65,6 +71,22 @@ HulkNode* parse_function_def(ASTBuilder *b) {
     return (HulkNode*)fn;
 }
 
+HulkNode* parse_define_def(ASTBuilder *b) {
+    int line = cur_line(b), col = cur_col(b);
+    expect(b, TOKEN_DEFINE);
+
+    char *name = expect_ident(b);
+    if (!name) return NULL;
+
+    HulkNodeList params = parse_function_params(b);
+    char *ret_type = parse_type_annotation(b);
+
+    FunctionDefNode *fn = hulk_ast_function_def(b->ctx, name, ret_type, line, col);
+    fn->params = params;
+    fn->body = parse_function_body(b);
+    return (HulkNode*)fn;
+}
+
 HulkNode* parse_function_expr(ASTBuilder *b) {
     int line = cur_line(b), col = cur_col(b);
     expect(b, TOKEN_FUNCTION);
@@ -86,7 +108,7 @@ HulkNode* parse_function_expr(ASTBuilder *b) {
 // TypeBody → TypeMember TypeBody | ε
 // TypeMember → IDENT TypeMemberTail
 static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
-    while (check(b, TOKEN_IDENT) || check(b, TOKEN_DECOR)) {
+    while (is_ident_like(b->current.type) || check(b, TOKEN_DECOR)) {
         HulkNodeList decorators;
         hulk_node_list_init(&decorators);
 
@@ -101,7 +123,7 @@ static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
         // TypeMemberTail → LPAREN ... → method
         //                → TypeAnnotation (SEMICOLON | ASSIGN ...) → attribute
         if (check(b, TOKEN_LPAREN)) {
-            // MethodDef: name(params): RetType => body | { body }
+            // MethodDef: name(params): RetType -> body | { body }
             advance(b);  // (
             HulkNodeList mparams;
             hulk_node_list_init(&mparams);
@@ -114,8 +136,7 @@ static void parse_type_body(ASTBuilder *b, TypeDefNode *td) {
             m->decorators = decorators;
 
             // MethodBody → ARROW Expr SEMICOLON | BlockStmt
-            if (check(b, TOKEN_ARROW)) {
-                advance(b);
+            if (match_function_arrow(b)) {
                 m->body = parse_expr(b);
                 expect(b, TOKEN_SEMICOLON);
             } else {
@@ -258,7 +279,7 @@ HulkNode* parse_protocol_def(ASTBuilder *b) {
     expect(b, TOKEN_LBRACE);
 
     /* MethodSig → IDENT LPAREN ArgIdList RPAREN [COLON IDENT] SEMICOLON */
-    while (check(b, TOKEN_IDENT)) {
+    while (is_ident_like(b->current.type)) {
         int mline = cur_line(b), mcol = cur_col(b);
         char *mname = expect_ident(b);
         if (!mname) break;

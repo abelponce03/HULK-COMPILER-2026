@@ -103,6 +103,10 @@ void sem_types_init(SemanticContext *ctx) {
                 "s", ctx->t_string);
     reg_builtin(ctx, "range", ctx->t_number, 2,
                 "min", ctx->t_number, "max", ctx->t_number);
+    reg_builtin(ctx, "__array_new", ctx->t_object, 1,
+                "size", ctx->t_number);
+    reg_builtin(ctx, "__array_init", ctx->t_object, 2,
+                "size", ctx->t_number, "initializer", ctx->t_object);
 }
 
 /* ============================================================
@@ -118,6 +122,25 @@ int sem_type_conforms(HulkType *child, HulkType *ancestor) {
     if (child->kind == HULK_TYPE_FUNCTION &&
         ancestor->kind == HULK_TYPE_FUNCTION)
         return sem_function_type_equals(child, ancestor);
+    if (ancestor->name) {
+        size_t alen = strlen(ancestor->name);
+        if (alen >= 2 && strcmp(ancestor->name + alen - 2, "[]") == 0 &&
+            child->kind == HULK_TYPE_OBJECT)
+            return 1;
+        if (alen >= 1 && ancestor->name[alen - 1] == '*') {
+            if (child->kind == HULK_TYPE_OBJECT) return 1;
+            if (child->members) {
+                int has_next = 0, has_current = 0;
+                for (int i = 0; i < child->members->sym_count; i++) {
+                    Symbol *s = child->members->symbols[i];
+                    if (!s || s->kind != SYM_METHOD || !s->name) continue;
+                    if (strcmp(s->name, "next") == 0) has_next = 1;
+                    if (strcmp(s->name, "current") == 0) has_current = 1;
+                }
+                if (has_next && has_current) return 1;
+            }
+        }
+    }
     /* Todo conforma con Object */
     if (ancestor->kind == HULK_TYPE_OBJECT) return 1;
     /* Recorrer cadena de herencia */
@@ -176,6 +199,133 @@ HulkType* sem_type_resolve(SemanticContext *ctx, const char *name) {
             return ctx->types[i];
     }
     return NULL;
+}
+
+static char* sem_slice(const char *s, int start, int end) {
+    if (!s || end < start) return NULL;
+    size_t len = (size_t)(end - start);
+    char *out = malloc(len + 1);
+    if (!out) return NULL;
+    memcpy(out, s + start, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int find_matching_paren(const char *s, int start, int end) {
+    int depth = 0;
+    for (int i = start; i < end; i++) {
+        if (s[i] == '(') depth++;
+        else if (s[i] == ')') {
+            depth--;
+            if (depth == 0) return i;
+            if (depth < 0) return -1;
+        }
+    }
+    return -1;
+}
+
+static HulkType* resolve_annotation_range(SemanticContext *c,
+                                          const char *annotation,
+                                          int start,
+                                          int end,
+                                          HulkNode *err_node);
+
+static int count_function_params(const char *s, int start, int end) {
+    if (start >= end) return 0;
+    int depth = 0, count = 1;
+    for (int i = start; i < end; i++) {
+        if (s[i] == '(') depth++;
+        else if (s[i] == ')') depth--;
+        else if (s[i] == ',' && depth == 0) count++;
+    }
+    return count;
+}
+
+static void fill_function_params(SemanticContext *c, const char *s,
+                                 int start, int end, HulkNode *err_node,
+                                 HulkType **params) {
+    int depth = 0, seg_start = start, out = 0;
+    for (int i = start; i <= end; i++) {
+        int at_end = (i == end);
+        if (!at_end) {
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') depth--;
+        }
+        if (at_end || (s[i] == ',' && depth == 0)) {
+            params[out++] = resolve_annotation_range(c, s, seg_start, i, err_node);
+            seg_start = i + 1;
+        }
+    }
+}
+
+static HulkType* resolve_function_annotation(SemanticContext *c,
+                                             const char *annotation,
+                                             int start,
+                                             int end,
+                                             HulkNode *err_node) {
+    int close = find_matching_paren(annotation, start, end);
+    if (close < 0 || close + 2 >= end ||
+        annotation[close + 1] != '-' || annotation[close + 2] != '>') {
+        char *bad = sem_slice(annotation, start, end);
+        sem_error(c, err_node, "tipo funcional inválido '%s'", bad ? bad : "?");
+        free(bad);
+        return c->t_error;
+    }
+
+    int param_count = count_function_params(annotation, start + 1, close);
+    HulkType **params = NULL;
+    if (param_count > 0) {
+        params = calloc(param_count, sizeof(HulkType*));
+        if (!params) return c->t_error;
+        fill_function_params(c, annotation, start + 1, close, err_node, params);
+    }
+
+    HulkType *ret = resolve_annotation_range(c, annotation, close + 3, end, err_node);
+    HulkType *fn_t = sem_function_type_new(c, params, param_count, ret);
+    free(params);
+    return fn_t ? fn_t : c->t_error;
+}
+
+static HulkType* resolve_annotation_range(SemanticContext *c,
+                                          const char *annotation,
+                                          int start,
+                                          int end,
+                                          HulkNode *err_node) {
+    if (start >= end) {
+        sem_error(c, err_node, "anotación de tipo vacía");
+        return c->t_error;
+    }
+
+    if (annotation[start] == '(')
+        return resolve_function_annotation(c, annotation, start, end, err_node);
+
+    char *name = sem_slice(annotation, start, end);
+    HulkType *t = name ? sem_type_resolve(c, name) : NULL;
+    if (!t && name) {
+        size_t len = strlen(name);
+        int is_array = len >= 2 && strcmp(name + len - 2, "[]") == 0;
+        int is_iter = len >= 1 && name[len - 1] == '*';
+        if (is_array || is_iter) {
+            char *stable = strdup(name);
+            if (stable)
+                t = sem_type_new(c, HULK_TYPE_USER, stable, c->t_object);
+        }
+    }
+    if (!t) {
+        sem_error(c, err_node, "tipo '%s' no definido", name ? name : "?");
+        free(name);
+        return c->t_error;
+    }
+    free(name);
+    return t;
+}
+
+HulkType* sem_resolve_annotation(SemanticContext *c,
+                                 const char *annotation,
+                                 HulkNode *err_node) {
+    if (!annotation) return c->t_object;
+    return resolve_annotation_range(c, annotation, 0, (int)strlen(annotation),
+                                    err_node);
 }
 
 HulkType* sem_function_type_new(SemanticContext *ctx, HulkType **params,

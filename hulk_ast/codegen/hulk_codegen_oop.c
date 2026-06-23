@@ -183,6 +183,21 @@ LLVMValueRef cg_emit_destruct(CodegenContext *c, DestructAssignNode *n) {
                 LLVMBuildStore(c->builder, val, sym->value);
             }
         }
+    } else if (n->target->type == NODE_INDEX_EXPR) {
+        IndexExprNode *ix = (IndexExprNode*)n->target;
+        LLVMValueRef obj = cg_emit_expr(c, ix->object);
+        LLVMValueRef idx_d = cg_emit_expr(c, ix->index);
+        LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+        LLVMValueRef idx_i = LLVMBuildFPToSI(c->builder, idx_d, i64, "idx.set");
+        LLVMValueRef offset = LLVMBuildAdd(
+            c->builder,
+            LLVMBuildMul(c->builder, idx_i, LLVMConstInt(i64, 8, 0), "ofs.set.mul"),
+            LLVMConstInt(i64, 8, 0),
+            "ofs.set");
+        LLVMValueRef ptr = LLVMBuildInBoundsGEP2(
+            c->builder, LLVMInt8TypeInContext(c->llvm_ctx),
+            obj, &offset, 1, "elem.set.ptr");
+        LLVMBuildStore(c->builder, val, ptr);
     } else if (n->target->type == NODE_MEMBER_ACCESS) {
         /* self.field := val — store en el field del struct */
         MemberAccessNode *ma = (MemberAccessNode*)n->target;

@@ -255,7 +255,7 @@ TEST(power_operator) {
 }
 
 TEST(arrow_operator) {
-    int n; Token *t = tokenize("=>", &n);
+    int n; Token *t = tokenize("->", &n);
     ASSERT_EQ(TOKEN_ARROW, t[0].type);
     free_tokens(t, n);
 }
@@ -319,7 +319,7 @@ TEST(let_expression) {
 }
 
 TEST(function_declaration) {
-    int n; Token *t = tokenize("function f(x: Number): Number => x + 1;", &n);
+    int n; Token *t = tokenize("function f(x: Number): Number -> x + 1;", &n);
     ASSERT_EQ(TOKEN_FUNCTION, t[0].type);
     ASSERT_EQ(TOKEN_IDENT, t[1].type);     // f
     ASSERT_EQ(TOKEN_LPAREN, t[2].type);

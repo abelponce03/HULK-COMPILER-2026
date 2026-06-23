@@ -96,6 +96,7 @@ static void check_function_def(SemanticContext *c, FunctionDefNode *fn) {
 static void check_type_def(SemanticContext *c, TypeDefNode *td) {
     HulkType *type = sem_type_resolve(c, td->name);
     if (!type) return;
+    if (td->is_protocol) return;
 
     HulkType *prev_type = c->enclosing_type;
     c->enclosing_type = type;
@@ -158,7 +159,7 @@ static void check_type_def(SemanticContext *c, TypeDefNode *td) {
             HulkType *init_t = sem_check_expr(c, ad->init_expr);
 
             if (ad->type_annotation) {
-                HulkType *attr_t = sem_type_resolve(c, ad->type_annotation);
+                HulkType *attr_t = sem_resolve_annotation(c, ad->type_annotation, m);
                 if (attr_t && attr_t != c->t_error &&
                     !sem_type_conforms(init_t, attr_t))
                     sem_error(c, m,

@@ -463,6 +463,20 @@ TEST(let_with_type_annotation) {
     hulk_ast_context_free(&ctx);
 }
 
+TEST(let_with_function_type_annotation) {
+    HulkASTContext ctx;
+    HulkNode *ast = build(
+        "let f: (Number)->Number = function (x: Number): Number -> x + 1 in f(2);",
+        &ctx);
+    ASSERT_NOT_NULL(ast);
+    HulkNode *n = PROG_DECL(ast, 0);
+    ASSERT_EQ(NODE_LET_EXPR, n->type);
+    HulkNode *b0 = AS_LET(n)->bindings.items[0];
+    ASSERT_STR_EQ("(Number)->Number", AS_BIND(b0)->type_annotation);
+    ASSERT_EQ(NODE_FUNCTION_EXPR, AS_BIND(b0)->init_expr->type);
+    hulk_ast_context_free(&ctx);
+}
+
 TEST(let_multiple_bindings) {
     HulkASTContext ctx;
     HulkNode *ast = build("let x = 1, y = 2 in x + y;", &ctx);
@@ -601,7 +615,7 @@ TEST(block_empty) {
 
 TEST(function_arrow_body) {
     HulkASTContext ctx;
-    HulkNode *ast = build("function add(a: Number, b: Number): Number => a + b;", &ctx);
+    HulkNode *ast = build("function add(a: Number, b: Number): Number -> a + b;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_FUNCTION_DEF, n->type);
@@ -635,7 +649,7 @@ TEST(function_block_body) {
 
 TEST(function_no_params_no_return) {
     HulkASTContext ctx;
-    HulkNode *ast = build("function foo() => 1;", &ctx);
+    HulkNode *ast = build("function foo() -> 1;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_FUNCTION_DEF, n->type);
@@ -677,7 +691,7 @@ TEST(type_with_inheritance) {
 
 TEST(type_with_method) {
     HulkASTContext ctx;
-    HulkNode *ast = build("type Foo() { bar(): Number => 42; }", &ctx);
+    HulkNode *ast = build("type Foo() { bar(): Number -> 42; }", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_TYPE_DEF, n->type);
@@ -896,7 +910,7 @@ TEST(base_call) {
 
 TEST(decor_simple) {
     HulkASTContext ctx;
-    HulkNode *ast = build("decor log function foo() => 1;", &ctx);
+    HulkNode *ast = build("decor log function foo() -> 1;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_DECOR_BLOCK, n->type);
@@ -914,7 +928,7 @@ TEST(decor_simple) {
 
 TEST(decor_with_args) {
     HulkASTContext ctx;
-    HulkNode *ast = build("decor memoize(100) function f() => 1;", &ctx);
+    HulkNode *ast = build("decor memoize(100) function f() -> 1;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_DECOR_BLOCK, n->type);
@@ -926,7 +940,7 @@ TEST(decor_with_args) {
 
 TEST(decor_multiple) {
     HulkASTContext ctx;
-    HulkNode *ast = build("decor log, trace function f() => 1;", &ctx);
+    HulkNode *ast = build("decor log, trace function f() -> 1;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_DECOR_BLOCK, n->type);
@@ -948,7 +962,7 @@ TEST(decor_on_type) {
 
 TEST(function_expr_simple) {
     HulkASTContext ctx;
-    HulkNode *ast = build("function (x: Number): Number => x + 1;", &ctx);
+    HulkNode *ast = build("function (x: Number): Number -> x + 1;", &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
     ASSERT_EQ(NODE_FUNCTION_EXPR, n->type);
@@ -961,7 +975,7 @@ TEST(function_expr_simple) {
 TEST(function_expr_inside_let) {
     HulkASTContext ctx;
     HulkNode *ast = build(
-        "let n = 5, add1 = function (x: Number): Number => x + n in add1(3);",
+        "let n = 5, add1 = function (x: Number): Number -> x + n in add1(3);",
         &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *n = PROG_DECL(ast, 0);
@@ -974,7 +988,7 @@ TEST(function_expr_inside_let) {
 TEST(decor_method_inside_type) {
     HulkASTContext ctx;
     HulkNode *ast = build(
-        "type Box(v: Number) { decor log get(): Number => v; }",
+        "type Box(v: Number) { decor log get(): Number -> v; }",
         &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *td = PROG_DECL(ast, 0);
@@ -994,7 +1008,7 @@ TEST(decor_method_inside_type) {
 TEST(program_multiple_decls) {
     HulkASTContext ctx;
     HulkNode *ast = build(
-        "function f() => 1;"
+        "function f() -> 1;"
         "type T() { }"
         "42;",
         &ctx);
@@ -1019,7 +1033,7 @@ TEST(program_empty) {
 TEST(factorial_recursive) {
     HulkASTContext ctx;
     HulkNode *ast = build(
-        "function factorial(n: Number): Number =>"
+        "function factorial(n: Number): Number ->"
         "  if (n == 0) 1 else n * factorial(n - 1);",
         &ctx);
     ASSERT_NOT_NULL(ast);
@@ -1036,7 +1050,7 @@ TEST(type_with_inheritance_and_methods) {
     HulkASTContext ctx;
     HulkNode *ast = build(
         "type Dog(name: String) inherits Animal(name) {"
-        "  speak(): String => name;"
+        "  speak(): String -> name;"
         "}",
         &ctx);
     ASSERT_NOT_NULL(ast);
@@ -1194,6 +1208,7 @@ int main(void) {
     TEST_SUITE("LetExpr");
     RUN_TEST(let_simple);
     RUN_TEST(let_with_type_annotation);
+    RUN_TEST(let_with_function_type_annotation);
     RUN_TEST(let_multiple_bindings);
 
     TEST_SUITE("IfExpr");

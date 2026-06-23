@@ -38,6 +38,7 @@ typedef enum {
     TOKEN_DECOR,
     TOKEN_PROTOCOL,
     TOKEN_EXTENDS,
+    TOKEN_DEFINE,
 
     // Operadores y símbolos
     TOKEN_SEMICOLON,

@@ -112,14 +112,14 @@ static int analyze(const char *src) {
 
 TEST(parser_accepts_function_expr_and_concat_regression) {
     ASSERT(parse_ok(
-        "let n = 1, f = function (x: Number): Number => x + n in "
+        "let n = 1, f = function (x: Number): Number -> x + n in "
         "\"a\" @@ \"b\";"));
 }
 
 TEST(ast_tracks_closure_capture_candidates) {
     HulkASTContext ctx;
     HulkNode *ast = build_ast(
-        "let n = 5, add = function (x: Number): Number => x + n in add(3);",
+        "let n = 5, add = function (x: Number): Number -> x + n in add(3);",
         &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *root = PROG_DECL(ast, 0);
@@ -132,30 +132,30 @@ TEST(ast_tracks_closure_capture_candidates) {
 
 TEST(semantic_accepts_closure_capture) {
     ASSERT_EQ(0, analyze(
-        "let n: Number = 5, add = function (x: Number): Number => x + n in add(3);"));
+        "let n: Number = 5, add = function (x: Number): Number -> x + n in add(3);"));
 }
 
 TEST(semantic_accepts_curried_decorator) {
     ASSERT_EQ(0, analyze(
-        "function identity(f) => f;\n"
-        "function memoize(limit: Number) => identity;\n"
+        "function identity(f) -> f;\n"
+        "function memoize(limit: Number) -> identity;\n"
         "decor memoize(100)\n"
-        "function fib(n: Number): Number => n;\n"
+        "function fib(n: Number): Number -> n;\n"
         "fib(1);"));
 }
 
 TEST(semantic_rejects_bad_curried_decorator) {
     ASSERT_GT(analyze(
-        "function memoize(limit: Number): Number => limit;\n"
+        "function memoize(limit: Number): Number -> limit;\n"
         "decor memoize(100)\n"
-        "function fib(n: Number): Number => n;\n"
+        "function fib(n: Number): Number -> n;\n"
         "fib(1);"), 0);
 }
 
 TEST(ast_parses_method_decorator) {
     HulkASTContext ctx;
     HulkNode *ast = build_ast(
-        "type Box(v: Number) { decor log get(): Number => v; }",
+        "type Box(v: Number) { decor log get(): Number -> v; }",
         &ctx);
     ASSERT_NOT_NULL(ast);
     HulkNode *td = PROG_DECL(ast, 0);
@@ -169,9 +169,9 @@ TEST(ast_parses_method_decorator) {
 
 TEST(semantic_accepts_method_decorator) {
     ASSERT_EQ(0, analyze(
-        "function logger(f) => f;\n"
+        "function logger(f) -> f;\n"
         "type Box(v: Number) {\n"
-        "  decor logger get(): Number => v;\n"
+        "  decor logger get(): Number -> v;\n"
         "}\n"
         "let b = new Box(3) in b.get();"));
 }

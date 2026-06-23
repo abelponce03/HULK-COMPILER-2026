@@ -7,7 +7,7 @@
  * AST mediante acciones semánticas sobre una pila semántica. Materializa
  * el "árbol de derivación" del flujo clásico de compilación.
  *
- * El único punto no-LL(1) de HULK (lambda `(x)=>…` vs. `(expr)`) se
+ * El único punto no-LL(1) de HULK (lambda `(x)->…` vs. `(expr)`) se
  * resuelve con un lookahead local documentado.
  */
 

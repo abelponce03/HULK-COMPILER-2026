@@ -2,15 +2,15 @@
  * hulk_semantic_desugar.c — Desugaring de decoradores
  *
  * Transforma:
- *   decor d1, d2(arg) function f(...) => body;
+ *   decor d1, d2(arg) function f(...) -> body;
  * En:
- *   function f(...) => body;
+ *   function f(...) -> body;
  *   f := d1(d2(arg)(f));
  *
  * Los decoradores se aplican de derecha a izquierda.
  * Si un decorador tiene argumentos, se trata como fábrica currificada:
  *   decor memoize(100) function f ...
- *   => f := memoize(100)(f)
+ *   -> f := memoize(100)(f)
  * Los nodos nuevos se crean en la arena del HulkASTContext existente.
  *
  * SRP: Solo transformación AST → AST para decoradores.

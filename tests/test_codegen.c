@@ -158,17 +158,17 @@ TEST(cg_logical_or) {
  * ============================================================ */
 
 TEST(cg_function_simple) {
-    ASSERT_EQ(0, codegen_ok("function f(x: Number): Number => x + 1; f(5);"));
+    ASSERT_EQ(0, codegen_ok("function f(x: Number): Number -> x + 1; f(5);"));
 }
 
 TEST(cg_function_two_params) {
     ASSERT_EQ(0, codegen_ok(
-        "function add(a: Number, b: Number): Number => a + b; add(3, 4);"));
+        "function add(a: Number, b: Number): Number -> a + b; add(3, 4);"));
 }
 
 TEST(cg_function_ir_has_define) {
     ASSERT(codegen_contains(
-        "function f(x: Number): Number => x * 2; f(1);",
+        "function f(x: Number): Number -> x * 2; f(1);",
         "define"));
 }
 
@@ -296,7 +296,7 @@ TEST(cg_module_valid_arithmetic) {
 
 TEST(cg_module_valid_func_calls) {
     ASSERT_EQ(0, codegen_ok(
-        "function double(x: Number): Number => x * 2;"
+        "function double(x: Number): Number -> x * 2;"
         "print(double(21));"));
 }
 
@@ -307,7 +307,7 @@ TEST(cg_module_valid_let_if) {
 
 TEST(cg_module_valid_nested) {
     ASSERT_EQ(0, codegen_ok(
-        "function fact(n: Number): Number =>"
+        "function fact(n: Number): Number ->"
         "  if (n <= 1) 1 else n * fact(n - 1);"
         "print(fact(5));"));
 }

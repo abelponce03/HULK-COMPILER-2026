@@ -6,6 +6,42 @@
  */
 #include "hulk_codegen_internal.h"
 
+static LLVMValueRef cg_emit_iterator_method(CodegenContext *c,
+                                            LLVMValueRef obj,
+                                            const char *method,
+                                            LLVMTypeRef ret_t) {
+    int slot = cg_method_slot(c, method);
+    if (slot < 0 || !c->vtables_table) {
+        cg_error(c, NULL, "método iterador '%s' no disponible", method);
+        return ret_t == c->t_bool ? LLVMConstInt(c->t_bool, 0, 0)
+                                  : LLVMConstReal(c->t_double, 0.0);
+    }
+
+    LLVMValueRef tag = LLVMBuildLoad2(c->builder, c->t_i32, obj, "iter.tag");
+    LLVMTypeRef vt_table_t = LLVMArrayType(c->t_i8ptr, c->type_info_count);
+    LLVMValueRef idxs1[2] = {
+        LLVMConstInt(c->t_i32, 0, 0),
+        tag
+    };
+    LLVMValueRef vt_entry = LLVMBuildInBoundsGEP2(
+        c->builder, vt_table_t, c->vtables_table, idxs1, 2, "iter.vt.entry");
+    LLVMValueRef vt = LLVMBuildLoad2(c->builder, c->t_i8ptr, vt_entry, "iter.vt");
+
+    LLVMTypeRef vt_t = LLVMArrayType(c->t_i8ptr,
+        c->method_slot_count > 0 ? c->method_slot_count : 1);
+    LLVMValueRef idxs2[2] = {
+        LLVMConstInt(c->t_i32, 0, 0),
+        LLVMConstInt(c->t_i32, slot, 0)
+    };
+    LLVMValueRef fn_slot = LLVMBuildInBoundsGEP2(
+        c->builder, vt_t, vt, idxs2, 2, "iter.fn.slot");
+    LLVMValueRef fn = LLVMBuildLoad2(c->builder, c->t_i8ptr, fn_slot, "iter.fn");
+    LLVMTypeRef params[1] = { c->t_i8ptr };
+    LLVMTypeRef ft = LLVMFunctionType(ret_t, params, 1, 0);
+    return LLVMBuildCall2(c->builder, ft, fn, &obj, 1,
+                          ret_t == c->t_void ? "" : "iter.call");
+}
+
 LLVMValueRef cg_emit_let(CodegenContext *c, LetExprNode *n) {
     cg_push_scope(c);
 
@@ -25,7 +61,7 @@ LLVMValueRef cg_emit_let(CodegenContext *c, LetExprNode *n) {
             ? cg_emit_expr(c, vb->init_expr)
             : LLVMConstReal(c->t_double, 0.0);
 
-        /* Si el init es una función (lambda), la registramos directamente
+        /* Si el init es una función global, la registramos directamente
          * como sym->value con is_func=1; el callsite la llamará vía
          * sym->type (LLVMGlobalGetValueType). */
         if (init_val && LLVMIsAFunction(init_val)) {
@@ -222,8 +258,54 @@ LLVMValueRef cg_emit_for(CodegenContext *c, ForStmtNode *n) {
             }
         }
     }
-    if (!handled_as_range)
+    if (!handled_as_range) {
         end_val = cg_emit_expr(c, n->iterable);
+        if (LLVMTypeOf(end_val) != c->t_double) {
+            LLVMValueRef iterator = end_val;
+            LLVMValueRef loop_var = cg_create_entry_alloca(c, c->t_double,
+                                                           n->var_name);
+            LLVMBuildStore(c->builder, LLVMConstReal(c->t_double, 0.0),
+                           loop_var);
+            cg_define(c, n->var_name, loop_var, c->t_double, 0);
+
+            LLVMValueRef fn = c->current_fn;
+            LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "for.iter.cond");
+            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "for.iter.body");
+            LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(
+                c->llvm_ctx, fn, "for.iter.end");
+
+            LLVMValueRef result_ptr = cg_create_entry_alloca(c, c->t_double,
+                                                             "for.iter.val");
+            LLVMBuildStore(c->builder, LLVMConstReal(c->t_double, 0.0),
+                           result_ptr);
+            LLVMBuildBr(c->builder, cond_bb);
+
+            LLVMPositionBuilderAtEnd(c->builder, cond_bb);
+            LLVMValueRef keep = cg_emit_iterator_method(c, iterator, "next",
+                                                        c->t_bool);
+            LLVMBuildCondBr(c->builder, keep, body_bb, end_bb);
+
+            LLVMPositionBuilderAtEnd(c->builder, body_bb);
+            LLVMValueRef current = cg_emit_iterator_method(c, iterator,
+                                                           "current",
+                                                           c->t_double);
+            LLVMBuildStore(c->builder, current, loop_var);
+            LLVMValueRef body_val = cg_emit_expr(c, n->body);
+            LLVMTypeRef body_t = LLVMTypeOf(body_val);
+            int body_is_void = (body_t == c->t_void);
+            if (!body_is_void && body_t == c->t_double)
+                LLVMBuildStore(c->builder, body_val, result_ptr);
+            LLVMBuildBr(c->builder, cond_bb);
+
+            LLVMPositionBuilderAtEnd(c->builder, end_bb);
+            cg_pop_scope(c);
+            if (body_is_void) return LLVMGetUndef(c->t_void);
+            return LLVMBuildLoad2(c->builder, c->t_double, result_ptr,
+                                  "for.iter.res");
+        }
+    }
 
     LLVMValueRef counter = cg_create_entry_alloca(c, c->t_double, n->var_name);
     LLVMBuildStore(c->builder, start_val, counter);

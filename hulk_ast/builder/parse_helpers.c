@@ -37,6 +37,13 @@ int match(ASTBuilder *b, TokenType t) {
     return 0;
 }
 
+int is_ident_like(TokenType t) {
+    /* PIAD usa `base` como identificador en bindings/atributos. Léxicamente
+     * sigue siendo keyword para permitir `base(...)` como expresión especial,
+     * pero en posiciones declarativas lo aceptamos como nombre. */
+    return t == TOKEN_IDENT || t == TOKEN_BASE;
+}
+
 char* save_lexeme(ASTBuilder *b) {
     return hulk_ast_strdup(b->ctx, b->current.lexeme);
 }
@@ -72,7 +79,7 @@ int expect(ASTBuilder *b, TokenType t) {
 }
 
 char* expect_ident(ASTBuilder *b) {
-    if (b->current.type != TOKEN_IDENT) {
+    if (!is_ident_like(b->current.type)) {
         error_at(b, "se esperaba un identificador");
         return NULL;
     }
@@ -123,7 +130,7 @@ void parse_arg_list(ASTBuilder *b, HulkNodeList *out) {
 // ArgIdList → ArgId (COMMA ArgId)* | ε
 // ArgId → IDENT TypeAnnotation
 void parse_arg_id_list(ASTBuilder *b, HulkNodeList *out) {
-    if (!check(b, TOKEN_IDENT)) return;
+    if (!is_ident_like(b->current.type)) return;
 
     do {
         int line = cur_line(b), col = cur_col(b);
@@ -135,11 +142,65 @@ void parse_arg_id_list(ASTBuilder *b, HulkNodeList *out) {
     } while (match(b, TOKEN_COMMA));
 }
 
-// TypeAnnotation → COLON IDENT | ε
+static char* ast_join3(ASTBuilder *b, const char *a, const char *mid,
+                       const char *c) {
+    const char *sa = a ? a : "";
+    const char *sm = mid ? mid : "";
+    const char *sc = c ? c : "";
+    size_t len = strlen(sa) + strlen(sm) + strlen(sc);
+    char *out = hulk_ast_alloc(b->ctx, len + 1);
+    memcpy(out, sa, strlen(sa));
+    memcpy(out + strlen(sa), sm, strlen(sm));
+    memcpy(out + strlen(sa) + strlen(sm), sc, strlen(sc));
+    out[len] = '\0';
+    return out;
+}
+
+static char* parse_type_ref(ASTBuilder *b) {
+    char *type = NULL;
+    if (check(b, TOKEN_IDENT)) {
+        type = save_lexeme(b);
+        advance(b);
+    } else if (check(b, TOKEN_LPAREN)) {
+        advance(b);
+        char *params = hulk_ast_strdup(b->ctx, "");
+
+        if (!check(b, TOKEN_RPAREN)) {
+            params = parse_type_ref(b);
+            while (match(b, TOKEN_COMMA)) {
+                char *next = parse_type_ref(b);
+                params = ast_join3(b, params, ",", next);
+            }
+        }
+
+        expect(b, TOKEN_RPAREN);
+        expect(b, TOKEN_ARROW);
+        char *ret = parse_type_ref(b);
+        char *head = ast_join3(b, "(", params, ")->");
+        type = ast_join3(b, head, "", ret);
+    } else {
+        error_at(b, "se esperaba un tipo");
+        type = hulk_ast_strdup(b->ctx, "Object");
+    }
+
+    while (check(b, TOKEN_LBRACKET) || check(b, TOKEN_MULT)) {
+        if (check(b, TOKEN_MULT)) {
+            advance(b);
+            type = ast_join3(b, type, "", "*");
+            continue;
+        }
+        advance(b);
+        expect(b, TOKEN_RBRACKET);
+        type = ast_join3(b, type, "", "[]");
+    }
+    return type;
+}
+
+// TypeAnnotation → COLON TypeRef | ε
 char* parse_type_annotation(ASTBuilder *b) {
     if (check(b, TOKEN_COLON)) {
         advance(b);
-        return expect_ident(b);
+        return parse_type_ref(b);
     }
     return NULL;
 }

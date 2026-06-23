@@ -1,15 +1,15 @@
 type Shape {
-    area() => 0;
+    area() -> 0;
 }
 
 type Square(s) inherits Shape {
     s = s;
-    area() => self.s * self.s;
+    area() -> self.s * self.s;
 }
 
 type Circle(r) inherits Shape {
     r = r;
-    area() => 3.14 * self.r * self.r;
+    area() -> 3.14 * self.r * self.r;
 }
 
 let shape = if (true) new Square(4) else new Circle(2) in

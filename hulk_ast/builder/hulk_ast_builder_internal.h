@@ -42,6 +42,7 @@ typedef struct {
 void   advance(ASTBuilder *b);
 int    check(ASTBuilder *b, TokenType t);
 int    match(ASTBuilder *b, TokenType t);
+int    is_ident_like(TokenType t);
 char*  save_lexeme(ASTBuilder *b);
 int    cur_line(ASTBuilder *b);
 int    cur_col(ASTBuilder *b);
@@ -101,6 +102,7 @@ HulkNode* parse_block_stmt(ASTBuilder *b);
 // ============================================================
 
 HulkNode* parse_function_def(ASTBuilder *b);
+HulkNode* parse_define_def(ASTBuilder *b);
 HulkNode* parse_function_expr(ASTBuilder *b);
 HulkNode* parse_type_def(ASTBuilder *b);
 HulkNode* parse_decor_block(ASTBuilder *b);

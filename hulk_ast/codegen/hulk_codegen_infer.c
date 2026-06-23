@@ -16,6 +16,11 @@
  * el llamador debe decidir (no hay un LLVMType único razonable). */
 LLVMTypeRef cg_llvm_type_for_name(CodegenContext *c, const char *name) {
     if (!name) return NULL;
+    size_t len = strlen(name);
+    if (name[0] == '(' || (len >= 2 && strcmp(name + len - 2, "[]") == 0) ||
+        (len >= 1 && name[len - 1] == '*') ||
+        strcmp(name, "<function>") == 0)
+        return c->t_i8ptr;
     if (strcmp(name, "Number") == 0)  return c->t_double;
     if (strcmp(name, "String") == 0)  return c->t_i8ptr;
     if (strcmp(name, "Boolean") == 0) return c->t_bool;
@@ -28,7 +33,7 @@ LLVMTypeRef cg_llvm_type_for_name(CodegenContext *c, const char *name) {
 LLVMTypeRef cg_infer_return_type(CodegenContext *c, const char *ann) {
     if (!ann) return c->t_double;  /* default */
     LLVMTypeRef t = cg_llvm_type_for_name(c, ann);
-    return t ? t : c->t_double;
+    return t ? t : c->t_i8ptr;
 }
 
 LLVMTypeRef cg_infer_body_return_type(CodegenContext *c, HulkNode *body) {
@@ -95,12 +100,11 @@ LLVMTypeRef cg_infer_body_return_type(CodegenContext *c, HulkNode *body) {
 
 LLVMTypeRef cg_infer_param_type(CodegenContext *c, const char *ann) {
     if (!ann) return c->t_double;
-    if (strcmp(ann, "Number") == 0) return c->t_double;
-    if (strcmp(ann, "String") == 0) return c->t_i8ptr;
-    if (strcmp(ann, "Boolean") == 0) return c->t_bool;
+    LLVMTypeRef mapped = cg_llvm_type_for_name(c, ann);
+    if (mapped) return mapped;
     CGTypeInfo *ti = cg_type_info_find(c, ann);
     if (ti) return ti->ptr_type;
-    return c->t_double;
+    return c->t_i8ptr;
 }
 
 static int self_member_used_as_string(HulkNode *n, const char *member) {

@@ -54,18 +54,30 @@ HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
             VectorLitNode *vn = (VectorLitNode*)node;
             for (int i = 0; i < vn->items.count; i++)
                 sem_check_expr(c, vn->items.items[i]);
-            /* Por simplicidad, asumimos vector de Number. */
-            t = c->t_number;
+            t = sem_resolve_annotation(c, "Number[]", node);
             break;
         }
         case NODE_INDEX_EXPR: {
             IndexExprNode *ix = (IndexExprNode*)node;
-            sem_check_expr(c, ix->object);
+            HulkType *obj_t = sem_check_expr(c, ix->object);
             HulkType *idx_t = sem_check_expr(c, ix->index);
             if (!sem_type_conforms(idx_t, c->t_number))
                 sem_error(c, node, "índice de vector debe ser Number (es %s)",
                           idx_t->name);
             t = c->t_number;
+            if (obj_t && obj_t->name) {
+                size_t len = strlen(obj_t->name);
+                if (len >= 2 && strcmp(obj_t->name + len - 2, "[]") == 0) {
+                    char *elem = malloc(len - 1);
+                    if (elem) {
+                        memcpy(elem, obj_t->name, len - 2);
+                        elem[len - 2] = '\0';
+                        HulkType *et = sem_resolve_annotation(c, elem, node);
+                        free(elem);
+                        if (et && et != c->t_error) t = et;
+                    }
+                }
+            }
             break;
         }
         default:                   t = c->t_error; break;
@@ -339,6 +351,15 @@ static HulkType* check_call(SemanticContext *c, CallExprNode *n) {
         HulkType *obj_t = sem_check_expr(c, ma->object);
 
         if (obj_t) {
+            if (strcmp(ma->member, "size") == 0) {
+                if (n->args.count != 0)
+                    sem_error(c, (HulkNode*)n,
+                        "'size' espera 0 argumentos, recibió %d",
+                        n->args.count);
+                for (int i = 0; i < n->args.count; i++)
+                    sem_check_expr(c, n->args.items[i]);
+                return c->t_number;
+            }
             Symbol *method = sem_lookup_member(obj_t, ma->member);
             if (method && method->kind == SYM_METHOD) {
                 char label[256];

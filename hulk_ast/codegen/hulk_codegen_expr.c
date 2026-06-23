@@ -23,6 +23,152 @@ static LLVMValueRef emit_binary_op(CodegenContext *c, BinaryOpNode *n);
 static LLVMValueRef emit_unary_op(CodegenContext *c, UnaryOpNode *n);
 static LLVMValueRef emit_concat(CodegenContext *c, ConcatExprNode *n);
 
+static int cg_name_has_suffix(const char *name, const char *suffix) {
+    if (!name || !suffix) return 0;
+    size_t ln = strlen(name), ls = strlen(suffix);
+    return ln >= ls && strcmp(name + ln - ls, suffix) == 0;
+}
+
+typedef struct {
+    const char **names;
+    int count;
+    int cap;
+} NameList;
+
+static int name_list_contains(NameList *l, const char *name) {
+    if (!l || !name) return 0;
+    for (int i = 0; i < l->count; i++)
+        if (l->names[i] && strcmp(l->names[i], name) == 0) return 1;
+    return 0;
+}
+
+static void name_list_add(NameList *l, const char *name) {
+    if (!l || !name || name_list_contains(l, name)) return;
+    if (l->count >= l->cap) {
+        int nc = l->cap == 0 ? 8 : l->cap * 2;
+        const char **tmp = realloc(l->names, sizeof(char*) * nc);
+        if (!tmp) return;
+        l->names = tmp;
+        l->cap = nc;
+    }
+    l->names[l->count++] = name;
+}
+
+static void collect_lambda_captures(CodegenContext *c, HulkNode *node,
+                                    NameList *params, NameList *out) {
+    if (!node) return;
+    switch (node->type) {
+        case NODE_IDENT: {
+            const char *name = ((IdentNode*)node)->name;
+            if (!name_list_contains(params, name) && cg_lookup(c->current, name))
+                name_list_add(out, name);
+            return;
+        }
+        case NODE_FUNCTION_EXPR:
+            return; /* las lambdas anidadas capturan por su cuenta */
+        case NODE_BINARY_OP: {
+            BinaryOpNode *b = (BinaryOpNode*)node;
+            collect_lambda_captures(c, b->left, params, out);
+            collect_lambda_captures(c, b->right, params, out);
+            return;
+        }
+        case NODE_CONCAT_EXPR: {
+            ConcatExprNode *ce = (ConcatExprNode*)node;
+            collect_lambda_captures(c, ce->left, params, out);
+            collect_lambda_captures(c, ce->right, params, out);
+            return;
+        }
+        case NODE_UNARY_OP:
+            collect_lambda_captures(c, ((UnaryOpNode*)node)->operand, params, out);
+            return;
+        case NODE_CALL_EXPR: {
+            CallExprNode *ce = (CallExprNode*)node;
+            collect_lambda_captures(c, ce->callee, params, out);
+            for (int i = 0; i < ce->args.count; i++)
+                collect_lambda_captures(c, ce->args.items[i], params, out);
+            return;
+        }
+        case NODE_MEMBER_ACCESS:
+            collect_lambda_captures(c, ((MemberAccessNode*)node)->object, params, out);
+            return;
+        case NODE_INDEX_EXPR: {
+            IndexExprNode *ix = (IndexExprNode*)node;
+            collect_lambda_captures(c, ix->object, params, out);
+            collect_lambda_captures(c, ix->index, params, out);
+            return;
+        }
+        case NODE_ASSIGN: {
+            AssignNode *a = (AssignNode*)node;
+            collect_lambda_captures(c, a->target, params, out);
+            collect_lambda_captures(c, a->value, params, out);
+            return;
+        }
+        case NODE_DESTRUCT_ASSIGN: {
+            DestructAssignNode *d = (DestructAssignNode*)node;
+            collect_lambda_captures(c, d->target, params, out);
+            collect_lambda_captures(c, d->value, params, out);
+            return;
+        }
+        case NODE_LET_EXPR: {
+            LetExprNode *l = (LetExprNode*)node;
+            NameList nested = *params;
+            nested.names = NULL; nested.count = 0; nested.cap = 0;
+            for (int i = 0; i < params->count; i++) name_list_add(&nested, params->names[i]);
+            for (int i = 0; i < l->bindings.count; i++) {
+                VarBindingNode *vb = (VarBindingNode*)l->bindings.items[i];
+                collect_lambda_captures(c, vb->init_expr, &nested, out);
+                name_list_add(&nested, vb->name);
+            }
+            collect_lambda_captures(c, l->body, &nested, out);
+            free(nested.names);
+            return;
+        }
+        case NODE_IF_EXPR: {
+            IfExprNode *iff = (IfExprNode*)node;
+            collect_lambda_captures(c, iff->condition, params, out);
+            collect_lambda_captures(c, iff->then_body, params, out);
+            for (int i = 0; i < iff->elifs.count; i++) {
+                ElifBranchNode *e = (ElifBranchNode*)iff->elifs.items[i];
+                collect_lambda_captures(c, e->condition, params, out);
+                collect_lambda_captures(c, e->body, params, out);
+            }
+            collect_lambda_captures(c, iff->else_body, params, out);
+            return;
+        }
+        case NODE_BLOCK_STMT: {
+            BlockStmtNode *b = (BlockStmtNode*)node;
+            for (int i = 0; i < b->statements.count; i++)
+                collect_lambda_captures(c, b->statements.items[i], params, out);
+            return;
+        }
+        case NODE_WHILE_STMT: {
+            WhileStmtNode *w = (WhileStmtNode*)node;
+            collect_lambda_captures(c, w->condition, params, out);
+            collect_lambda_captures(c, w->body, params, out);
+            return;
+        }
+        case NODE_FOR_STMT: {
+            ForStmtNode *f = (ForStmtNode*)node;
+            collect_lambda_captures(c, f->iterable, params, out);
+            NameList nested = *params;
+            nested.names = NULL; nested.count = 0; nested.cap = 0;
+            for (int i = 0; i < params->count; i++) name_list_add(&nested, params->names[i]);
+            name_list_add(&nested, f->var_name);
+            collect_lambda_captures(c, f->body, &nested, out);
+            free(nested.names);
+            return;
+        }
+        case NODE_VECTOR_LIT: {
+            VectorLitNode *v = (VectorLitNode*)node;
+            for (int i = 0; i < v->items.count; i++)
+                collect_lambda_captures(c, v->items.items[i], params, out);
+            return;
+        }
+        default:
+            return;
+    }
+}
+
 LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
     if (!node) return LLVMConstReal(c->t_double, 0.0);
 
@@ -52,27 +198,66 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
             snprintf(lname, sizeof(lname), "lambda.%d", lambda_counter++);
 
             int argc = fn_n->params.count;
-            LLVMTypeRef *ptypes = calloc(argc > 0 ? argc : 1, sizeof(LLVMTypeRef));
+            LLVMTypeRef *ptypes = calloc((argc + 1) > 0 ? (argc + 1) : 1,
+                                         sizeof(LLVMTypeRef));
+            ptypes[0] = c->t_i8ptr; /* closure environment */
             for (int i = 0; i < argc; i++) {
                 VarBindingNode *p = (VarBindingNode*)fn_n->params.items[i];
-                if (p->type_annotation) {
-                    if (strcmp(p->type_annotation, "String") == 0)
-                        ptypes[i] = c->t_i8ptr;
-                    else if (strcmp(p->type_annotation, "Boolean") == 0)
-                        ptypes[i] = c->t_bool;
-                    else
-                        ptypes[i] = c->t_double;
-                } else {
-                    ptypes[i] = c->t_double;  /* default */
-                }
+                ptypes[i + 1] = cg_infer_param_type(c, p->type_annotation);
             }
-            LLVMTypeRef ret_t = c->t_double;
-            if (fn_n->return_type && strcmp(fn_n->return_type, "Boolean") == 0)
-                ret_t = c->t_bool;
-            else if (fn_n->return_type && strcmp(fn_n->return_type, "String") == 0)
-                ret_t = c->t_i8ptr;
-            LLVMTypeRef fn_type = LLVMFunctionType(ret_t, ptypes, argc, 0);
+            LLVMTypeRef ret_t = cg_infer_return_type(c, fn_n->return_type);
+            LLVMTypeRef fn_type = LLVMFunctionType(ret_t, ptypes, argc + 1, 0);
             LLVMValueRef fn = LLVMAddFunction(c->module, lname, fn_type);
+
+            typedef struct {
+                const char *name;
+                LLVMValueRef global;
+                LLVMTypeRef type;
+            } CaptureBinding;
+            NameList params = {0}, cap_names = {0};
+            for (int i = 0; i < argc; i++) {
+                VarBindingNode *p = (VarBindingNode*)fn_n->params.items[i];
+                name_list_add(&params, p->name);
+            }
+            for (int i = 0; i < fn_n->captures.count; i++) {
+                IdentNode *cap = (IdentNode*)fn_n->captures.items[i];
+                if (cap) name_list_add(&cap_names, cap->name);
+            }
+            collect_lambda_captures(c, fn_n->body, &params, &cap_names);
+
+            CaptureBinding *caps = NULL;
+            int cap_count = cap_names.count;
+            if (cap_count > 0)
+                caps = calloc(cap_count, sizeof(CaptureBinding));
+            for (int i = 0; i < cap_count; i++) {
+                const char *cap_name = cap_names.names[i];
+                CGSymbol *sym = cg_lookup(c->current, cap_name);
+                if (!sym) continue;
+                LLVMValueRef cap_val = sym->is_func
+                    ? sym->value
+                    : LLVMBuildLoad2(c->builder, sym->type, sym->value, "cap");
+                LLVMTypeRef cap_t = LLVMTypeOf(cap_val);
+                caps[i].name = cap_name;
+                caps[i].global = cap_val;
+                caps[i].type = cap_t;
+            }
+
+            LLVMTypeRef i64 = LLVMInt64TypeInContext(c->llvm_ctx);
+            LLVMValueRef bytes = LLVMConstInt(i64, 8 * (cap_count + 1), 0);
+            LLVMTypeRef malloc_params[1] = { i64 };
+            LLVMTypeRef malloc_ft = LLVMFunctionType(c->t_i8ptr, malloc_params, 1, 0);
+            LLVMValueRef closure = LLVMBuildCall2(c->builder, malloc_ft,
+                                                  c->fn_malloc, &bytes, 1,
+                                                  "closure");
+            LLVMBuildStore(c->builder, fn, closure);
+            for (int i = 0; i < cap_count; i++) {
+                if (!caps || !caps[i].name) continue;
+                LLVMValueRef offset = LLVMConstInt(i64, 8 * (i + 1), 0);
+                LLVMValueRef slot = LLVMBuildInBoundsGEP2(
+                    c->builder, LLVMInt8TypeInContext(c->llvm_ctx),
+                    closure, &offset, 1, "closure.cap.slot");
+                LLVMBuildStore(c->builder, caps[i].global, slot);
+            }
 
             /* Emitir el cuerpo */
             LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(c->builder);
@@ -83,14 +268,31 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
                 c->llvm_ctx, fn, "entry");
             LLVMPositionBuilderAtEnd(c->builder, entry);
 
+            CGScope *saved_scope_for_lambda = c->current;
+            c->current = c->global;
             cg_push_scope(c);
+            LLVMValueRef env = LLVMGetParam(fn, 0);
             for (int i = 0; i < argc; i++) {
                 VarBindingNode *p = (VarBindingNode*)fn_n->params.items[i];
-                LLVMValueRef pv = LLVMGetParam(fn, i);
+                LLVMValueRef pv = LLVMGetParam(fn, i + 1);
                 LLVMTypeRef pt = LLVMTypeOf(pv);
                 LLVMValueRef alloca = cg_create_entry_alloca(c, pt, p->name);
                 LLVMBuildStore(c->builder, pv, alloca);
                 cg_define(c, p->name, alloca, pt, 0);
+            }
+            for (int i = 0; i < cap_count; i++) {
+                if (caps && caps[i].name) {
+                    LLVMValueRef offset = LLVMConstInt(i64, 8 * (i + 1), 0);
+                    LLVMValueRef slot = LLVMBuildInBoundsGEP2(
+                        c->builder, LLVMInt8TypeInContext(c->llvm_ctx),
+                        env, &offset, 1, "closure.cap.load.slot");
+                    LLVMValueRef cap_loaded = LLVMBuildLoad2(c->builder,
+                        caps[i].type, slot, "closure.cap");
+                    LLVMValueRef alloca = cg_create_entry_alloca(c, caps[i].type,
+                                                                  caps[i].name);
+                    LLVMBuildStore(c->builder, cap_loaded, alloca);
+                    cg_define(c, caps[i].name, alloca, caps[i].type, 0);
+                }
             }
 
             LLVMValueRef body_val = cg_emit_expr(c, fn_n->body);
@@ -100,11 +302,15 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
                 else LLVMBuildRet(c->builder, body_val);
             }
             cg_pop_scope(c);
+            c->current = saved_scope_for_lambda;
 
             c->current_fn = saved_fn;
             if (saved_bb) LLVMPositionBuilderAtEnd(c->builder, saved_bb);
+            free(caps);
+            free(params.names);
+            free(cap_names.names);
             free(ptypes);
-            return fn;
+            return closure;
         }
         case NODE_BINARY_OP:       return emit_binary_op(c, (BinaryOpNode*)node);
         case NODE_UNARY_OP:        return emit_unary_op(c, (UnaryOpNode*)node);
@@ -277,7 +483,11 @@ LLVMValueRef cg_emit_expr(CodegenContext *c, HulkNode *node) {
                 c->builder,
                 LLVMInt8TypeInContext(c->llvm_ctx),
                 obj, &offset, 1, "elem.ptr");
-            return LLVMBuildLoad2(c->builder, c->t_double, gep, "elem");
+            LLVMTypeRef elem_t = c->t_double;
+            if (cg_name_has_suffix(node->static_type, "[]") ||
+                (node->static_type && strcmp(node->static_type, "Object") == 0))
+                elem_t = c->t_i8ptr;
+            return LLVMBuildLoad2(c->builder, elem_t, gep, "elem");
         }
         case NODE_BASE_CALL: {
             /* base() — llamar a la implementación del método padre con

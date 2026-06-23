@@ -152,19 +152,9 @@ HulkType* sem_type_resolve(SemanticContext *ctx, const char *name);
 HulkType* sem_function_type_new(SemanticContext *ctx, HulkType **params,
                                 int param_count, HulkType *ret);
 int       sem_function_type_equals(HulkType *a, HulkType *b);
-
-/* Helper: resuelve type_annotation o retorna t_object (con error si no existe) */
-static inline HulkType* sem_resolve_annotation(SemanticContext *c,
-                                                 const char *annotation,
-                                                 HulkNode *err_node) {
-    if (!annotation) return c->t_object;
-    HulkType *t = sem_type_resolve(c, annotation);
-    if (!t) {
-        sem_error(c, err_node, "tipo '%s' no definido", annotation);
-        return c->t_error;
-    }
-    return t;
-}
+HulkType* sem_resolve_annotation(SemanticContext *c,
+                                 const char *annotation,
+                                 HulkNode *err_node);
 
 /* Inferencia ad-hoc del tipo de un parámetro sin anotación, examinando
  * cómo se usa el identificador `param_name` dentro del body. Versión

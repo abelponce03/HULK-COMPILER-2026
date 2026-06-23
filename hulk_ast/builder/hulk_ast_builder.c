@@ -21,6 +21,7 @@
  */
 
 #include "hulk_ast_builder_internal.h"
+#include "hulk_ll1_builder.h"
 
 // ============================================================
 //  Parse: Program
@@ -51,10 +52,11 @@ HulkNode* parse_top_level(ASTBuilder *b) {
     if (check(b, TOKEN_FUNCTION)) {
         LexerContext lookahead = b->lexer;
         Token next = lexer_next_token(&lookahead);
-        int is_named = (next.type == TOKEN_IDENT);
+        int is_named = is_ident_like(next.type);
         free(next.lexeme);
-        return is_named ? parse_function_def(b) : parse_stmt(b);
+        if (is_named) return parse_function_def(b);
     }
+    if (check(b, TOKEN_DEFINE))   return parse_define_def(b);
     if (check(b, TOKEN_TYPE))     return parse_type_def(b);
     if (check(b, TOKEN_DECOR))    return parse_decor_block(b);
     if (check(b, TOKEN_PROTOCOL)) return parse_protocol_def(b);
@@ -100,32 +102,5 @@ HulkNode* parse_expr(ASTBuilder *b) {
 // ============================================================
 
 HulkNode* hulk_build_ast(HulkASTContext *ctx, DFA *dfa, const char *input) {
-    if (!ctx || !dfa || !input) return NULL;
-
-    ASTBuilder b;
-    b.ctx       = ctx;
-    b.had_error = 0;
-    b.panic     = 0;
-
-    // Inicializar lexer
-    lexer_init(&b.lexer, dfa, input);
-
-    // Primer token (lookahead)
-    b.current = lexer_next_token(&b.lexer);
-
-    // Parsear programa completo
-    HulkNode *ast = parse_program(&b);
-
-    // Limpiar último token si quedó
-    if (b.current.lexeme) {
-        free(b.current.lexeme);
-        b.current.lexeme = NULL;
-    }
-
-    if (b.had_error) {
-        LOG_WARN_MSG("ast_builder", "AST construido con %s",
-                     "errores (puede estar incompleto)");
-    }
-
-    return b.had_error ? NULL : ast;
+    return hulk_ll1_build_ast(ctx, dfa, input);
 }

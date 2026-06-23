@@ -697,7 +697,7 @@ TEST(composite_tree_let_with_binary) {
 }
 
 TEST(composite_tree_type_with_methods) {
-    // type Point { x = 0; y = 0; dist() => ... }
+    // type Point { x = 0; y = 0; dist() -> ... }
     HulkASTContext ctx;
     hulk_ast_context_init(&ctx);
 

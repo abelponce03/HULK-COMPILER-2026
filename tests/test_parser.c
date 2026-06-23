@@ -84,11 +84,11 @@ TEST(parse_let_in) {
 }
 
 TEST(parse_function_decl) {
-    ASSERT(parse_ok("function f(x: Number): Number => x + 1;"));
+    ASSERT(parse_ok("function f(x: Number): Number -> x + 1;"));
 }
 
 TEST(parse_function_expr) {
-    ASSERT(parse_ok("function (x: Number): Number => x + 1;"));
+    ASSERT(parse_ok("function (x: Number): Number -> x + 1;"));
 }
 
 TEST(parse_if_else) {
@@ -102,7 +102,7 @@ TEST(parse_while_loop) {
 TEST(parse_type_decl) {
     ASSERT(parse_ok(
         "type Point(x: Number, y: Number) {"
-        "  sum(): Number => self.x + self.y;"
+        "  sum(): Number -> self.x + self.y;"
         "}"));
 }
 
@@ -135,14 +135,14 @@ TEST(parse_string_concat) {
 TEST(decor_single_function) {
     ASSERT(parse_ok(
         "decor log "
-        "function factorial(n: Number): Number => "
+        "function factorial(n: Number): Number -> "
         "if (n == 0) 1 else n * factorial(n - 1);"));
 }
 
 TEST(decor_parametrized) {
     ASSERT(parse_ok(
         "decor memoize(100) "
-        "function fib(n: Number): Number => "
+        "function fib(n: Number): Number -> "
         "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
 }
 
@@ -150,7 +150,7 @@ TEST(decor_comma_list) {
     // Multiple decorators with comma: decor a, b(args)
     ASSERT(parse_ok(
         "decor log, memoize(100) "
-        "function fib(n: Number): Number => "
+        "function fib(n: Number): Number -> "
         "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
 }
 
@@ -159,7 +159,7 @@ TEST(decor_stacked) {
     ASSERT(parse_ok(
         "decor log "
         "decor memoize(100) "
-        "function fib(n: Number): Number => "
+        "function fib(n: Number): Number -> "
         "if (n <= 1) n else fib(n - 1) + fib(n - 2);"));
 }
 
@@ -167,7 +167,7 @@ TEST(decor_on_type) {
     ASSERT(parse_ok(
         "decor serializable "
         "type Point(x: Number, y: Number) {"
-        "  sum(): Number => self.x + self.y;"
+        "  sum(): Number -> self.x + self.y;"
         "}"));
 }
 
@@ -175,21 +175,21 @@ TEST(decor_multi_arg) {
     // Decorator with multiple arguments (currying)
     ASSERT(parse_ok(
         "decor retry(3, 500) "
-        "function connect(): Number => 42;"));
+        "function connect(): Number -> 42;"));
 }
 
 TEST(decor_with_undecorated) {
     // Mix of decorated and undecorated functions
     ASSERT(parse_ok(
-        "function plain(): Number => 1; "
+        "function plain(): Number -> 1; "
         "decor log "
-        "function decorated(): Number => 2;"));
+        "function decorated(): Number -> 2;"));
 }
 
 TEST(decor_method_inside_type) {
     ASSERT(parse_ok(
         "type Box(v: Number) {"
-        "  decor log get(): Number => v;"
+        "  decor log get(): Number -> v;"
         "}"));
 }
 
@@ -200,7 +200,7 @@ TEST(error_decor_no_target) {
 
 TEST(error_decor_missing_ident) {
     // decor without identifier → error
-    ASSERT_GT(parse_errors("decor function f(): Number => 1;"), 0);
+    ASSERT_GT(parse_errors("decor function f(): Number -> 1;"), 0);
 }
 
 // ============== TESTS: SYNTAX ERRORS ==============

@@ -1,8 +1,8 @@
 type Point(x, y) {
     x = x;
     y = y;
-    getX() => self.x;
-    getY() => self.y;
+    getX() -> self.x;
+    getY() -> self.y;
 }
 
 let p = new Point(3, 4) in {

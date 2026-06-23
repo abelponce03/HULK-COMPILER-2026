@@ -1,1 +1,1 @@
-let f = (x) => x * 2 in print(f(21));
+let f = (x) -> x * 2 in print(f(21));
