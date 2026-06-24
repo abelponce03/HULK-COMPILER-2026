@@ -113,7 +113,208 @@ El lexer HULK no esta escrito como una secuencia manual de `if` o `switch` sobre
 - `generador_analizadores_lexicos/afd.c`: construccion del automata finito determinista.
 - `generador_analizadores_lexicos/lexer.c`: ejecucion del DFA sobre la entrada fuente.
 
-`hulk_compiler.c` contiene el pipeline que construye el lexer: crea contexto de AST de regex, parsea las expresiones regulares de `hulk_tokens.c`, construye el DFA y lo deja listo para `lexer_next_token`.
+`hulk_compiler.c` contiene el pipeline que construye el lexer: crea contexto de AST de regex, parsea las expresiones regulares de `hulk_tokens.c`, calcula las funciones necesarias sobre el AST de regex, construye el DFA y lo deja listo para `lexer_next_token`. La secuencia real de fases se ve en el arreglo `lexer_pipeline`:
+
+```c
+static int phase_build_ast(LexerBuildContext *lbc) {
+    lbc->ast = build_lexer_ast(hulk_tokens, hulk_token_count,
+                               lbc->ast_ctx, lbc->rctx);
+    ...
+}
+
+static int phase_compute_functions(LexerBuildContext *lbc) {
+    ast_compute_functions(lbc->ast);
+    ast_build_leaf_index(lbc->ast, lbc->ast_ctx);
+    ast_compute_followpos(lbc->ast, lbc->ast_ctx);
+    return 1;
+}
+
+static int phase_build_dfa(LexerBuildContext *lbc) {
+    ...
+    lbc->dfa = dfa_create(alphabet, alphabet_size);
+    dfa_build(lbc->dfa, lbc->ast, lbc->ast_ctx, NULL);
+    ...
+}
+
+static const CompilerPhase lexer_pipeline[] = {
+    { "Asignar contextos",     phase_alloc_contexts     },
+    { "Construir AST",         phase_build_ast          },
+    { "Calcular funciones",    phase_compute_functions  },
+    { "Construir DFA",         phase_build_dfa          },
+    { "Exportar DFA",          phase_export_dfa         },
+    { NULL, NULL }
+};
+```
+
+El algoritmo usado no construye un AFN intermedio de Thompson para luego determinizarlo. La evidencia principal esta en `generador_analizadores_lexicos/afd.c`, cuyo comentario identifica el "Algoritmo 3.36" del Dragon Book: construccion directa de un DFA desde el AST de la expresion regular usando posiciones. En terminos de compilacion, el proyecto aplica el metodo directo regex -> arbol sintactico -> `nullable`/`firstpos`/`lastpos`/`followpos` -> DFA.
+
+La entrada del algoritmo no es una sola regex, sino una union de todas las regex de tokens. `generador_analizadores_lexicos/regex_ast_actions.c` construye para cada token un arbol `regex#`, registra en que posicion del marcador `#` termina ese token y combina todos los arboles con `OR`:
+
+```c
+ASTNode* ast = regex_parse(tokens[i].regex, ctx, rctx);
+
+int end_pos = get_next_position(ctx);
+ASTNode* end_marker = ast_create_leaf(ctx, '#', end_pos);
+
+ctx->pos_to_token[end_pos] = tokens[i].token_id;
+
+ASTNode* marked = ast_create_concat(ctx, ast, end_marker);
+
+if (combined == NULL) {
+    combined = marked;
+} else {
+    combined = ast_create_or(ctx, combined, marked);
+}
+```
+
+Ese marcador `#` es fundamental: permite decidir que estado del DFA es aceptador y que token acepta. Si un estado contiene una posicion asociada en `ctx->pos_to_token`, entonces reconoce el token correspondiente.
+
+### 3.1.1 Propiedades calculadas sobre el AST de regex
+
+El archivo `generador_analizadores_lexicos/ast.h` documenta que cada nodo del AST guarda:
+
+- `nullable`: indica si la subexpresion puede reconocer la cadena vacia.
+- `firstpos`: conjunto de posiciones de hojas que pueden aparecer como primer simbolo de alguna cadena reconocida por la subexpresion.
+- `lastpos`: conjunto de posiciones de hojas que pueden aparecer como ultimo simbolo de alguna cadena reconocida por la subexpresion.
+- `followpos`: para cada posicion de hoja `p`, conjunto de posiciones que pueden aparecer inmediatamente despues de `p` en alguna cadena reconocida por la regex completa.
+
+Estas propiedades no son decorativas: son las que sustituyen la construccion de un AFN. `ast_compute_functions` recorre el arbol en postorden, de los hijos hacia la raiz. En hojas, `firstpos` y `lastpos` contienen la propia posicion y `nullable` es falso. En alternancia se unen los conjuntos. En concatenacion, `nullable`, `firstpos` y `lastpos` dependen de si el lado izquierdo o derecho puede ser vacio:
+
+```c
+static void visit_compute_leaf(ASTNode *n, void *data) {
+    ...
+    n->nullable = 0;
+    posset_add(&n->firstpos, n->pos);
+    posset_add(&n->lastpos, n->pos);
+}
+
+static void visit_compute_or(ASTNode *n, void *data) {
+    ...
+    n->nullable = n->left->nullable || n->right->nullable;
+    posset_union(&n->firstpos, &n->left->firstpos, &n->right->firstpos);
+    posset_union(&n->lastpos, &n->left->lastpos, &n->right->lastpos);
+}
+
+static void visit_compute_concat(ASTNode *n, void *data) {
+    ...
+    n->nullable = c1->nullable && c2->nullable;
+    if (c1->nullable)
+        posset_union(&n->firstpos, &c1->firstpos, &c2->firstpos);
+    else
+        n->firstpos = c1->firstpos;
+    if (c2->nullable)
+        posset_union(&n->lastpos, &c1->lastpos, &c2->lastpos);
+    else
+        n->lastpos = c2->lastpos;
+}
+```
+
+Los operadores de repeticion tambien siguen las reglas clasicas. `a*` y `a?` son anulables; `a+` solo es anulable si su hijo lo es:
+
+```c
+static void visit_compute_star(ASTNode *n, void *data) {
+    n->nullable = 1;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+
+static void visit_compute_plus(ASTNode *n, void *data) {
+    n->nullable = n->left->nullable;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+
+static void visit_compute_question(ASTNode *n, void *data) {
+    n->nullable = 1;
+    n->firstpos = n->left->firstpos;
+    n->lastpos  = n->left->lastpos;
+}
+```
+
+Despues se calcula `followpos`. En una concatenacion `c1 c2`, todo simbolo que pueda terminar `c1` puede estar seguido por cualquier simbolo que pueda iniciar `c2`. En una repeticion `c*` o `c+`, todo simbolo que pueda terminar `c` puede estar seguido por cualquier simbolo que pueda iniciar otra iteracion de `c`:
+
+```c
+static void visit_followpos_concat(ASTNode *n, void *data) {
+    ASTContext *ctx = (ASTContext*)data;
+    int limit = ctx->max_position + 1;
+    for (int i = 0; i < limit; i++) {
+        if (posset_contains(&n->left->lastpos, i))
+            posset_union(&ctx->followpos[i], &ctx->followpos[i],
+                         &n->right->firstpos);
+    }
+}
+
+static void visit_followpos_repeat(ASTNode *n, void *data) {
+    ASTContext *ctx = (ASTContext*)data;
+    int limit = ctx->max_position + 1;
+    for (int i = 0; i < limit; i++) {
+        if (posset_contains(&n->left->lastpos, i))
+            posset_union(&ctx->followpos[i], &ctx->followpos[i],
+                         &n->left->firstpos);
+    }
+}
+```
+
+`tests/test_ast.c` valida estas reglas de forma unitaria. Por ejemplo, comprueba que en `a.b` el `firstpos` sea `{1}`, el `lastpos` sea `{2}` y `nullable` sea falso; que en `a|b` ambos conjuntos contengan `{1,2}`; y que `a*` sea anulable.
+
+### 3.1.2 Construccion directa del DFA
+
+`generador_analizadores_lexicos/afd.c` representa cada estado del DFA como un conjunto de posiciones. El estado inicial es `firstpos(root)`. Luego se procesa una worklist de estados: para cada simbolo del alfabeto, el siguiente estado es la union de `followpos(p)` para todas las posiciones `p` del estado actual cuya hoja tenga ese simbolo.
+
+```c
+PositionSet start = root->firstpos;
+dfa_add_state(dfa, &start);
+worklist[0] = start;
+
+while (front < dfa->count) {
+    PositionSet current = worklist[front];
+    int s_id = front;
+    ...
+    for (int a = 0; a < dfa->alphabet_size; a++) {
+        char sym = dfa->alphabet[a];
+        PositionSet next;
+        posset_init(&next);
+
+        for (int p = 0; p < limit; p++) {
+            if (posset_contains(&current, p)) {
+                ASTNode *leaf = ctx->leaf_at[p];
+                if (leaf && leaf->symbol == sym) {
+                    posset_union(&next, &next, &ctx->followpos[p]);
+                }
+            }
+        }
+        ...
+        dfa->states[s_id].transitions[a] = to_id;
+    }
+    front++;
+}
+```
+
+La aceptacion de un estado tambien se deriva de las posiciones. Si el conjunto contiene una posicion `#` registrada en `ctx->pos_to_token`, el estado es aceptador:
+
+```c
+for (int p = 0; p < limit; p++) {
+    if (posset_contains(&current, p) && ctx->pos_to_token[p] != -1) {
+        dfa->states[s_id].is_accept = 1;
+        if (dfa->states[s_id].token_id == -1) {
+            dfa->states[s_id].token_id = ctx->pos_to_token[p];
+        } else {
+            dfa->states[s_id].token_id =
+                priority(dfa->states[s_id].token_id, ctx->pos_to_token[p]);
+        }
+    }
+}
+```
+
+Cuando varias regex pueden aceptar el mismo prefijo, se usa la funcion de prioridad. Por defecto, `dfa_priority_min_id` escoge el menor `token_id`:
+
+```c
+int dfa_priority_min_id(int a, int b) {
+    return (a <= b) ? a : b;
+}
+```
+
+Esto se combina con el orden de `hulk_tokens.c`: las palabras clave se declaran antes que `TOKEN_IDENT`. Por eso `decor` se tokeniza como `TOKEN_DECOR`, pero `decoration` no se parte como `decor` + `ation`; el lexer lo reconoce como `TOKEN_IDENT` por maximal munch, y `tests/test_lexer.c` lo comprueba en el caso `decor_not_identifier`.
 
 ### 3.2 Tokens reconocidos
 
@@ -135,11 +336,56 @@ La presencia de `TOKEN_DECOR`, `TOKEN_LBRACKET`, `TOKEN_RBRACKET`, `TOKEN_ARROW`
 
 Los operadores de varios caracteres tambien dependen de maximal munch. Por ejemplo, `:=`, `<=`, `>=`, `==`, `!=`, `||`, `&&`, `@@` y `**` deben reconocerse antes de dividirse en tokens mas cortos.
 
+El bucle central de `lexer_next_token` evidencia esa estrategia: no devuelve el primer estado aceptador que encuentra, sino que sigue avanzando mientras exista transicion y guarda `last_accept_pos` y `last_token`.
+
+```c
+while (1) {
+    unsigned char c = ctx->input[pos];
+    if (c == '\0') break;
+
+    int next = ctx->dfa->next_state[state][c];
+    if (next == -1) break;
+
+    state = next;
+    pos++;
+
+    if (ctx->dfa->states[state].is_accept) {
+        last_accept_state = state;
+        last_accept_pos   = pos;
+        last_token        = ctx->dfa->states[state].token_id;
+    }
+}
+
+if (last_accept_state == -1) {
+    ...
+    err.type = TOKEN_ERROR;
+    ...
+}
+```
+
+Al terminar ese recorrido, `len = last_accept_pos - start` selecciona el lexema mas largo reconocido. Esta regla explica por que `@@` se reconoce como `TOKEN_CONCAT_WS` y no como dos tokens `@`, y por que `decoration` queda como identificador completo aunque empiece por la palabra `decor`.
+
 ### 3.4 Whitespace, comentarios y errores lexicos
 
 `lexer.c` ignora tokens `TOKEN_WS` y `TOKEN_COMMENT`, como se indica tambien en `lexer.h`. El lexer mantiene linea y columna en el token devuelto (`Token { type, lexeme, line, col }`, definido en `token_types.h`).
 
 Cuando no hay transicion valida desde la posicion actual, `lexer.c` genera `TOKEN_ERROR`, avanza un caracter y reporta error lexico. Tambien valida literales string en `validate_string_literal`, con deteccion de escapes invalidos y saltos de linea dentro de cadenas.
+
+```c
+if (last_token == TOKEN_WS || last_token == TOKEN_COMMENT) {
+    continue;
+}
+
+if (last_token == TOKEN_STRING) {
+    ...
+    if (!validate_string_literal(lexeme, len, start_line, start_col,
+                                 &err_line, &err_col, &msg)) {
+        ...
+        err.type = TOKEN_ERROR;
+        return err;
+    }
+}
+```
 
 Los tests y casos de error lexicos estan en:
 
@@ -765,7 +1011,52 @@ Los tests internos estan en `tests/`:
 - `tests/test_feature_decorators_closures.c`: pruebas dedicadas de closures y decoradores.
 - `tests/test_ll1_builder.c`: builder LL(1) integrado, anotaciones funcionales, arrays, iteradores y otras extensiones.
 
-### 13.2 Suite PIAD / end-to-end
+En la auditoria local del 24 de junio de 2026, el entorno si tiene disponibles las herramientas necesarias para construir y ejecutar las pruebas:
+
+```text
+/usr/bin/llvm-config-18
+/usr/bin/flex
+/usr/bin/cc
+```
+
+Se ejecuto:
+
+```bash
+make test-all
+```
+
+El resultado fue exitoso: `make test-all` termino con `Todos los tests pasaron`. Los totales observados por suite fueron:
+
+| Suite | Resultado |
+| --- | ---: |
+| `tests/test_lexer` | 31/31 PASS |
+| `tests/test_parser` | 26/26 PASS |
+| `tests/test_ast` | 18/18 PASS |
+| `tests/test_hulk_ast` | 52/52 PASS |
+| `tests/test_ast_builder` | 79/79 PASS |
+| `tests/test_semantic` | 68/68 PASS |
+| `tests/test_codegen` | 41/41 PASS |
+| `tests/test_feature_decorators_closures` | 7/7 PASS |
+| `tests/test_ll1_builder` | 8/8 PASS |
+
+Total interno observado: 330 tests pasados, 0 fallidos.
+
+Algunas suites imprimen advertencias de conflictos LL(1), por ejemplo en el parser historico y en el builder integrado. Esas advertencias no deben leerse como fallos de ejecucion: las propias suites terminan en PASS. Tambien aparecen mensajes de error durante pruebas negativas del parser y la semantica; esos mensajes son esperados cuando el test verifica que una entrada invalida se rechaza correctamente.
+
+### 13.2 Evidencia de tests sobre el lexer
+
+Los tests del lexer respaldan directamente las propiedades descritas en la seccion 3:
+
+- `keyword_decor` comprueba que `decor` se reconoce como `TOKEN_DECOR`.
+- `decor_not_identifier` comprueba que `decoration` se reconoce como `TOKEN_IDENT`, evidencia de maximal munch combinado con prioridad.
+- `comparison_operators`, `assignment_operators`, `logical_operators`, `concat_operators`, `power_operator` y `arrow_operator` validan operadores simples y compuestos.
+- `whitespace_ignored` y `comments_ignored` validan que `TOKEN_WS` y `TOKEN_COMMENT` no llegan al parser.
+- `line_col_tracking` valida que el lexer mantiene linea y columna.
+- `string_invalid_escape` valida que un escape invalido dentro de string produce `TOKEN_ERROR`.
+
+`tests/test_ast.c` complementa estos tests porque valida el soporte teorico del generador de lexer: conjuntos de posiciones, creacion de hojas, anulabilidad de `*`, `+` y `?`, y calculo de `nullable`, `firstpos` y `lastpos` en concatenacion y alternancia.
+
+### 13.3 Suite PIAD / end-to-end
 
 `tests_piad/hulk` contiene programas `.hulk`, salidas `.expected` y archivos `.exit`. Organiza pruebas en categorias:
 
@@ -787,22 +1078,38 @@ make build
 bash tests_piad/hulk/run_tests.sh "$(pwd)" "$(pwd)/tests_piad/hulk"
 ```
 
-### 13.3 Intento actual de ejecucion
-
-Se intento ejecutar:
-
-```bash
-make test-all
-```
-
-El resultado actual no alcanzo a ejecutar la suite porque el entorno no tiene LLVM instalado o disponible:
+La ejecucion directa de ese script falla en este checkout por finales de linea CRLF dentro de `tests_piad/hulk/run_tests.sh`. El error ocurre antes de probar programas HULK:
 
 ```text
-/usr/bin/sh: line 1: llvm-config: command not found
-fatal error: llvm-c/Core.h: No such file or directory
+tests_piad/hulk/run_tests.sh: line 7: $'\r': command not found
+tests_piad/hulk/run_tests.sh: line 8: set: pipefail^M: invalid option name
 ```
 
-Esto coincide con la advertencia de `agent.md`, que indica que en el entorno local observado pueden faltar `flex` y herramientas de LLVM. En esta ejecucion concreta, `flex` no fue el bloqueo inicial porque `regex_lexer.c` ya existe, pero LLVM si bloqueo la compilacion de objetos de codegen.
+Sin modificar el archivo del repositorio, se ejecuto la misma suite normalizando los `\r` solo en memoria:
+
+```bash
+bash <(tr -d '\r' < tests_piad/hulk/run_tests.sh) "$(pwd)" "$(pwd)/tests_piad/hulk"
+```
+
+El resultado fue `RESULT: ALL_PASS`. El resumen de la suite reporto:
+
+```text
+ok/minimal          20/20 [PASS]
+ok/types            10/10 [PASS]
+ok/oop              10/10 [PASS]
+errors/lexical       6/6  [PASS]
+errors/syntactic    10/10 [PASS]
+errors/semantic     18/18 [PASS]
+ok/extras           10/10 [bonus]
+ok/macros            8/8  [bonus]
+ok/arrays            8/8  [bonus]
+ok/interfaces        6/6  [bonus]
+ok/lambdas           6/6  [bonus]
+ok/generators        6/6  [bonus]
+ok/test_decorators   6/6  [bonus]
+```
+
+Este resultado no implica que el archivo `run_tests.sh` este corregido: solo demuestra que la suite funcional de programas pasa cuando se elimina el problema de CRLF durante la invocacion.
 
 ### 13.4 Logs historicos incluidos en el repositorio
 
@@ -817,6 +1124,8 @@ test_all: FAIL (exit 2)
 
 `probar/logs/test_all.log` contiene suites con muchos casos `PASS`, incluyendo una seccion de codegen con `Total: 41 | Passed: 41 | Failed: 0`, y una seccion de `Feature: Closures + Decorators` con `Total: 7 | Passed: 7 | Failed: 0`. Sin embargo, el mismo log termina con fallo global de `make test-all`, por lo que no debe resumirse como "toda la suite pasa".
 
+Estos logs son historicos y no contradicen la corrida actual: documentan el estado del repositorio o del entorno en el momento en que fueron generados.
+
 `probar/spec_check/REPORTE_2026-05-28.txt` reporta una verificacion historica de programas `tests/hulk_programs` con:
 
 ```text
@@ -830,7 +1139,7 @@ MISMATCH      1
 
 Este dato es importante porque muestra limitaciones reales en una verificacion anterior. Debe incorporarse como evidencia honesta, no ocultarse.
 
-`probar/REPORTE_VERIFICACION_2026-03-23.md` registra una falla parcial historica en `test-ast-builder`, caso `function_expr_simple`. El codigo actual contiene ese test en `tests/test_ast_builder.c`, pero como el entorno actual no permite ejecutar `make test-all`, no se puede afirmar desde esta auditoria que esa falla historica este resuelta en ejecucion local.
+`probar/REPORTE_VERIFICACION_2026-03-23.md` registra una falla parcial historica en `test-ast-builder`, caso `function_expr_simple`. En la corrida actual de `make test-all`, `tests/test_ast_builder` reporto `79/79 PASS`, por lo que ese fallo historico no se reprodujo en esta auditoria.
 
 ---
 
@@ -873,8 +1182,8 @@ La representacion de despacho dinamico con tag y vtable es una tecnica estandar 
 
 Las siguientes limitaciones se desprenden del codigo y de los logs:
 
-- El estado completo de `make test-all` no pudo verificarse en el entorno actual por falta de LLVM (`llvm-config` y headers `llvm-c`).
-- Los logs historicos muestran que no todas las suites han pasado en todo momento: `probar/logs/summary.txt` registra `test_all: FAIL`, y `probar/spec_check/REPORTE_2026-05-28.txt` registra 6/26 PASS.
+- La ejecucion directa de `tests_piad/hulk/run_tests.sh` falla en este checkout por finales de linea CRLF; la suite PIAD pasa cuando se normalizan los `\r` solo durante la invocacion.
+- Los logs historicos muestran que no todas las suites han pasado en todo momento: `probar/logs/summary.txt` registra `test_all: FAIL`, y `probar/spec_check/REPORTE_2026-05-28.txt` registra 6/26 PASS. Esto debe leerse como evidencia historica, no como el resultado actual de `make test-all`.
 - `grammar.ll1` presenta conflictos LL(1) en logs historicos; por tanto, la documentacion debe distinguir esa gramatica del builder integrado.
 - El parser HULK necesita lookahead local para distinguir lambdas parentizadas de expresiones parentizadas.
 - El sistema de scopes usa arreglos dinamicos con busqueda lineal; esto limita la afirmacion formal de complejidad `O(n)`.
@@ -886,7 +1195,8 @@ Las siguientes limitaciones se desprenden del codigo y de los logs:
 
 Trabajo futuro razonable:
 
-- instalar dependencias completas y regenerar un log actual de `make test-all` y suite PIAD;
+- normalizar los finales de linea de `tests_piad/hulk/run_tests.sh` para que la ejecucion directa funcione sin `tr -d '\r'`;
+- regenerar logs historicos de verificacion para que coincidan con el estado actual observado;
 - reducir conflictos en `grammar.ll1` o documentarla explicitamente como gramatica experimental;
 - reemplazar busquedas lineales de scopes/tipos por tablas hash si se quiere sostener una complejidad lineal mas fuerte;
 - ampliar chequeos de arrays y protocolos;
@@ -901,7 +1211,7 @@ El proyecto implementa un compilador HULK de varias fases y contiene evidencia c
 
 Desde el punto de vista de Lenguajes de Programacion, el proyecto aborda funciones como valores, closures, tipos nominales, protocolos estructurales limitados, decoradores y polimorfismo por subtipado. Desde Compilacion, muestra analisis lexico por DFA, parsing predictivo con matices, construccion de AST, chequeo semantico, transformaciones, generacion de IR y enlace nativo.
 
-La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura rica y tecnicamente relevante, pero no debe documentarse como si todas las features estuvieran verificadas sin fallos en el entorno actual. La evidencia demuestra implementaciones significativas; los logs tambien obligan a reconocer limitaciones y fallos historicos. Esa honestidad fortalece el informe porque alinea la explicacion tecnica con el estado real del repositorio.
+La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura rica y tecnicamente relevante, y la corrida actual de tests internos y PIAD normalizada respalda muchas de sus features. Al mismo tiempo, los logs historicos y las limitaciones documentadas obligan a distinguir entre estado actual observado, evidencia historica y aspectos que requieren auditoria mas profunda. Esa honestidad fortalece el informe porque alinea la explicacion tecnica con el estado real del repositorio.
 
 ---
 
@@ -916,10 +1226,15 @@ La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura
 - `hulk_tokens.c`
 - `hulk_tokens.h`
 - `generador_analizadores_lexicos/token_types.h`
+- `generador_analizadores_lexicos/ast.h`
+- `generador_analizadores_lexicos/ast.c`
 - `generador_analizadores_lexicos/lexer.c`
 - `generador_analizadores_lexicos/lexer.h`
 - `generador_analizadores_lexicos/afd.c`
+- `generador_analizadores_lexicos/afd.h`
 - `generador_analizadores_lexicos/regex_lexer.l`
+- `generador_analizadores_lexicos/regex_parser.c`
+- `generador_analizadores_lexicos/regex_ast_actions.c`
 - `generador_parser_ll1/grammar.c`
 - `generador_parser_ll1/first_follow.c`
 - `generador_parser_ll1/ll1_table.c`
