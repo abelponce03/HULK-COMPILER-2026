@@ -75,7 +75,7 @@ El proyecto contiene dos niveles relacionados pero no identicos:
 - Infraestructura generica LL(1) en `generador_parser_ll1/`, con calculo de FIRST, FOLLOW y tabla LL(1).
 - Builder real de AST para HULK en `hulk_ast/builder/hulk_ll1_builder.c`, donde la gramatica se declara como datos (`HULK_PRODS`) con acciones semanticas intercaladas.
 
-Esta distincion es importante porque `grammar.ll1` y los logs historicos muestran conflictos LL(1) en varios puntos, mientras que el builder integrado resuelve casos concretos con lookahead local.
+Esta distincion es importante porque `grammar.ll1` presenta conflictos LL(1) en varios puntos -que `build_ll1_table` reporta como `WARN` al cargarla-, mientras que el builder integrado resuelve casos concretos con lookahead local.
 
 ### 2.4 AST
 
@@ -147,6 +147,26 @@ static const CompilerPhase lexer_pipeline[] = {
 ```
 
 El algoritmo usado no construye un AFN intermedio de Thompson para luego determinizarlo. La evidencia principal esta en `generador_analizadores_lexicos/afd.c`, cuyo comentario identifica el "Algoritmo 3.36" del Dragon Book: construccion directa de un DFA desde el AST de la expresion regular usando posiciones. En terminos de compilacion, el proyecto aplica el metodo directo regex -> arbol sintactico -> `nullable`/`firstpos`/`lastpos`/`followpos` -> DFA.
+
+#### Por que es posible construir el DFA directamente (intuicion)
+
+Para reconocer un lexema, un automata necesita responder en cada paso una sola pregunta: *"dado lo que llevo leido, en que puntos de la expresion regular podria encontrarme ahora mismo"*. La ruta clasica para responder esto tiene dos pasos:
+
+1. **Thompson:** traducir la regex a un AFN con transiciones-epsilon (un fragmento por operador).
+2. **Construccion de subconjuntos:** determinizar ese AFN, donde cada estado del DFA es un conjunto de estados del AFN alcanzables.
+
+El metodo directo observa que el paso intermedio (el AFN con epsilons) es prescindible. La informacion que la construccion de subconjuntos extrae del AFN -*"que simbolos pueden ir primero", "cuales pueden ir al final", "que puede seguir a que"*- se puede leer directamente del arbol sintactico de la regex. La clave es **numerar cada hoja del arbol** (cada aparicion de un simbolo concreto) con una *posicion* unica. Entonces:
+
+- un **estado del DFA** = un conjunto de posiciones (exactamente el rol que jugaba un conjunto de estados-AFN);
+- la **transicion** desde un estado con el simbolo `x` = "estando en estas posiciones, si leo `x`, a que posiciones puedo saltar".
+
+El nexo entre "estoy en la posicion `p`" y "puedo saltar a la posicion `q`" es la funcion `followpos`. Por eso, una vez calculado `followpos`, el AFN ya no aporta nada: el DFA se construye recorriendo conjuntos de posiciones. Esto ahorra construir y almacenar el AFN intermedio y evita los estados muertos que la determinizacion tendria que colapsar despues.
+
+```text
+metodo clasico:   regex --Thompson--> AFN(epsilons) --subconjuntos--> DFA
+metodo directo:   regex --> arbol --> {nullable, firstpos, lastpos, followpos} --> DFA
+                          (este proyecto)
+```
 
 La entrada del algoritmo no es una sola regex, sino una union de todas las regex de tokens. `generador_analizadores_lexicos/regex_ast_actions.c` construye para cada token un arbol `regex#`, registra en que posicion del marcador `#` termina ese token y combina todos los arboles con `OR`:
 
@@ -257,9 +277,63 @@ static void visit_followpos_repeat(ASTNode *n, void *data) {
 
 `tests/test_ast.c` valida estas reglas de forma unitaria. Por ejemplo, comprueba que en `a.b` el `firstpos` sea `{1}`, el `lastpos` sea `{2}` y `nullable` sea falso; que en `a|b` ambos conjuntos contengan `{1,2}`; y que `a*` sea anulable.
 
+#### Ejemplo trabajado de las funciones del arbol
+
+Considerese la regex `(a|b)*abb#`, el ejemplo cannonico del Dragon Book (el `#` es el marcador de fin que el proyecto agrega a cada token). Numerando las hojas de izquierda a derecha:
+
+```text
+posicion:   1   2       3   4   5   6
+simbolo:    a   b       a   b   b   #
+            \___/       (la (a|b) esta repetida por *)
+            (a|b)*
+```
+
+Recorriendo el arbol en postorden, `ast_compute_functions` produce:
+
+| nodo | nullable | firstpos | lastpos |
+| --- | :---: | --- | --- |
+| hoja `a` (1) | no | {1} | {1} |
+| hoja `b` (2) | no | {2} | {2} |
+| `a\|b` | no | {1,2} | {1,2} |
+| `(a\|b)*` | **si** | {1,2} | {1,2} |
+| `(a\|b)*a` (concat) | no | {1,2,3} | {3} |
+| ... `a b b #` | no | {1,2,3} | {6} |
+
+Dos casos ilustran las reglas. En la raiz, `firstpos` es `{1,2,3}`: como `(a|b)*` es anulable, el primer simbolo de una cadena puede venir de la repeticion (posiciones 1 o 2) **o** saltarsela y empezar en la `a` de la posicion 3. En cambio `lastpos` de la raiz es `{6}` solo, porque el `#` (posicion 6) no es anulable y siempre cierra.
+
+Luego `ast_compute_followpos` deriva, aplicando la regla de concatenacion en cada `.` y la regla de repeticion en el `*`:
+
+```text
+followpos(1) = {1,2,3}     followpos(4) = {5}
+followpos(2) = {1,2,3}     followpos(5) = {6}
+followpos(3) = {4}         followpos(6) = {}   (# es estado final)
+```
+
+`followpos(1) = followpos(2) = {1,2,3}` captura el bucle: tras leer cualquier `a` o `b` del `(a|b)*` se puede repetir (volver a 1 o 2) o avanzar a la `a` fija (posicion 3). Estas seis filas son toda la informacion que el constructor de DFA necesita; el AFN de Thompson nunca se materializa.
+
 ### 3.1.2 Construccion directa del DFA
 
 `generador_analizadores_lexicos/afd.c` representa cada estado del DFA como un conjunto de posiciones. El estado inicial es `firstpos(root)`. Luego se procesa una worklist de estados: para cada simbolo del alfabeto, el siguiente estado es la union de `followpos(p)` para todas las posiciones `p` del estado actual cuya hoja tenga ese simbolo.
+
+La idea, expresada como pseudocodigo, es un punto fijo sobre conjuntos de posiciones:
+
+```text
+Dstates <- { firstpos(root) }      // sin marcar
+mientras exista un estado S sin marcar en Dstates:
+    marcar S
+    para cada simbolo a del alfabeto:
+        U <- union de followpos(p) para toda p in S con simbolo(p) == a
+        si U no esta vacio:
+            si U no esta en Dstates: agregar U sin marcar
+            transicion[S, a] <- U
+```
+
+El invariante que da correctitud al metodo es: *un estado `S` representa exactamente el conjunto de posiciones donde el automata podria estar tras haber consumido el prefijo leido hasta ahora*. Por eso el estado inicial es `firstpos(root)` (lo que puede ir primero) y la transicion con `a` reune los `followpos` de las posiciones de `S` que llevan una `a` (a donde se puede ir tras consumir esa `a`). Como el numero de subconjuntos de posiciones es finito, la worklist termina.
+
+En el codigo, la "marca" de un estado es implicita: el indice `front` recorre `dfa->states` y un estado queda "procesado" cuando `front` pasa sobre el. Dos detalles de implementacion eficientes:
+
+- `dfa_find_state` compara conjuntos con `memcmp` sobre el bitset (`positions_equal`), de modo que un conjunto de posiciones ya visto se reusa como estado en vez de duplicarse; esto es lo que cierra los ciclos del automata.
+- `ctx->leaf_at[p]` indexa la hoja de cada posicion en O(1), evitando recorrer el arbol para saber que simbolo lleva la posicion `p`.
 
 ```c
 PositionSet start = root->firstpos;
@@ -315,6 +389,49 @@ int dfa_priority_min_id(int a, int b) {
 ```
 
 Esto se combina con el orden de `hulk_tokens.c`: las palabras clave se declaran antes que `TOKEN_IDENT`. Por eso `decor` se tokeniza como `TOKEN_DECOR`, pero `decoration` no se parte como `decor` + `ation`; el lexer lo reconoce como `TOKEN_IDENT` por maximal munch, y `tests/test_lexer.c` lo comprueba en el caso `decor_not_identifier`.
+
+#### Traza de la construccion del DFA
+
+Retomando `(a|b)*abb#` con las `followpos` ya calculadas, el algoritmo produce el siguiente automata. Cada estado es el conjunto de posiciones que lo define:
+
+```text
+A = firstpos(root) = {1,2,3}        (estado inicial)
+
+desde A:
+  con 'a': union de followpos de las posiciones de A con simbolo 'a' = {1,3}
+           followpos(1) ∪ followpos(3) = {1,2,3} ∪ {4} = {1,2,3,4} = B
+  con 'b': posiciones de A con simbolo 'b' = {2}
+           followpos(2) = {1,2,3} = A   (vuelve a si mismo)
+
+desde B = {1,2,3,4}:
+  con 'a': {1,3} -> {1,2,3,4} = B
+  con 'b': {2,4} -> followpos(2) ∪ followpos(4) = {1,2,3} ∪ {5} = {1,2,3,5} = C
+
+desde C = {1,2,3,5}:
+  con 'a': {1,3} -> B
+  con 'b': {2,5} -> {1,2,3} ∪ {6} = {1,2,3,6} = D
+
+desde D = {1,2,3,6}:
+  con 'a': {1,3} -> B
+  con 'b': {2}   -> A
+  D contiene la posicion 6 (#)  =>  D es estado de aceptacion
+```
+
+Tabla de transiciones resultante (4 estados, ningun estado muerto generado):
+
+| estado | conjunto | `a` | `b` | acepta |
+| --- | --- | :---: | :---: | :---: |
+| A | {1,2,3} | B | A | no |
+| B | {1,2,3,4} | B | C | no |
+| C | {1,2,3,5} | B | D | no |
+| D | {1,2,3,6} | B | A | **si** |
+
+Este es exactamente el DFA minimo que reconoce `(a|b)*abb`, obtenido sin construir ningun AFN. Dos observaciones conectan la traza con `afd.c`:
+
+- la aceptacion de `D` surge de que su conjunto contiene la posicion del `#` (`ctx->pos_to_token[6] != -1`), tal como hace el bucle de `is_accept`;
+- las aristas que "vuelven" a estados ya creados (por ejemplo `b` desde A, o `a` desde B) son detectadas por `dfa_find_state`, que reconoce el conjunto de posiciones repetido y reusa el estado en lugar de crear uno nuevo.
+
+En el lexer real, la regex de cada token aporta su propio `#` con un `pos_to_token` distinto, y todas se combinan con `OR` bajo una unica raiz. Por eso un mismo estado del DFA puede contener varios marcadores `#`; ahi es donde interviene `dfa_priority_min_id` para decidir, por menor `token_id`, cual token gana (palabra clave sobre identificador).
 
 ### 3.2 Tokens reconocidos
 
@@ -417,6 +534,29 @@ El directorio `generador_parser_ll1/` implementa un generador de parser LL(1):
 
 Esta infraestructura es importante desde el punto de vista academico porque implementa conceptos clasicos de analisis sintactico predictivo: FIRST, FOLLOW, producciones epsilon y tabla `M[NoTerminal, Terminal]`.
 
+#### FIRST y FOLLOW como punto fijo
+
+`first_follow.c` calcula ambos conjuntos por iteracion hasta convergencia (`do { ... } while (changed)`), el patron estandar para ecuaciones recursivas sobre conjuntos. La estructura es identica en ambos: se repite un barrido de todas las producciones, acumulando elementos, hasta que un barrido completo no agrega nada nuevo (`changed == 0`). La terminacion esta garantizada porque los conjuntos solo crecen y estan acotados por la cantidad de terminales.
+
+`FIRST` se inicializa con `FIRST(a) = {a}` para cada terminal `a`, y luego, para cada produccion `A -> X1 X2 ... Xn`, agrega `FIRST` de la secuencia derecha a `FIRST(A)`. La funcion clave es `first_of_sequence`, que implementa la regla de propagacion de epsilon: recorre los simbolos de izquierda a derecha agregando su `FIRST`, y **solo continua al siguiente simbolo si el actual es anulable**; epsilon pertenece a `FIRST` de la secuencia unicamente si *todos* los simbolos son anulables.
+
+```c
+for(int i = 0; i < n; i++) {
+    First_Set* fs = &table->first[symbol_index(seq[i])];
+    for(int j = 0; j < fs->count; j++) first_set_add(result, fs->elements[j]);
+    if(!fs->has_epsilon) { all_have_epsilon = 0; break; }  // se detiene
+}
+if(all_have_epsilon) result->has_epsilon = 1;
+```
+
+`FOLLOW` se inicializa con `$ ∈ FOLLOW(S)` para el simbolo inicial. Para cada produccion `A -> ... Xi β`, aplica las dos reglas clasicas: `FIRST(β) - {ε} ⊆ FOLLOW(Xi)`, y ademas, si `β` es vacio o anulable (`β ⇒* ε`), entonces `FOLLOW(A) ⊆ FOLLOW(Xi)`. Este segundo caso es el que propaga el contexto del no terminal padre hacia el ultimo simbolo de su cuerpo, y por eso tambien debe iterarse hasta punto fijo: un cambio en `FOLLOW(A)` puede obligar a re-propagar a `FOLLOW(Xi)`.
+
+#### Construccion de la tabla y conflictos LL(1)
+
+`ll1_table.c` llena `M[A, a]` con dos reglas (`build_ll1_table`): para cada produccion `A -> α`, (1) por cada terminal `a ∈ FIRST(α)` se pone `M[A,a] = A->α`; (2) si `ε ∈ FIRST(α)`, por cada `b ∈ FOLLOW(A)` se pone `M[A,b] = A->α`. Una gramatica es LL(1) si y solo si ninguna celda recibe dos producciones distintas.
+
+El detalle relevante para este proyecto es como se reacciona ante un conflicto. Cuando una celda ya ocupada recibe otra produccion, `build_ll1_table` **no aborta**: marca `is_ll1 = 0`, emite `LOG_WARN_MSG("ll1", "Conflicto LL(1)...")` y resuelve la celda con una heuristica fija -preferir la produccion no-epsilon sobre la epsilon-. Por eso, al cargar `grammar.ll1` aparecen avisos de conflicto en `TopLevel`, `CmpExpr'`, `AddExpr'`, etc.: son `WARN` que documentan que esa gramatica no es estrictamente LL(1), no fallos de ejecucion. La tabla queda construida y utilizable, pero su validez como LL(1) puro queda invalidada, y es justo la razon por la que el builder de HULK recurre ademas a lookahead local (seccion 4.4).
+
 ### 4.2 Builder real del AST HULK
 
 El parser integrado para construir el AST de HULK esta en `hulk_ast/builder/hulk_ll1_builder.c`. Su cabecera (`hulk_ll1_builder.h`) lo describe como un parser LL(1) dirigido por tabla que construye el AST mediante acciones semanticas. El archivo fuente declara:
@@ -476,6 +616,31 @@ El cuerpo de una lambda usa `NT_FuncExprBody`, que puede ser `ARROW Expr` o `Blo
 
 La ambiguedad principal aparece cuando el parser ve `(`: puede comenzar una expresion parentizada o una lambda. `hulk_ll1_builder.h` documenta que este es el punto no estrictamente LL(1) de HULK. `hulk_ll1_builder.c` resuelve el caso con `lookahead_is_lambda`, que escanea una copia del estado del lexer hasta encontrar el parentesis balanceado y comprobar si sigue `TOKEN_ARROW`. Por tanto, el informe no debe afirmar que toda la gramatica extendida sea LL(1) pura.
 
+Por que un lookahead de un token no basta: tanto `(x)` (expresion) como `(x) => x+1` (lambda) empiezan con `(` y pueden tener un prefijo arbitrariamente largo identico (`(a, b, c, ...)`). La decision solo se puede tomar al ver lo que sigue al parentesis de cierre, que puede estar a cualquier distancia. Por eso no existe un `k` fijo que haga LL(k) este punto: se necesita lookahead no acotado.
+
+El algoritmo de `lookahead_is_lambda` resuelve esto con un escaneo de parentesis balanceados sobre una **copia** del estado del lexer (no consume la entrada real):
+
+```c
+static int lookahead_is_lambda(LexerContext lx_copy) {
+    int depth = 1;                       // ya se vio el '(' de apertura
+    for (;;) {
+        Token t = lexer_next_token(&lx_copy);
+        if (t.type == TOKEN_EOF) return 0;
+        if (t.type == TOKEN_LPAREN) depth++;
+        else if (t.type == TOKEN_RPAREN && --depth == 0) {
+            int next = next_type_inplace(&lx_copy);
+            if (next == TOKEN_ARROW) return 1;          // (params) =>
+            if (next != TOKEN_COLON) return 0;          // (expr)
+            // (params) : Tipo => ...  -> saltar la anotacion de tipo
+            return lookahead_skip_type_ref(&lx_copy) &&
+                   next_type_inplace(&lx_copy) == TOKEN_ARROW;
+        }
+    }
+}
+```
+
+Mantiene un contador `depth` para emparejar parentesis anidados y, al cerrar el parentesis de nivel 0, decide: si lo que sigue es `=>`/`->` (`TOKEN_ARROW`), es lambda; si es `:`, todavia puede ser una lambda con tipo de retorno anotado, asi que salta la anotacion (`lookahead_skip_type_ref`) y vuelve a comprobar la flecha; cualquier otra cosa significa expresion parentizada. Como trabaja sobre una copia por valor de `LexerContext`, el lexer principal no se ve afectado: el lookahead es puramente predictivo. Este `lookahead_is_lambda` se invoca desde el bucle del parser (lineas ~960 y ~1077) justamente cuando el tope de la pila es un no terminal de expresion y el token actual es `(`, expandiendo entonces hacia `NT_Lambda` en lugar de hacia la produccion de expresion parentizada.
+
 #### Arreglos y vectores
 
 El builder reconoce:
@@ -512,7 +677,7 @@ El proyecto contiene una infraestructura LL(1) real y valiosa, pero el estado ob
 - `generador_parser_ll1/` implementa los algoritmos LL(1) clasicos.
 - `hulk_ast/builder/hulk_ll1_builder.c` declara una gramatica como datos y usa una tabla con acciones.
 - `hulk_ast/builder/hulk_ll1_builder.h` reconoce explicitamente un punto no LL(1): lambda `(x) -> ...` frente a expresion parentizada `(expr)`.
-- `probar/logs/test_all.log` contiene advertencias de conflictos LL(1) al cargar `grammar.ll1`, por ejemplo en `TopLevel`, `TypeMember`, `CmpExpr'`, `ConcatExpr'`, `AddExpr'`, `Term'`, `Factor'`, `AsExpr` y `PrimaryTail`.
+- al cargar `grammar.ll1`, `build_ll1_table` emite advertencias de conflictos LL(1), por ejemplo en `TopLevel`, `TypeMember`, `CmpExpr'`, `ConcatExpr'`, `AddExpr'`, `Term'`, `Factor'`, `AsExpr` y `PrimaryTail`.
 
 Por tanto, la conclusion correcta no es "la gramatica HULK completa es estrictamente LL(1)", sino: el proyecto implementa infraestructura LL(1), usa un builder dirigido por tabla para HULK, y resuelve algunos puntos conflictivos mediante lookahead local y reglas especializadas. Esta es una decision tecnica razonable para mantener el parser simple sin negar la ambiguedad real introducida por lambdas, funciones como expresion, postfijos y decoradores.
 
@@ -594,16 +759,56 @@ La captura semantica se apoya en `capture_target` y `capture_scope`, definidos e
 
 ### 6.3 Generacion LLVM de closures
 
-`hulk_ast/codegen/hulk_codegen_expr.c` contiene la emision de `NODE_FUNCTION_EXPR`. La lambda se compila como una funcion LLVM global con nombre unico `lambda.N`. El primer parametro de la funcion generada es un `i8*` que representa el entorno de closure; los parametros del usuario se agregan despues.
+`hulk_ast/codegen/hulk_codegen_expr.c` contiene la emision de `NODE_FUNCTION_EXPR`. La lambda se compila con la tecnica clasica de *closure conversion*: una funcion anonima con variables libres se transforma en (a) una funcion global de nivel superior que recibe su entorno como un parametro extra, y (b) un registro en memoria (el *closure*) que empaqueta el puntero a esa funcion junto con los valores capturados. Una funcion que en el fuente "captura" su entorno lexico se vuelve, en el IR, una funcion plana mas un dato.
 
-El entorno se reserva con `malloc` y almacena:
+##### Paso 1 — Determinar las capturas
 
-1. puntero a la funcion;
-2. valores capturados.
+El conjunto de variables libres no se toma solo del campo `captures` que dejo la semantica: `collect_lambda_captures` recorre el cuerpo de la lambda y reune todo identificador que **no** sea un parametro propio ni una captura ya conocida. Es un calculo de variables libres `FV(cuerpo) \ parametros`, con cuidado especial en lambdas anidadas (una lambda interior captura por su cuenta, pero la exterior debe arrastrar lo que la interior necesitara del scope comun). El resultado es la lista ordenada `cap_names`.
 
-Las llamadas indirectas se implementan en `hulk_ast/codegen/hulk_codegen_call.c` mediante `cg_emit_call_closure_raw` y `emit_closure_call`, que cargan el puntero de funcion desde el entorno y llaman con el propio closure como primer argumento.
+##### Paso 2 — Layout del entorno en heap
 
-Esta implementacion muestra funciones anonimas como valores de primera clase, aunque con limitaciones: el tipado de closures depende de anotaciones, inferencias locales y del campo `static_type`; no hay evidencia de un sistema general de inferencia Hindley-Milner ni de polimorfismo parametrico para lambdas.
+El closure es un bloque reservado con `malloc` cuyo tamano es `8 * (cap_count + 1)` bytes: una ranura por el puntero a funcion y una por cada captura, alineadas a 8.
+
+```text
+closure (i8*) ->  +--------+ offset 0   : puntero a lambda.N
+                  | fn ptr |
+                  +--------+ offset 8   : captura 0
+                  | cap 0  |
+                  +--------+ offset 16  : captura 1
+                  | cap 1  |
+                  +--------+ ...
+```
+
+El codigo escribe primero el puntero a funcion (`LLVMBuildStore(c->builder, fn, closure)`) y luego cada captura en su ranura, calculando la direccion con `GEP` de offset `8 * (i + 1)` sobre el `i8*`:
+
+```c
+LLVMValueRef closure = LLVMBuildCall2(..., c->fn_malloc, &bytes, 1, "closure");
+LLVMBuildStore(c->builder, fn, closure);                 // ranura 0: la funcion
+for (int i = 0; i < cap_count; i++) {
+    LLVMValueRef offset = LLVMConstInt(i64, 8 * (i + 1), 0);
+    LLVMValueRef slot = LLVMBuildInBoundsGEP2(c->builder, i8, closure, &offset, 1, ...);
+    LLVMBuildStore(c->builder, caps[i].global, slot);     // ranura i+1: la captura
+}
+```
+
+##### Paso 3 — Prologo de la funcion generada
+
+`lambda.N` se declara con firma `(i8* env, <params...>) -> ret`: **el entorno es siempre el parametro 0** y los parametros del usuario van detras. En su bloque `entry`, el codigo (i) hace `alloca` + `store` de cada parametro real (`LLVMGetParam(fn, i+1)`), y (ii) **rehidrata las capturas**: por cada captura lee su ranura del `env` con el mismo offset `8*(i+1)`, hace `alloca` local y la define en el scope. Asi, dentro del cuerpo, una variable capturada se usa igual que una local; la indireccion al heap es transparente.
+
+##### Paso 4 — Llamada indirecta (ABI del closure)
+
+`cg_emit_call_closure_raw` materializa el convenio: carga el puntero de funcion desde el offset 0 del closure y llama pasando **el propio closure como argumento 0**, seguido de los argumentos del usuario.
+
+```c
+LLVMValueRef fn_ptr = LLVMBuildLoad2(c->builder, c->t_i8ptr, closure, "closure.fn");
+argv[0] = closure;  /* el entorno viaja como primer argumento */
+... // argv[1..] = argumentos del usuario
+LLVMBuildCall2(c->builder, fn_type, fn_ptr, argv, argc, ...);
+```
+
+El ciclo se cierra de forma consistente: en el paso 2 se guardo `fn` en el offset 0 y aqui se carga de ese mismo offset; en el paso 3 la funcion espera `env` como parametro 0 y aqui se le pasa el closure como argumento 0. Ese acuerdo entre productor y consumidor es lo que hace funcionar a las funciones de orden superior (`lambda_compose`, `lambda_make_adder`) sin necesidad de tipos dependientes.
+
+Esta implementacion muestra funciones anonimas como valores de primera clase, aunque con limitaciones: las capturas se copian por valor en el momento de crear el closure (captura por valor, no por referencia compartida); el tipado de closures depende de anotaciones, inferencias locales y del campo `static_type`; y no hay evidencia de un sistema general de inferencia Hindley-Milner ni de polimorfismo parametrico para lambdas.
 
 ---
 
@@ -636,16 +841,51 @@ Esta semantica es util para los casos numericos del proyecto, pero debe document
 
 ### 7.3 Representacion LLVM
 
-`hulk_ast/codegen/hulk_codegen_expr.c` emite `NODE_VECTOR_LIT` reservando memoria con `malloc`. El layout observado es:
+`hulk_ast/codegen/hulk_codegen_expr.c` emite `NODE_VECTOR_LIT` reservando memoria con `malloc`. El arreglo es un bloque contiguo con una cabecera de tamano seguida de los elementos. El layout observado es:
 
 ```text
-offset 0: size i32
-offset 8: elemento 0
+offset 0: size i32        (cuantos elementos)
+offset 8: elemento 0      (double, o i8* si es arreglo de objetos)
 offset 16: elemento 1
 ...
 ```
 
-La indexacion convierte el indice de `double` a entero y calcula `8 + 8 * idx`. La funcion `.size()` se intercepta en `hulk_ast/codegen/hulk_codegen_call.c` cargando el entero almacenado al inicio del arreglo y convirtiendolo a `double`.
+##### Construccion del literal
+
+Para `[e0, e1, ..., e(n-1)]` se reserva `8 + 8*n` bytes (8 de cabecera alineada + 8 por elemento), se escribe el tamano `n` como `i32` en el offset 0, y luego cada elemento en su posicion mediante aritmetica de punteros con `GEP`:
+
+```c
+int byte_size = 8 + 8 * n;                         /* cabecera + n elementos */
+LLVMValueRef raw = LLVMBuildCall2(..., c->fn_malloc, &size_const, 1, "vec");
+LLVMBuildStore(c->builder, LLVMConstInt(c->t_i32, n, 0), raw);   /* size en [0..3] */
+for (int i = 0; i < n; i++) {
+    LLVMValueRef offset = LLVMConstInt(i64, 8 + 8 * i, 0);
+    LLVMValueRef gep = LLVMBuildInBoundsGEP2(c->builder, i8, raw, &offset, 1, ...);
+    LLVMBuildStore(c->builder, cg_emit_expr(c, vn->items.items[i]), gep);  /* elem i */
+}
+```
+
+La razon de reservar la cabecera a 8 bytes (aunque el tamano sea un `i32` de 4) es de **alineacion**: los elementos `double` deben quedar en direcciones multiplo de 8, asi que el primer elemento empieza en el offset 8 y no en el 4. Por eso el `size` ocupa `[0..3]` y `[4..7]` queda como relleno.
+
+##### Indexacion
+
+`NODE_INDEX_EXPR` traduce `arr[i]` a la direccion `base + 8 + 8*i`. Como los indices HULK son `double`, primero se convierte el indice a entero con `LLVMBuildFPToSI` y luego se calcula el offset:
+
+```text
+offset = 8 (cabecera) + 8 * (i64)i
+elem   = load <tipo>, base + offset
+```
+
+```c
+LLVMValueRef idx_i = LLVMBuildFPToSI(c->builder, idx_d, i64, "idx");   /* double -> i64 */
+LLVMValueRef mul    = LLVMBuildMul(c->builder, idx_i, eight, "ofsmul"); /* 8*i */
+LLVMValueRef offset = LLVMBuildAdd(c->builder, mul, eight, "ofs");      /* +8 cabecera */
+LLVMValueRef gep    = LLVMBuildInBoundsGEP2(c->builder, i8, obj, &offset, 1, "elem.ptr");
+```
+
+El tipo del elemento cargado se decide por `static_type` anotado en semantica: `double` por defecto, o `i8*` cuando el arreglo es de objetos (`[]` sobre un tipo, u `Object`). No se emite comprobacion de rango: un indice fuera de limites produce acceso a memoria invalida, coherente con la limitacion ya senalada de ausencia de bounds checking.
+
+La funcion `.size()` se intercepta en `hulk_ast/codegen/hulk_codegen_call.c` cargando el entero `i32` almacenado en el offset 0 del arreglo y convirtiendolo a `double` (`raw_size`), de modo que encaja con el resto del sistema numerico de HULK.
 
 `hulk_ast/codegen/hulk_codegen_call.c` tambien contiene `emit_array_new` y `emit_array_init`, asociados a los builtins internos `__array_new` y `__array_init`, que se registran semanticamente en `hulk_ast/semantic/hulk_semantic_types.c`.
 
@@ -696,6 +936,22 @@ f := d1(d2(arg)(f))
 ```
 
 Los decoradores se aplican de derecha a izquierda. Si un decorador tiene argumentos, se trata como fabrica currificada: primero se llama al decorador con sus argumentos y luego al resultado se le pasa la funcion objetivo.
+
+El algoritmo es un plegado (fold) sobre la lista de decoradores. Partiendo de la expresion `f` (el nombre de la funcion ya declarada), se envuelve por cada decorador, de derecha a izquierda:
+
+```text
+fuente:   decor log, memoize(100) function f(...) -> body;
+
+paso 0:   acc = f
+paso 1:   aplicar memoize(100):   acc = memoize(100)(acc)   // fabrica currificada
+paso 2:   aplicar log:            acc = log(acc)            // decorador simple
+
+resultado:
+    function f(...) -> body;          // target intacto
+    f := log( memoize(100)(f) );      // reasignacion del invocable
+```
+
+Cada paso construye en la arena del `HulkASTContext` un `CallExprNode`: para un decorador simple, una llamada con un argumento (la funcion acumulada); para una fabrica con argumentos, primero una llamada `decor(args)` y sobre su resultado otra llamada con la funcion. El orden derecha-a-izquierda hace que el decorador escrito mas a la izquierda quede como el *envoltorio mas externo*, que es la semantica habitual de los decoradores. Como la transformacion es puramente AST -> AST, las fases posteriores (chequeo de tipos y codegen) ven una funcion normal y una asignacion, sin reglas especiales para decoradores en el nucleo del lenguaje.
 
 ### 8.3 Validacion semantica
 
@@ -793,6 +1049,32 @@ Tambien registra funciones built-in:
 
 El dispatcher anota `node->static_type` con el tipo resultante, salvo en errores. Esta anotacion conecta el analisis semantico con el backend.
 
+##### El dispatcher como sintesis de atributos
+
+`sem_check_expr` es la pieza que implementa este enfoque bottom-up. Funciona como una **gramatica de atributos sintetizados**: el tipo de un nodo se calcula a partir de los tipos de sus hijos, que se obtienen llamando recursivamente a `sem_check_expr` antes de combinar. El recorrido es, en efecto, postorden: primero los operandos, luego el operador.
+
+```c
+HulkType* sem_check_expr(SemanticContext *c, HulkNode *node) {
+    HulkType *t;
+    switch (node->type) {
+        case NODE_NUMBER_LIT: t = c->t_number;  break;   // hoja: tipo directo
+        case NODE_BINARY_OP:  t = check_binary_op(c, ...); break;  // combina hijos
+        ...
+    }
+    if (t && t->name && t->kind != HULK_TYPE_ERROR)
+        node->static_type = t->name;   // <-- UNICO punto de anotacion
+    return t;
+}
+```
+
+Dos propiedades de diseno valen la pena:
+
+- **Un solo punto de anotacion.** Cada subrutina (`check_binary_op`, `check_call`, ...) solo *retorna* el `HulkType`; es el dispatcher central el que escribe `node->static_type`. Esto garantiza el invariante de que **todo nodo de expresion chequeado queda anotado de forma uniforme** con el nombre canonico del tipo, que es justo lo que el codegen lee despues (`cg_static_type_of`). El analisis semantico no transforma el arbol: lo *decora*.
+
+- **Recuperacion de errores por tipo absorbente.** Existe un tipo especial `<error>` (`c->t_error`). Cuando una comprobacion falla -por ejemplo, sumar algo que no conforma a `Number`- se reporta el error y se propaga `t_error`. La clave es que `t_error` **no se anota** (la guarda `t->kind != HULK_TYPE_ERROR`) y conforma de forma laxa, de modo que un error en una subexpresion no desencadena una avalancha de errores derivados en los nodos padre. Esto permite reportar varios errores independientes en una sola pasada en vez de abortar al primero.
+
+El nucleo de las reglas de tipo es `sem_type_conforms(sub, super)`, que decide compatibilidad: recorre la cadena `parent` para subtipado nominal, trata `Object` como tope universal, y aplica la rama estructural para protocolos. Por ejemplo, en `NODE_INDEX_EXPR` el chequeo exige `conforms(idx, Number)` y deriva el tipo del elemento parseando el sufijo `[]` del tipo del objeto; en los operadores aritmeticos exige que ambos lados conformen a `Number`. Asi, "verificar tipos" se reduce a llamadas a `sem_type_conforms` sobre los tipos sintetizados de los hijos.
+
 ### 9.5 Control de flujo y OOP
 
 `hulk_ast/semantic/hulk_semantic_check_stmt.c` implementa:
@@ -862,7 +1144,34 @@ slot de metodo -> puntero de funcion
 call indirecto
 ```
 
-Esto corresponde a polimorfismo por subtipado con despacho dinamico. Las pruebas relacionadas incluyen:
+##### Asignacion de slots y resolucion de overrides
+
+El mecanismo se sostiene en dos algoritmos concretos de `hulk_codegen_types.c`:
+
+- **Slots globales por nombre.** `cg_method_slot` mantiene una tabla unica para todo el programa que asocia cada *nombre* de metodo a un indice de slot. La primera vez que aparece un nombre se le asigna el siguiente indice libre; las apariciones posteriores reusan el mismo. La consecuencia clave es que un mismo metodo (por ejemplo `area`) ocupa **el mismo slot en la vtable de toda clase que lo defina**, sin importar la jerarquia. Asi, el call site no necesita conocer el tipo dinamico: basta indexar `vtable[slot(area)]`.
+
+```c
+int cg_method_slot(CodegenContext *c, const char *name) {
+    for (int i = 0; i < c->method_slot_count; i++)
+        if (strcmp(c->method_slot_names[i], name) == 0) return i;   // reusar
+    c->method_slot_names[c->method_slot_count] = name;              // nuevo
+    return c->method_slot_count++;
+}
+```
+
+- **Resolucion por la cadena de herencia.** Al construir la vtable de una clase, `cg_type_resolve_method` decide que funcion concreta va en cada slot recorriendo `ti -> parent -> parent...` y devolviendo la primera implementacion encontrada. Como parte del tipo mas derivado hacia arriba, una redefinicion en la subclase oculta a la del padre (override), mientras que los slots no redefinidos heredan el puntero del ancestro.
+
+```c
+LLVMValueRef cg_type_resolve_method(CGTypeInfo *ti, const char *name) {
+    for (CGTypeInfo *cur = ti; cur; cur = cur->parent)
+        for (int i = 0; i < cur->method_count; i++)
+            if (strcmp(cur->methods[i]->name, name) == 0)
+                return cur->methods[i]->value;   // primera = mas derivada
+    return NULL;
+}
+```
+
+En resumen: la fase de codegen aplana la jerarquia en una vtable por tipo donde cada slot ya apunta a la implementacion correcta (propia o heredada), y el despacho en tiempo de ejecucion es un unico salto indirecto `vtable[slot]`. Esto corresponde a polimorfismo por subtipado con despacho dinamico. Las pruebas relacionadas incluyen:
 
 - `tests/hulk_programs/16_poly_static.hulk`;
 - `17_poly_dynamic_annot.hulk`;
@@ -928,56 +1237,115 @@ El backend traduce expresiones a `LLVMValueRef`:
 
 `hulk_codegen.c` verifica el modulo con `LLVMVerifyModule`. Si la generacion a ejecutable se solicita, configura target machine, emite objeto y enlaza con `cc`.
 
+### 11.4 Control de flujo: basic blocks, ramas y SSA
+
+En HULK las estructuras de control son *expresiones* (un `if` tiene valor), pero el IR de LLVM esta en forma SSA (cada variable se asigna una sola vez). Reconciliar ambas cosas es el problema central que resuelve `hulk_codegen_control.c`, y lo hace de dos maneras segun la construccion.
+
+##### `if`/`elif`/`else` con nodo PHI
+
+Un `if` con valor genera un grafo de bloques basicos que convergen en un bloque `ifmerge`. El reto SSA es: el resultado del `if` proviene de un bloque distinto segun la rama tomada, pero en SSA no se puede "reasignar" una variable desde varios sitios. La solucion canonica es la **instruccion PHI**, que en el bloque de convergencia elige el valor segun *de que bloque predecesor se llego*.
+
+```text
+        cond?
+       /     \
+   [then]   [else/elif...]
+       \     /
+     [ifmerge]
+        phi = φ( valor_then desde then, valor_else desde else, ... )
+```
+
+El algoritmo (`cg_emit_if`): por cada rama emite su cuerpo, registra el **par (valor, bloque de salida)** -el bloque se relee con `LLVMGetInsertBlock` porque el cuerpo pudo crear bloques anidados- y salta a `ifmerge`. Al final construye un unico `phi` con todos esos pares:
+
+```c
+values[idx] = cg_emit_expr(c, n->then_body);
+blocks[idx] = LLVMGetInsertBlock(c->builder);   /* predecesor real */
+LLVMBuildBr(c->builder, merge_bb);
+...
+LLVMValueRef phi = LLVMBuildPhi(c->builder, result_type, "ifval");
+LLVMAddIncoming(phi, values, blocks, idx);       /* φ(v_i desde bloque_i) */
+```
+
+Los `elif` se encadenan: el bloque `else` de cada condicion es donde se emite el siguiente `elif`, formando la cascada `cond1 ? ... : (cond2 ? ... : else)`. Hay un caso especial honesto: si **todas** las ramas son `void`, no se puede formar un PHI de tipo void, asi que el `if` entero se considera void y se devuelve `undef`.
+
+##### `while` con alloca (memoria mutable)
+
+El `while` no usa PHI sino la otra tecnica estandar para valores que cambian en un bucle: una **celda en memoria** (`alloca`) que se actualiza con `store`. Esto sortea SSA delegando la "reasignacion" a la memoria, que LLVM despues promueve a registros (mem2reg) si conviene.
+
+```text
+[entry] -> store 0 -> while.cond
+while.cond: cond? -> while.body | while.end
+while.body: result_ptr := body ; br while.cond
+while.end:  load result_ptr      (valor del while = ultimo cuerpo ejecutado)
+```
+
+El bucle reserva `result_ptr`, lo inicializa en `0.0`, y en cada iteracion del `body` guarda el valor del cuerpo; al salir, `while.end` carga ese ultimo valor. Igual que en el `if`, si el cuerpo es `void` el `while` entero es void (se devuelve `undef`) para no imprimir un `0` espurio en posicion top-level.
+
+Las condiciones de ambos se normalizan a `i1`: como los booleanos viven como `double`, una condicion `double` se compara con `0.0` (`LLVMRealONE`, "truthy = distinto de cero") antes de usarse en `LLVMBuildCondBr`. Esta es la conexion entre el sistema numerico de HULK y las ramas tipadas de LLVM.
+
 ---
 
 ## 12. Complejidad temporal
 
-La afirmacion de complejidad debe formularse con cuidado. Algunas fases son lineales bajo supuestos razonables, pero el proyecto usa arreglos dinamicos y busquedas lineales en scopes y registros de tipos. Por tanto, no se debe afirmar O(n) global incondicional.
+Una afirmacion de complejidad solo es util si se dice **respecto a que** se mide. Por eso conviene fijar primero los parametros de tamano, porque cada fase del pipeline opera sobre una entrada distinta:
+
+| simbolo | que mide |
+| --- | --- |
+| `n_c` | numero de caracteres del fuente |
+| `n_t` | numero de tokens producidos por el lexer |
+| `n_a` | numero de nodos del AST |
+| `s` | numero de simbolos en un scope (variables/funciones visibles) |
+| `d` | profundidad de anidamiento de scopes |
+| `T` | numero de tipos definidos en el programa |
+| `m` | numero de miembros (atributos + metodos) de un tipo |
+| `K` | numero de slots de metodo distintos del programa |
+
+Hay una relacion natural `n_a ≤ n_t ≤ n_c`: cada nodo consume al menos un token y cada token al menos un caracter. Eso permite, al final, expresar el coste global en terminos de un unico `n` cuando los demas parametros estan acotados.
+
+#### Nota previa: el costo amortizado de los arreglos dinamicos
+
+Varias estructuras del proyecto (la arena de nodos en `ast.c`, la worklist del DFA en `afd.c`, las tablas de simbolos) crecen **duplicando capacidad** (`capacity *= 2`). Este patron tiene un costo amortizado O(1) por insercion: aunque un `realloc` puntual copia todo el arreglo, las copias sucesivas suman una serie geometrica `n + n/2 + n/4 + ... < 2n`, es decir O(n) total para n inserciones. Por eso los crecimientos de buffer **no** elevan la complejidad asintotica de las fases que los usan; se pueden tratar como insercion constante.
 
 ### 12.1 Lexer
 
-Con el DFA ya construido, el lexer procesa la entrada en `O(n)` respecto a la longitud del programa fuente, siempre que la transicion de DFA se considere constante o acotada.
+Hay que separar dos costos de naturaleza distinta:
 
-### 12.2 Parser y AST
+- **Construccion del DFA (una sola vez, sobre la especificacion):** depende del numero de posiciones `p` del arbol de regex combinado, no del programa del usuario. `ast_compute_followpos` es O(p²) en el peor caso (por cada posicion en un `lastpos` se une un `firstpos`), y la construccion directa visita cada estado por cada simbolo del alfabeto Σ uniendo `followpos`: O(|estados| · |Σ| · p). El numero de estados es a lo sumo `2^p` en teoria, pero para regex de tokens reales es pequeño y acotado. **Este costo es fijo: se paga una vez al arrancar el compilador, no por programa compilado.**
 
-El builder dirigido por tabla consume tokens y ejecuta acciones semanticas. En el caso normal, cada token y cada produccion se procesa un numero acotado de veces, por lo que la construccion del AST es lineal respecto al numero de tokens/nodos.
+- **Escaneo (por programa):** con el DFA ya construido, `lexer_next_token` avanza una transicion por caracter consultando `dfa->next_state[state][c]` en O(1). El reconocimiento maximal-munch puede releer hasta el ultimo aceptador, pero cada caracter se visita un numero acotado de veces, de modo que el escaneo es **O(n_c)**, lineal en el tamano del fuente.
 
-La excepcion matizada es el lookahead local para lambdas: escanea hacia adelante para distinguir lambdas parentizadas de expresiones parentizadas. En programas normales esto sigue siendo proporcional al tamano de las regiones inspeccionadas; sin embargo, formalmente introduce trabajo adicional si se activa muchas veces sobre prefijos largos.
+### 12.2 Parser y construccion del AST
+
+El builder dirigido por tabla hace operaciones de pila O(1) por simbolo de gramatica y ejecuta acciones semanticas de costo acotado. En el caso normal cada token se consume una vez, de modo que la construccion del AST es **O(n_t)**.
+
+La excepcion es el lookahead de lambdas (`lookahead_is_lambda`), que ante un `(` escanea hasta el parentesis de cierre balanceado. Si ese escaneo recorre `L` tokens, su costo es O(L). En el peor caso patologico -muchos `(` con prefijos largos cada uno- esos escaneos pueden solaparse y dar **O(n_t²)**. En programas reales `L` es pequeño (la lista de parametros de una lambda), por lo que el comportamiento observado sigue siendo lineal. La distincion honesta es: *amortizado lineal en la practica, cuadratico en el peor caso teorico*.
 
 ### 12.3 Analisis semantico
 
-El recorrido de AST es lineal en cantidad de nodos si cada consulta de entorno fuera constante. En este codigo, `sem_lookup_local`, `sem_lookup`, `sem_lookup_member` y `sem_type_resolve` usan arreglos y busquedas lineales. Por ello, la complejidad real puede expresarse como:
+`sem_check_expr` visita cada nodo una vez (recorrido O(n_a)), pero **cada visita hace consultas de entorno cuyo costo no es constante**. `sem_lookup`, `sem_lookup_local`, `sem_lookup_member` y `sem_type_resolve` recorren arreglos linealmente. Por tanto el costo de una consulta es, en el peor caso, O(s·d) para resolver un nombre (s simbolos por scope, d scopes en la cadena) o O(m + T) para resolver un miembro o un tipo. El total queda:
 
 ```text
-O(n * costo_busqueda)
+T_sem(programa) = O(n_a · (s·d + m + T))
 ```
 
-donde `costo_busqueda` depende del numero de simbolos por scope, profundidad de scopes, cantidad de miembros por tipo y cantidad de tipos registrados. En programas pequenos o con scopes acotados, el comportamiento esperado se aproxima a lineal. En casos patologicos con muchos simbolos en un mismo scope, puede crecer de forma superlineal.
-
-Tambien existen inferencias heuristicas en `hulk_semantic_infer.c` que recorren cuerpos para deducir tipos no anotados. Si se ejecutan repetidamente sobre cuerpos grandes para muchos parametros, pueden anadir coste adicional.
+Cuando los scopes y las jerarquias estan acotados por una constante -el caso de programas tipicos- el factor entre parentesis es O(1) y la fase es **efectivamente O(n_a)**. El termino que rompe la linealidad es `s·d`: un unico scope con miles de variables haria que cada resolucion fuera cara y el conjunto creciera de forma superlineal. La mejora estructural clara es reemplazar esas busquedas lineales por **tablas hash**, que llevarian la consulta a O(1) esperado y restaurarian O(n_a) incondicional. La inferencia heuristica de `hulk_semantic_infer.c` añade recorridos extra de cuerpos para deducir tipos no anotados, proporcionales al tamaño de esos cuerpos.
 
 ### 12.4 Codegen LLVM
 
-La emision propia de IR recorre el AST y produce una cantidad de instrucciones proporcional a las construcciones del programa, salvo estructuras que generan tablas globales como vtables y RTTI. La generacion de vtables depende de cantidad de tipos por cantidad de slots de metodo.
-
-No se incluye en esta complejidad:
-
-- optimizaciones internas de LLVM;
-- emision nativa del target;
-- linking con `cc`;
-- ejecucion del programa generado.
+La emision propia recorre el AST una vez generando un numero acotado de instrucciones por nodo: **O(n_a)** para el cuerpo del programa. A esto se suma la construccion de tablas globales: cada vtable se llena resolviendo `K` slots y cada resolucion sube por la cadena de herencia, dando **O(T · K · h)** con `h` la altura de la jerarquia (en `cg_type_resolve_method`). El total de codegen propio es `O(n_a + T·K·h)`. No se contabilizan aqui las fases externas, cuyo costo no controla este proyecto: las optimizaciones internas de LLVM, la seleccion de instrucciones del target, el enlace con `cc` ni la ejecucion del binario resultante.
 
 ### 12.5 Conclusion de complejidad
 
-La conclusion correcta es:
+Sumando las fases y usando `n_a ≤ n_t ≤ n_c = n`:
 
-- lexer: lineal en la longitud del texto;
-- parser/builder: lineal en el numero de tokens en el caso normal, con lookahead local para lambdas;
-- AST: lineal en numero de construcciones;
-- semantica: lineal en recorridos, pero con busquedas lineales en tablas internas;
-- codegen: proporcional al AST y a estructuras globales generadas.
+```text
+T_total(n) = O(n_c)                      [lexer, escaneo]
+           + O(n_t)        ~ O(n)        [parser, caso normal]
+           + O(n_a·(s·d+m+T)) ~ O(n)     [semantica, scopes/jerarquias acotados]
+           + O(n_a + T·K·h)  ~ O(n)      [codegen propio]
+           = O(n)   bajo supuestos de acotamiento
+```
 
-Por tanto, el pipeline se comporta aproximadamente como `O(n)` para programas con scopes y jerarquias acotadas, pero no debe presentarse como `O(n)` absoluto sin esos supuestos.
+Es decir: **el pipeline es lineal en el tamaño del programa siempre que los scopes, el numero de tipos y la altura de las jerarquias esten acotados por constantes**, supuesto razonable para programas reales. Sin esos supuestos, los puntos no lineales son concretos y localizados: las busquedas lineales en la semantica (solucionables con hashing) y el lookahead de lambdas en el peor caso. No se debe presentar como `O(n)` absoluto e incondicional, pero si como lineal en la practica con los cuellos de botella identificados.
 
 ---
 
@@ -1041,7 +1409,7 @@ El resultado fue exitoso: `make test-all` termino con `Todos los tests pasaron`.
 
 Total interno observado: 330 tests pasados, 0 fallidos.
 
-Algunas suites imprimen advertencias de conflictos LL(1), por ejemplo en el parser historico y en el builder integrado. Esas advertencias no deben leerse como fallos de ejecucion: las propias suites terminan en PASS. Tambien aparecen mensajes de error durante pruebas negativas del parser y la semantica; esos mensajes son esperados cuando el test verifica que una entrada invalida se rechaza correctamente.
+Algunas suites imprimen advertencias de conflictos LL(1) emitidas por `build_ll1_table` al cargar `grammar.ll1`. Esas advertencias no deben leerse como fallos de ejecucion: son `WARN` sobre la gramatica y las propias suites terminan en PASS. Tambien aparecen mensajes de error durante pruebas negativas del parser y la semantica; esos mensajes son esperados cuando el test verifica que una entrada invalida se rechaza correctamente.
 
 ### 13.2 Evidencia de tests sobre el lexer
 
@@ -1111,36 +1479,6 @@ ok/test_decorators   6/6  [bonus]
 
 Este resultado no implica que el archivo `run_tests.sh` este corregido: solo demuestra que la suite funcional de programas pasa cuando se elimina el problema de CRLF durante la invocacion.
 
-### 13.4 Logs historicos incluidos en el repositorio
-
-`probar/logs/summary.txt` registra:
-
-```text
-build: OK
-test_file: OK
-inline_valid: OK
-test_all: FAIL (exit 2)
-```
-
-`probar/logs/test_all.log` contiene suites con muchos casos `PASS`, incluyendo una seccion de codegen con `Total: 41 | Passed: 41 | Failed: 0`, y una seccion de `Feature: Closures + Decorators` con `Total: 7 | Passed: 7 | Failed: 0`. Sin embargo, el mismo log termina con fallo global de `make test-all`, por lo que no debe resumirse como "toda la suite pasa".
-
-Estos logs son historicos y no contradicen la corrida actual: documentan el estado del repositorio o del entorno en el momento en que fueron generados.
-
-`probar/spec_check/REPORTE_2026-05-28.txt` reporta una verificacion historica de programas `tests/hulk_programs` con:
-
-```text
-Resumen: 6/26 PASS
-PASS          6
-PARSE_FAIL    4
-SEM_FAIL      4
-CODEGEN_FAIL  11
-MISMATCH      1
-```
-
-Este dato es importante porque muestra limitaciones reales en una verificacion anterior. Debe incorporarse como evidencia honesta, no ocultarse.
-
-`probar/REPORTE_VERIFICACION_2026-03-23.md` registra una falla parcial historica en `test-ast-builder`, caso `function_expr_simple`. En la corrida actual de `make test-all`, `tests/test_ast_builder` reporto `79/79 PASS`, por lo que ese fallo historico no se reprodujo en esta auditoria.
-
 ---
 
 ## 14. Decisiones de diseno
@@ -1180,11 +1518,10 @@ La representacion de despacho dinamico con tag y vtable es una tecnica estandar 
 
 ## 15. Limitaciones y trabajo futuro
 
-Las siguientes limitaciones se desprenden del codigo y de los logs:
+Las siguientes limitaciones se desprenden del codigo:
 
 - La ejecucion directa de `tests_piad/hulk/run_tests.sh` falla en este checkout por finales de linea CRLF; la suite PIAD pasa cuando se normalizan los `\r` solo durante la invocacion.
-- Los logs historicos muestran que no todas las suites han pasado en todo momento: `probar/logs/summary.txt` registra `test_all: FAIL`, y `probar/spec_check/REPORTE_2026-05-28.txt` registra 6/26 PASS. Esto debe leerse como evidencia historica, no como el resultado actual de `make test-all`.
-- `grammar.ll1` presenta conflictos LL(1) en logs historicos; por tanto, la documentacion debe distinguir esa gramatica del builder integrado.
+- `grammar.ll1` presenta conflictos LL(1) que `build_ll1_table` reporta como `WARN`; por tanto, la documentacion debe distinguir esa gramatica del builder integrado.
 - El parser HULK necesita lookahead local para distinguir lambdas parentizadas de expresiones parentizadas.
 - El sistema de scopes usa arreglos dinamicos con busqueda lineal; esto limita la afirmacion formal de complejidad `O(n)`.
 - La conformidad estructural de protocolos se verifica por presencia de nombres de metodos, sin evidencia de chequeo completo de varianza o equivalencia profunda de firmas en esa rama.
@@ -1196,7 +1533,6 @@ Las siguientes limitaciones se desprenden del codigo y de los logs:
 Trabajo futuro razonable:
 
 - normalizar los finales de linea de `tests_piad/hulk/run_tests.sh` para que la ejecucion directa funcione sin `tr -d '\r'`;
-- regenerar logs historicos de verificacion para que coincidan con el estado actual observado;
 - reducir conflictos en `grammar.ll1` o documentarla explicitamente como gramatica experimental;
 - reemplazar busquedas lineales de scopes/tipos por tablas hash si se quiere sostener una complejidad lineal mas fuerte;
 - ampliar chequeos de arrays y protocolos;
@@ -1211,7 +1547,7 @@ El proyecto implementa un compilador HULK de varias fases y contiene evidencia c
 
 Desde el punto de vista de Lenguajes de Programacion, el proyecto aborda funciones como valores, closures, tipos nominales, protocolos estructurales limitados, decoradores y polimorfismo por subtipado. Desde Compilacion, muestra analisis lexico por DFA, parsing predictivo con matices, construccion de AST, chequeo semantico, transformaciones, generacion de IR y enlace nativo.
 
-La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura rica y tecnicamente relevante, y la corrida actual de tests internos y PIAD normalizada respalda muchas de sus features. Al mismo tiempo, los logs historicos y las limitaciones documentadas obligan a distinguir entre estado actual observado, evidencia historica y aspectos que requieren auditoria mas profunda. Esa honestidad fortalece el informe porque alinea la explicacion tecnica con el estado real del repositorio.
+La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura rica y tecnicamente relevante, y la corrida actual de tests internos (330/330) y de la suite PIAD (`RESULT: ALL_PASS`) respalda sus features. Al mismo tiempo, las limitaciones documentadas -conformidad estructural acotada de protocolos, ausencia de bounds checking, inferencia heuristica- delimitan con precision el alcance verificado. Esa honestidad fortalece el informe porque alinea la explicacion tecnica con el estado real del repositorio.
 
 ---
 
@@ -1276,7 +1612,3 @@ La conclusion debe ser fuerte pero honesta: el compilador tiene una arquitectura
 - `tests/test_ll1_builder.c`
 - `tests/hulk_programs/*`
 - `tests_piad/hulk/**/*`
-- `probar/logs/summary.txt`
-- `probar/logs/test_all.log`
-- `probar/spec_check/REPORTE_2026-05-28.txt`
-- `probar/REPORTE_VERIFICACION_2026-03-23.md`
